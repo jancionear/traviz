@@ -695,19 +695,23 @@ impl App {
     ) {
         for span in spans {
             let start_x = time_to_screen(span.start_time, start_pos, end_pos, start_time, end_time);
+            let time_display_len =
+                time_to_screen(span.end_time, start_pos, end_pos, start_time, end_time) - start_x;
+
             let display_len = match span.display_options.display_length {
-                DisplayLength::Time => {
-                    time_to_screen(span.end_time, start_pos, end_pos, start_time, end_time)
-                        - start_x
+                DisplayLength::Time => time_display_len,
+                DisplayLength::Text => {
+                    let text_len = ui.fonts(|fs| {
+                        fs.layout_no_wrap(span.name.to_string(), FontId::default(), Color32::BLACK)
+                            .rect
+                            .width()
+                    });
+                    text_len.max(time_display_len)
                 }
-                DisplayLength::Text => ui.fonts(|fs| {
-                    fs.layout_no_wrap(span.name.to_string(), FontId::default(), Color32::BLACK)
-                        .rect
-                        .width()
-                }),
             };
             span.display_start.set(start_x);
             span.display_length.set(display_len);
+            span.time_display_length.set(time_display_len);
 
             if !span.collapse_children.get() {
                 Self::set_display_params(
@@ -757,15 +761,27 @@ impl App {
             ""
         };
 
-        let rect = Rect::from_min_max(
+        let time_color = Color32::from_rgb(242, 176, 34);
+        let base_color = Color32::from_rgb(255, 255, 102);
+        let time_rect = Rect::from_min_max(
+            Pos2::new(start_x, start_height),
+            Pos2::new(
+                start_x + span.time_display_length.get(),
+                start_height + span_height,
+            ),
+        );
+        let display_rect = Rect::from_min_max(
             Pos2::new(start_x, start_height),
             Pos2::new(end_x, start_height + span_height),
         );
+        ui.painter().rect_filled(display_rect, 0, base_color);
+        ui.painter().rect_filled(time_rect, 0, time_color);
+
         let span_button = ui.put(
-            rect,
+            display_rect,
             Button::new(name)
                 .truncate()
-                .fill(Color32::from_rgb(242, 176, 34)),
+                .fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
         );
 
         if span_button.clicked_by(PointerButton::Primary) {

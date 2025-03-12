@@ -192,6 +192,7 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
                             parent_height_offset: Cell::new(0),
                             display_start: Cell::new(0.0),
                             display_length: Cell::new(0.0),
+                            time_display_length: Cell::new(0.0),
                         }),
                     );
                 }

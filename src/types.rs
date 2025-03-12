@@ -44,6 +44,7 @@ pub struct Span {
     pub parent_height_offset: Cell<HeightLevel>,
     pub display_start: Cell<f32>,
     pub display_length: Cell<f32>,
+    pub time_display_length: Cell<f32>,
 }
 
 #[derive(Debug, Clone)]
