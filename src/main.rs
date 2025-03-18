@@ -1,5 +1,5 @@
 use core::f32;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -8,7 +8,7 @@ use anyhow::Result;
 use eframe::egui::scroll_area::ScrollBarVisibility;
 use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
-    ScrollArea, Sense, Stroke, Ui, UiBuilder, Vec2,
+    ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use task_timer::TaskTimer;
@@ -96,6 +96,7 @@ struct App {
     clicked_span: Option<Rc<Span>>,
     include_children_events: bool,
     display_mode: DisplayMode,
+    search: Search,
 }
 
 struct Layout {
@@ -113,11 +114,16 @@ struct Layout {
 enum DisplayMode {
     Everything,
     Doomslug,
+    Chain,
 }
 
 impl DisplayMode {
     pub fn all_modes() -> &'static [DisplayMode] {
-        &[DisplayMode::Everything, DisplayMode::Doomslug]
+        &[
+            DisplayMode::Everything,
+            DisplayMode::Doomslug,
+            DisplayMode::Chain,
+        ]
     }
 }
 
@@ -149,9 +155,11 @@ impl Default for App {
             clicked_span: None,
             include_children_events: true,
             display_mode: DisplayMode::Everything,
+            search: Search::default(),
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
+        res.search.search_term = "NOT IMPLEMENTED".to_string();
         res
     }
 }
@@ -208,6 +216,15 @@ impl eframe::App for App {
     }
 }
 
+#[derive(Default, Debug)]
+struct Search {
+    search_term: String,
+    search_results: Vec<Rc<Span>>,
+    matching_span_ids: HashSet<Vec<u8>>,
+    // TODO - non functional for now
+    hide_non_matching: bool,
+}
+
 impl App {
     fn draw_top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
@@ -240,6 +257,7 @@ impl App {
                 let res = match self.display_mode {
                     DisplayMode::Everything => self.apply_mode(modes::everything_mode),
                     DisplayMode::Doomslug => self.apply_mode(modes::doomslug_mode),
+                    DisplayMode::Chain => self.apply_mode(modes::chain_mode),
                 };
                 if let Err(e) = res {
                     println!("Error applying mode: {}", e);
@@ -494,9 +512,25 @@ impl App {
         }
     }
 
-    fn draw_middle_bar(&self, area: Rect, ui: &mut Ui) {
-        ui.painter()
-            .rect_filled(area, 0.0, Color32::from_rgb(50, 50, 50));
+    fn draw_middle_bar(&mut self, area: Rect, ui: &mut Ui) {
+        ui.painter().rect_filled(area, 0.0, Color32::from_gray(10));
+
+        let top_margin = 5;
+        let ui_area = Rect::from_min_max(
+            Pos2::new(area.min.x, area.min.y + top_margin as f32),
+            area.max,
+        );
+        ui.allocate_new_ui(UiBuilder::new().max_rect(ui_area), |ui| {
+            ui.horizontal(|ui| {
+                TextEdit::singleline(&mut self.search.search_term)
+                    .background_color(Color32::from_gray(40))
+                    .ui(ui);
+                ui.button("Search").clicked();
+                ui.button("Next").clicked();
+                ui.checkbox(&mut self.search.hide_non_matching, "Hide non-matching")
+                    .clicked();
+            });
+        });
     }
 
     fn draw_spans(&mut self, area: Rect, ui: &mut Ui) {
@@ -604,6 +638,7 @@ impl App {
                             .cloned()
                             .collect();
 
+                        set_display_children(&spans_in_range);
                         Self::set_display_params(
                             &spans_in_range,
                             self.timeline.selected_start,
@@ -713,16 +748,14 @@ impl App {
             span.display_length.set(display_len);
             span.time_display_length.set(time_display_len);
 
-            if !span.collapse_children.get() {
-                Self::set_display_params(
-                    span.children.borrow().as_slice(),
-                    start_time,
-                    end_time,
-                    start_pos,
-                    end_pos,
-                    ui,
-                );
-            }
+            Self::set_display_params(
+                span.display_children.borrow().as_slice(),
+                start_time,
+                end_time,
+                start_pos,
+                end_pos,
+                ui,
+            );
         }
     }
 
@@ -762,7 +795,7 @@ impl App {
         };
 
         let time_color = Color32::from_rgb(242, 176, 34);
-        let base_color = Color32::from_rgb(255, 255, 102);
+        let base_color = Color32::from_rgb(242, 242, 217);
         let time_rect = Rect::from_min_max(
             Pos2::new(start_x, start_height),
             Pos2::new(
@@ -817,14 +850,12 @@ impl App {
             ));
         });
 
-        if !span.collapse_children.get() {
-            self.draw_arranged_spans(
-                span.children.borrow().as_slice(),
-                ui,
-                start_height + span_height + self.layout.span_margin,
-                span_height,
-            );
-        }
+        self.draw_arranged_spans(
+            span.display_children.borrow().as_slice(),
+            ui,
+            start_height + span_height + self.layout.span_margin,
+            span_height,
+        );
     }
 
     fn draw_clicked_span(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
@@ -1017,14 +1048,14 @@ fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
     let span_start = span.display_start.get();
     let span_end = span_start + span.display_length.get();
 
-    if span.children.borrow().is_empty() || span.collapse_children.get() {
+    if span.display_children.borrow().is_empty() {
         SpanBoundingBox {
             start: span_start,
             end: span_end,
             height: 1,
         }
     } else {
-        let children_bbox = arrange_spans(span.children.borrow().as_slice());
+        let children_bbox = arrange_spans(span.display_children.borrow().as_slice());
         SpanBoundingBox {
             start: span_start.min(children_bbox.start),
             end: span_end.max(children_bbox.end),
@@ -1112,6 +1143,45 @@ fn get_time_dots(start_time: TimePoint, end_time: TimePoint) -> Vec<TimePoint> {
         cur_time += delta;
     }
     dots
+}
+
+fn set_display_children(spans: &[Rc<Span>]) {
+    for s in spans {
+        set_display_children_rec(s, false, &mut vec![]);
+    }
+}
+
+fn set_display_children_rec(
+    span: &Rc<Span>,
+    mut collapse_children_active: bool,
+    cur_children: &mut Vec<Rc<Span>>,
+) {
+    if span.dont_collapse_this_span.get() {
+        collapse_children_active = false;
+    }
+
+    let display_this_span = !collapse_children_active;
+
+    if display_this_span {
+        cur_children.push(span.clone());
+
+        if span.collapse_children.get() {
+            collapse_children_active = true;
+        }
+
+        span.display_children.borrow_mut().clear();
+        for c in span.children.borrow().iter() {
+            set_display_children_rec(
+                c,
+                collapse_children_active,
+                &mut span.display_children.borrow_mut(),
+            );
+        }
+    } else {
+        for c in span.children.borrow().iter() {
+            set_display_children_rec(c, collapse_children_active, cur_children);
+        }
+    }
 }
 
 #[test]

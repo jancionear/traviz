@@ -1,5 +1,5 @@
 #![allow(unused)]
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -34,11 +34,13 @@ pub struct Span {
     pub scope: Option<Rc<Scope>>,
 
     pub children: RefCell<Vec<Rc<Span>>>,
+    pub display_children: RefCell<Vec<Rc<Span>>>,
     pub min_start_time: Cell<TimePoint>,
     pub max_end_time: Cell<TimePoint>,
 
     pub display_options: SpanDisplayConfig,
     pub collapse_children: Cell<bool>,
+    pub dont_collapse_this_span: Cell<bool>,
 
     // How much to offset from the parent when displaying the span
     pub parent_height_offset: Cell<HeightLevel>,

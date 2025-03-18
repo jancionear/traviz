@@ -72,6 +72,104 @@ fn get_doomslug_spans(spans: &[Rc<Span>], res: &mut Vec<Rc<Span>>) {
         }
     }
 }
+
+pub fn chain_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
+    let important_chain_spans = [
+        "preprocess_optimistic_block",
+        "process_optimistic_block",
+        "postprocess_ready_block",
+        "postprocess_optimistic_block",
+        "preprocess_block",
+        "apply_new_chunk",
+        "apply_old_chunk",
+        "produce_chunk_internal",
+        "produce_block_on",
+        "receive_optimistic_block",
+        "validate_chunk_state_witness",
+        "send_chunk_state_witness",
+        "produce_optimistic_block_on_head",
+    ];
+
+    let all_spans = extract_spans(trace_data)?;
+
+    let is_important = |span: &Span| important_chain_spans.contains(&span.name.as_str());
+
+    let res = retain_important(all_spans, &is_important);
+    let res = add_height_shard_id_to_name(res);
+
+    Ok(res)
+}
+
+pub fn retain_important(
+    spans: Vec<Rc<Span>>,
+    is_important: &dyn Fn(&Span) -> bool,
+) -> Vec<Rc<Span>> {
+    let mut res = Vec::new();
+    for span in spans {
+        retain_important_rek(&span, is_important, &mut res);
+    }
+
+    for span in &res {
+        collapse_unimportant(span, is_important);
+    }
+
+    res
+}
+
+fn retain_important_rek(
+    span: &Rc<Span>,
+    is_important: &dyn Fn(&Span) -> bool,
+    res: &mut Vec<Rc<Span>>,
+) {
+    if is_important(&span) {
+        res.push(span.clone());
+    } else {
+        for child in span.children.borrow().iter() {
+            retain_important_rek(child, is_important, res);
+        }
+    }
+}
+
+fn collapse_unimportant(span: &Span, is_important: &dyn Fn(&Span) -> bool) -> bool {
+    let mut found_important = false;
+
+    if is_important(span) {
+        found_important = true;
+        span.dont_collapse_this_span.set(true);
+        span.collapse_children.set(true);
+    }
+
+    for child in span.children.borrow().iter() {
+        if collapse_unimportant(child, is_important) {
+            found_important = true;
+        }
+    }
+
+    found_important
+}
+
+pub fn add_height_shard_id_to_name(spans: Vec<Rc<Span>>) -> Vec<Rc<Span>> {
+    map_spans(&spans, &|mut s: Span| {
+        if let Some(val) = s.attributes.get("height") {
+            s.name = format!("{} H={}", s.name, value_to_text(val));
+        }
+        if let Some(val) = s.attributes.get("block_height") {
+            s.name = format!("{} H={}", s.name, value_to_text(val));
+        }
+        if let Some(val) = s.attributes.get("height_created") {
+            s.name = format!("{} HC={}", s.name, value_to_text(val));
+        }
+        if let Some(val) = s.attributes.get("next_height") {
+            s.name = format!("{} NH={}", s.name, value_to_text(val));
+        }
+        if let Some(val) = s.attributes.get("shard_id") {
+            s.name = format!("{} s={}", s.name, value_to_text(val));
+        }
+        s.display_options.display_length = DisplayLength::Text;
+        s
+    })
+}
+
 #[must_use]
 pub fn map_spans(spans: &[Rc<Span>], f: &dyn Fn(Span) -> Span) -> Vec<Rc<Span>> {
     spans
@@ -183,12 +281,14 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
                             node: resource.clone(),
                             scope: scope.clone(),
                             children: RefCell::new(Vec::new()),
+                            display_children: RefCell::new(Vec::new()),
                             min_start_time: Cell::new(start_time),
                             max_end_time: Cell::new(end_time),
                             display_options: SpanDisplayConfig {
                                 display_length: DisplayLength::Time,
                             },
                             collapse_children: Cell::new(false),
+                            dont_collapse_this_span: Cell::new(false),
                             parent_height_offset: Cell::new(0),
                             display_start: Cell::new(0.0),
                             display_length: Cell::new(0.0),
