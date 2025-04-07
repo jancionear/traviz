@@ -424,8 +424,11 @@ impl App {
                 && input.raw_scroll_delta.y != 0.0
             {
                 let scale = 1.0 - input.raw_scroll_delta.y / 200.0;
+                let Some(latest_pos) = input.pointer.latest_pos() else {
+                    return; // latest_pos can sometimes be None here.
+                };
                 let mouse_time = screen_to_time(
-                    input.pointer.latest_pos().unwrap().x,
+                    latest_pos.x,
                     area.min.x,
                     area.max.x,
                     self.timeline.visible_start,
