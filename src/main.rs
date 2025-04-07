@@ -679,8 +679,12 @@ impl App {
                         if i.zoom_delta() != 1.0 {
                             let diff = i.zoom_delta() - 1.0;
                             let delta = (1.0 - diff * 0.3) as f64;
+                            let Some(latest_pos) = i.pointer.latest_pos() else {
+                                return; // latest_pos can sometimes be None here.
+                            };
+
                             let mouse_time = screen_to_time(
-                                i.pointer.latest_pos().unwrap().x,
+                                latest_pos.x,
                                 area.min.x + self.layout.node_name_width,
                                 area.max.x,
                                 self.timeline.selected_start,
