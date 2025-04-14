@@ -121,7 +121,7 @@ fn retain_important_rek(
     is_important: &dyn Fn(&Span) -> bool,
     res: &mut Vec<Rc<Span>>,
 ) {
-    if is_important(&span) {
+    if is_important(span) {
         res.push(span.clone());
     } else {
         for child in span.children.borrow().iter() {
@@ -172,10 +172,7 @@ pub fn add_height_shard_id_to_name(spans: Vec<Rc<Span>>) -> Vec<Rc<Span>> {
 
 #[must_use]
 pub fn map_spans(spans: &[Rc<Span>], f: &dyn Fn(Span) -> Span) -> Vec<Rc<Span>> {
-    spans
-        .iter()
-        .map(|span| Rc::new(map_span((**span).clone(), f)))
-        .collect()
+    spans.iter().map(|span| Rc::new(map_span((**span).clone(), f))).collect()
 }
 
 #[must_use]
@@ -216,10 +213,9 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
 
                     Rc::new(Node { name, attributes })
                 }
-                None => Rc::new(Node {
-                    name: "no resource".to_string(),
-                    attributes: BTreeMap::new(),
-                }),
+                None => {
+                    Rc::new(Node { name: "no resource".to_string(), attributes: BTreeMap::new() })
+                }
             };
 
             for ss in &rs.scope_spans {
@@ -231,11 +227,7 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
                             attribute.value.clone().and_then(|v| v.value),
                         );
                     }
-                    Rc::new(Scope {
-                        name: s.name.clone(),
-                        version: s.version.clone(),
-                        attributes,
-                    })
+                    Rc::new(Scope { name: s.name.clone(), version: s.version.clone(), attributes })
                 });
 
                 for span in &ss.spans {

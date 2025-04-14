@@ -2,6 +2,9 @@
 
 Trace visualizer for NEAR
 
+Traviz is a tool which can visualize OpenTelemetry traces collected while running `neard`.
+This allows to see what the program is doing at every point in time, making easier debugging and performance analysis easier.
+
 ![](doc/images/screenshot.png)
 
 ## How to use
@@ -10,7 +13,7 @@ Trace visualizer for NEAR
 
 ```console
 git clone https://github.com/near/nearcore
-cd tracing
+cd tracing/collector
 docker compose up
 ```
 
@@ -23,16 +26,12 @@ docker compose up
 }
 ```
 
-3. Modify `config.json` to send traces to the collector, for example:
-```json
-"telemetry": {
-    "endpoints": ["http://127.0.0.1:4317"],
-    "reporting_interval": {
-      "secs": 10,
-      "nanos": 0
-    }
-  }
+3. Set the `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` environment variable to send traces to the collector, for example:
+```shell
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://<collector-server-ip>:4317
 ```
+By default the exporter will send traces to localhost, you don't need to set this variable if both
+the node and collector are running on the same machine.
 
 4. Run the nodes, collector should be outputting:
 ```console
