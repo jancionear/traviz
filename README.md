@@ -3,7 +3,7 @@
 Trace visualizer for NEAR
 
 Traviz is a tool which can visualize OpenTelemetry traces collected while running `neard`.
-This allows to see what the program is doing at every point in time, making easier debugging and performance analysis easier.
+This allows to see what the program is doing at every point in time, making debugging and performance analysis easier.
 
 ![](doc/images/screenshot.png)
 
