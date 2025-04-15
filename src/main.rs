@@ -13,8 +13,8 @@ use eframe::egui::{
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use task_timer::TaskTimer;
 use types::{
-    DisplayLength, Event, HeightLevel, Node, Span, TimePoint, time_point_to_utc_string,
-    value_to_text,
+    time_point_to_utc_string, value_to_text, DisplayLength, Event, HeightLevel, Node, Span,
+    TimePoint,
 };
 
 mod modes;
@@ -22,8 +22,10 @@ mod task_timer;
 mod types;
 
 fn main() -> eframe::Result {
-    let options =
-        eframe::NativeOptions { viewport: egui::ViewportBuilder::default(), ..Default::default() };
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default(),
+        ..Default::default()
+    };
     eframe::run_native("traviz", options, Box::new(|_cc| Ok(Box::<App>::default())))
 }
 
@@ -117,7 +119,11 @@ enum DisplayMode {
 
 impl DisplayMode {
     pub fn all_modes() -> &'static [DisplayMode] {
-        &[DisplayMode::Everything, DisplayMode::Doomslug, DisplayMode::Chain]
+        &[
+            DisplayMode::Everything,
+            DisplayMode::Doomslug,
+            DisplayMode::Chain,
+        ]
     }
 }
 
@@ -160,47 +166,53 @@ impl Default for App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().frame(eframe::egui::Frame::new()).show(ctx, |ui| {
-            ctx.options_mut(|o| o.line_scroll_speed = 100.0);
-            ctx.style_mut(|s| {
-                s.interaction.tooltip_delay = 0.0;
-                s.interaction.tooltip_grace_time = 0.0;
-                s.interaction.show_tooltips_only_when_still = false;
+        egui::CentralPanel::default()
+            .frame(eframe::egui::Frame::new())
+            .show(ctx, |ui| {
+                ctx.options_mut(|o| o.line_scroll_speed = 100.0);
+                ctx.style_mut(|s| {
+                    s.interaction.tooltip_delay = 0.0;
+                    s.interaction.tooltip_grace_time = 0.0;
+                    s.interaction.show_tooltips_only_when_still = false;
+                });
+
+                let window_width = ui.max_rect().width();
+                let window_height = ui.max_rect().height();
+
+                let t = if false {
+                    Some(TaskTimer::new("Drawing"))
+                } else {
+                    None
+                };
+                self.draw_top_bar(ui);
+
+                let timeline_area = Rect::from_min_size(
+                    Pos2::new(0.0, self.layout.top_bar_height),
+                    Vec2::new(window_width, self.layout.timeline_height),
+                );
+                self.draw_timeline(timeline_area, ui, ctx);
+
+                let middle_bar_area = Rect::from_min_size(
+                    Pos2::new(0.0, timeline_area.max.y),
+                    Vec2::new(window_width, self.layout.middle_bar_height),
+                );
+                self.draw_middle_bar(middle_bar_area, ui);
+
+                let spans_area = Rect::from_min_size(
+                    Pos2::new(0.0, middle_bar_area.max.y),
+                    Vec2::new(window_width, window_height - middle_bar_area.max.y),
+                );
+                self.draw_spans(spans_area, ui);
+
+                self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
+
+                // If Ctrl+Q clicked, quit the app
+                if ctx.input(|i| i.key_down(Key::Q) && i.modifiers.ctrl) {
+                    std::process::exit(0);
+                }
+
+                t.inspect(|t| t.stop());
             });
-
-            let window_width = ui.max_rect().width();
-            let window_height = ui.max_rect().height();
-
-            let t = if false { Some(TaskTimer::new("Drawing")) } else { None };
-            self.draw_top_bar(ui);
-
-            let timeline_area = Rect::from_min_size(
-                Pos2::new(0.0, self.layout.top_bar_height),
-                Vec2::new(window_width, self.layout.timeline_height),
-            );
-            self.draw_timeline(timeline_area, ui, ctx);
-
-            let middle_bar_area = Rect::from_min_size(
-                Pos2::new(0.0, timeline_area.max.y),
-                Vec2::new(window_width, self.layout.middle_bar_height),
-            );
-            self.draw_middle_bar(middle_bar_area, ui);
-
-            let spans_area = Rect::from_min_size(
-                Pos2::new(0.0, middle_bar_area.max.y),
-                Vec2::new(window_width, window_height - middle_bar_area.max.y),
-            );
-            self.draw_spans(spans_area, ui);
-
-            self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
-
-            // If Ctrl+Q clicked, quit the app
-            if ctx.input(|i| i.key_down(Key::Q) && i.modifiers.ctrl) {
-                std::process::exit(0);
-            }
-
-            t.inspect(|t| t.stop());
-        });
     }
 }
 
@@ -288,7 +300,9 @@ impl App {
     fn draw_timeline(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
         let background_button = ui.put(
             area,
-            Button::new("").fill(Color32::from_rgb(55, 127, 153)).sense(Sense::click_and_drag()),
+            Button::new("")
+                .fill(Color32::from_rgb(55, 127, 153))
+                .sense(Sense::click_and_drag()),
         );
 
         let timeline_bar1_pos = time_to_screen(
@@ -300,7 +314,10 @@ impl App {
         );
         let bar1_button = ui.put(
             Rect::from_min_size(
-                Pos2::new(timeline_bar1_pos - self.layout.timeline_bar_width / 2.0, area.min.y),
+                Pos2::new(
+                    timeline_bar1_pos - self.layout.timeline_bar_width / 2.0,
+                    area.min.y,
+                ),
                 Vec2::new(self.layout.timeline_bar_width, area.height()),
             ),
             Button::new("").sense(Sense::drag()),
@@ -314,7 +331,10 @@ impl App {
         );
         let bar2_button = ui.put(
             Rect::from_min_size(
-                Pos2::new(timeline_bar2_pos - self.layout.timeline_bar_width / 2.0, area.min.y),
+                Pos2::new(
+                    timeline_bar2_pos - self.layout.timeline_bar_width / 2.0,
+                    area.min.y,
+                ),
                 Vec2::new(self.layout.timeline_bar_width, area.height()),
             ),
             Button::new("").sense(Sense::drag()),
@@ -336,7 +356,9 @@ impl App {
         }
         let middle_button = ui.put(
             middle_rect,
-            Button::new("").sense(Sense::drag()).fill(Color32::from_rgb(134, 202, 227)),
+            Button::new("")
+                .sense(Sense::drag())
+                .fill(Color32::from_rgb(134, 202, 227)),
         );
 
         // Dragging end of selected area should adjust the selected area
@@ -499,8 +521,10 @@ impl App {
         ui.painter().rect_filled(area, 0.0, Color32::from_gray(10));
 
         let top_margin = 5;
-        let ui_area =
-            Rect::from_min_max(Pos2::new(area.min.x, area.min.y + top_margin as f32), area.max);
+        let ui_area = Rect::from_min_max(
+            Pos2::new(area.min.x, area.min.y + top_margin as f32),
+            area.max,
+        );
         ui.allocate_new_ui(UiBuilder::new().max_rect(ui_area), |ui| {
             ui.horizontal(|ui| {
                 TextEdit::singleline(&mut self.search.search_term)
@@ -508,7 +532,8 @@ impl App {
                     .ui(ui);
                 ui.button("Search").clicked();
                 ui.button("Next").clicked();
-                ui.checkbox(&mut self.search.hide_non_matching, "Hide non-matching").clicked();
+                ui.checkbox(&mut self.search.hide_non_matching, "Hide non-matching")
+                    .clicked();
             });
         });
     }
@@ -525,7 +550,10 @@ impl App {
 
         let time_points_area = Rect::from_min_max(
             Pos2::new(area.min.x + self.layout.node_name_width, area.min.y),
-            Pos2::new(area.max.x, area.min.y + self.layout.spans_time_points_height),
+            Pos2::new(
+                area.max.x,
+                area.min.y + self.layout.spans_time_points_height,
+            ),
         );
 
         ui.painter().rect_filled(
@@ -547,7 +575,10 @@ impl App {
 
         let node_names_area = Rect::from_min_max(
             Pos2::new(area.min.x, time_points_area.max.y),
-            Pos2::new(area.min.x + self.layout.node_name_width, under_time_points_area.max.y),
+            Pos2::new(
+                area.min.x + self.layout.node_name_width,
+                under_time_points_area.max.y,
+            ),
         );
 
         if self.spans_to_display.is_empty() {
@@ -621,9 +652,9 @@ impl App {
                             under_time_points_area.max.x,
                             ui,
                         );
-                        let bbox = arrange_spans(&spans_in_range);
+                        let bbox = arrange_spans(&spans_in_range, true);
                         ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
-                        self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height);
+                        self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height, 0);
 
                         let next_height = cur_height
                             + bbox.height as f32 * (span_height + self.layout.span_margin);
@@ -743,6 +774,7 @@ impl App {
         ui: &mut Ui,
         start_height: f32,
         span_height: f32,
+        level: u64,
     ) {
         for span in spans {
             self.draw_arranged_span(
@@ -752,6 +784,7 @@ impl App {
                     + span.parent_height_offset.get() as f32
                         * (span_height + self.layout.span_margin),
                 span_height,
+                level,
             );
         }
     }
@@ -762,18 +795,25 @@ impl App {
         ui: &mut Ui,
         start_height: f32,
         span_height: f32,
+        level: u64,
     ) {
         let start_x = span.display_start.get();
         let end_x = start_x + span.display_length.get();
 
-        let name =
-            if end_x - start_x > self.layout.span_name_threshold { span.name.as_str() } else { "" };
+        let name = if end_x - start_x > self.layout.span_name_threshold {
+            span.name.as_str()
+        } else {
+            ""
+        };
 
         let time_color = Color32::from_rgb(242, 176, 34);
         let base_color = Color32::from_rgb(242, 242, 217);
         let time_rect = Rect::from_min_max(
             Pos2::new(start_x, start_height),
-            Pos2::new(start_x + span.time_display_length.get(), start_height + span_height),
+            Pos2::new(
+                start_x + span.time_display_length.get(),
+                start_height + span_height,
+            ),
         );
         let display_rect = Rect::from_min_max(
             Pos2::new(start_x, start_height),
@@ -782,9 +822,22 @@ impl App {
         ui.painter().rect_filled(display_rect, 0, base_color);
         ui.painter().rect_filled(time_rect, 0, time_color);
 
+        if level == 0 {
+            // Top level spans get a color line at the top
+            ui.painter().line(
+                vec![
+                    Pos2::new(start_x, start_height),
+                    Pos2::new(end_x, start_height),
+                ],
+                Stroke::new(2.0, Color32::from_rgb(255, 51, 0)),
+            );
+        }
+
         let span_button = ui.put(
             display_rect,
-            Button::new(name).truncate().fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
+            Button::new(name)
+                .truncate()
+                .fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
         );
 
         if span_button.clicked_by(PointerButton::Primary) {
@@ -798,11 +851,19 @@ impl App {
         span_button.on_hover_ui_at_pointer(|ui| {
             ui.label(span.name.clone());
             ui.separator();
-            ui.label(format!("{:.3} ms", (span.end_time - span.start_time) * 1000.0));
+            ui.label(format!(
+                "{:.3} ms",
+                (span.end_time - span.start_time) * 1000.0
+            ));
             ui.label(format!(
                 "{} - {}",
                 time_point_to_utc_string(span.start_time),
                 time_point_to_utc_string(span.end_time)
+            ));
+            ui.label(format!("span_id: {}", hex::encode(&span.span_id)));
+            ui.label(format!(
+                "parent_span_id: {}",
+                hex::encode(&span.parent_span_id)
             ));
             ui.separator();
             for (name, value) in &span.attributes {
@@ -822,6 +883,7 @@ impl App {
             ui,
             start_height + span_height + self.layout.span_margin,
             span_height,
+            level + 1,
         );
     }
 
@@ -846,11 +908,19 @@ impl App {
                 draw_separator(ui);
                 ui.label(span.name.clone());
                 ui.label("");
-                ui.label(format!("{:.3} ms", (span.end_time - span.start_time) * 1000.0));
+                ui.label(format!(
+                    "{:.3} ms",
+                    (span.end_time - span.start_time) * 1000.0
+                ));
                 ui.label(format!(
                     "{} - {}",
                     time_point_to_utc_string(span.start_time),
                     time_point_to_utc_string(span.end_time)
+                ));
+                ui.label(format!("span_id: {}", hex::encode(&span.span_id)));
+                ui.label(format!(
+                    "parent_span_id: {}",
+                    hex::encode(&span.parent_span_id)
                 ));
                 draw_separator(ui);
                 for (name, value) in &span.attributes {
@@ -864,7 +934,9 @@ impl App {
                     span.events.clone()
                 };
                 events.sort_by(|e1, e2| {
-                    e1.time.partial_cmp(&e2.time).unwrap_or(std::cmp::Ordering::Equal)
+                    e1.time
+                        .partial_cmp(&e2.time)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
                 ui.label("");
@@ -927,9 +999,13 @@ struct SpanBoundingBox {
 }
 
 /// Sets relative_display_pos for all spans and their children
-fn arrange_spans(input_spans: &[Rc<Span>]) -> SpanBoundingBox {
+fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundingBox {
     if input_spans.is_empty() {
-        return SpanBoundingBox { start: 0.0, end: 0.0, height: 0 };
+        return SpanBoundingBox {
+            start: 0.0,
+            end: 0.0,
+            height: 0,
+        };
     }
 
     let mut sorted_spans = input_spans.to_vec();
@@ -937,13 +1013,19 @@ fn arrange_spans(input_spans: &[Rc<Span>]) -> SpanBoundingBox {
         if let Some(start_ordering) = a.min_start_time.partial_cmp(&b.min_start_time) {
             return start_ordering;
         }
-        a.max_end_time.partial_cmp(&b.max_end_time).unwrap_or(std::cmp::Ordering::Equal)
+        a.max_end_time
+            .partial_cmp(&b.max_end_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     let mut span_bounding_boxes: Vec<SpanBoundingBox> = Vec::new();
 
     for (i, span) in sorted_spans.iter().enumerate() {
-        let span_bbox = arrange_span(span);
+        let mut span_bbox = arrange_span(span);
+        if first_invocation && span_bbox.height > 0 {
+            span_bbox.height += 1; // Top-level spans have one unit of padding below them
+        }
+
         span.parent_height_offset.set(0);
 
         loop {
@@ -958,19 +1040,24 @@ fn arrange_spans(input_spans: &[Rc<Span>]) -> SpanBoundingBox {
                     span_bbox.end,
                     other_span_bbox.start,
                     other_span_bbox.end,
-                ) && is_intersecting(
+                ) && do_spans_collide_in_y(
                     span.parent_height_offset.get(),
-                    span.parent_height_offset.get() + span_bbox.height,
+                    span_bbox.height,
                     other_span.parent_height_offset.get(),
-                    other_span.parent_height_offset.get() + other_span_bbox.height,
+                    other_span_bbox.height,
                 ) {
                     is_colliding = true;
                     break;
                 }
+
+                if span_bbox.start < other_span_bbox.end && span_bbox.end < other_span_bbox.start {
+                    assert!(is_colliding);
+                }
             }
 
             if is_colliding {
-                span.parent_height_offset.set(span.parent_height_offset.get() + 1);
+                span.parent_height_offset
+                    .set(span.parent_height_offset.get() + 1);
             } else {
                 break;
             }
@@ -979,8 +1066,11 @@ fn arrange_spans(input_spans: &[Rc<Span>]) -> SpanBoundingBox {
         span_bounding_boxes.push(span_bbox);
     }
 
-    let mut final_bbox =
-        SpanBoundingBox { start: f32::INFINITY, end: f32::NEG_INFINITY, height: 0 };
+    let mut final_bbox = SpanBoundingBox {
+        start: f32::INFINITY,
+        end: f32::NEG_INFINITY,
+        height: 0,
+    };
 
     for i in 0..sorted_spans.len() {
         let span = &sorted_spans[i];
@@ -988,8 +1078,9 @@ fn arrange_spans(input_spans: &[Rc<Span>]) -> SpanBoundingBox {
 
         final_bbox.start = final_bbox.start.min(span_bbox.start);
         final_bbox.end = final_bbox.end.max(span_bbox.end);
-        final_bbox.height =
-            final_bbox.height.max(span.parent_height_offset.get() + span_bbox.height);
+        final_bbox.height = final_bbox
+            .height
+            .max(span.parent_height_offset.get() + span_bbox.height);
     }
 
     final_bbox
@@ -1000,9 +1091,13 @@ fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
     let span_end = span_start + span.display_length.get();
 
     if span.display_children.borrow().is_empty() {
-        SpanBoundingBox { start: span_start, end: span_end, height: 1 }
+        SpanBoundingBox {
+            start: span_start,
+            end: span_end,
+            height: 1,
+        }
     } else {
-        let children_bbox = arrange_spans(span.display_children.borrow().as_slice());
+        let children_bbox = arrange_spans(span.display_children.borrow().as_slice(), false);
         SpanBoundingBox {
             start: span_start.min(children_bbox.start),
             end: span_end.max(children_bbox.end),
@@ -1045,6 +1140,19 @@ fn is_between<T: PartialOrd + Copy>(x: T, a: T, b: T) -> bool {
 
 fn is_intersecting<T: PartialOrd + Copy>(a: T, b: T, c: T, d: T) -> bool {
     is_between(a, c, d) || is_between(b, c, d) || is_between(c, a, b) || is_between(d, a, b)
+}
+
+fn do_spans_collide_in_y(y1: u64, height1: u64, y2: u64, height2: u64) -> bool {
+    if !is_intersecting(y1, y1 + height1, y2, y2 + height2) {
+        return false;
+    }
+
+    // Spans can touch vertically, that's ok
+    if y1 + height1 == y2 || y2 + height2 == y1 {
+        return false;
+    }
+
+    true
 }
 
 fn count_events(span: &Span) -> usize {
