@@ -280,6 +280,12 @@ impl App {
 
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
+
+        self.timeline.visible_start = min_time;
+        self.timeline.visible_end = (min_time + 20.0).min(max_time);
+        self.timeline.selected_start = min_time;
+        self.timeline.selected_end = (min_time + 2.0).min(max_time);
+
         self.set_timeline_end_bars_to_selected();
 
         Ok(())
