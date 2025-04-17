@@ -115,6 +115,7 @@ enum DisplayMode {
     Everything,
     Doomslug,
     Chain,
+    ChainShard0,
 }
 
 impl DisplayMode {
@@ -123,6 +124,7 @@ impl DisplayMode {
             DisplayMode::Everything,
             DisplayMode::Doomslug,
             DisplayMode::Chain,
+            DisplayMode::ChainShard0,
         ]
     }
 }
@@ -260,6 +262,7 @@ impl App {
                     DisplayMode::Everything => self.apply_mode(modes::everything_mode),
                     DisplayMode::Doomslug => self.apply_mode(modes::doomslug_mode),
                     DisplayMode::Chain => self.apply_mode(modes::chain_mode),
+                    DisplayMode::ChainShard0 => self.apply_mode(modes::chain_shard0_mode),
                 };
                 if let Err(e) = res {
                     println!("Error applying mode: {}", e);
