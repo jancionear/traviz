@@ -137,7 +137,7 @@ impl Default for App {
                 node_name_width: 150.0,
                 span_name_threshold: 100.0,
                 span_margin: 3.0,
-                spans_time_points_height: 50.0,
+                spans_time_points_height: 80.0,
                 middle_bar_height: 30.0,
             },
             timeline: Timeline {
@@ -459,6 +459,7 @@ impl App {
             area,
             Color32::from_rgb(50, 50, 50),
             ui,
+            &self.spans_to_display,
         );
     }
 
@@ -480,6 +481,7 @@ impl App {
         area: Rect,
         color: Color32,
         ui: &mut Ui,
+        spans: &[Rc<Span>],
     ) {
         for dot in get_time_dots(start_time, end_time) {
             ui.painter().rect_filled(
@@ -520,6 +522,56 @@ impl App {
                 color,
             );
             cur_pos += text_rect.width() + 50.0;
+        }
+
+        // Draw red lines for produce_block
+        let produce_block_starts = collect_produce_block_starts_with_nodes(spans);
+        for (t, node_name) in produce_block_starts {
+            if (t >= start_time) && (t <= end_time) {
+                let x = time_to_screen(t, area.min.x, area.max.x, start_time, end_time);
+                let marker_height = 20.0;
+                ui.painter().line_segment(
+                    [
+                        Pos2::new(x, area.max.y),
+                        Pos2::new(x, area.max.y - marker_height),
+                    ],
+                    Stroke::new(2.0, Color32::RED),
+                );
+
+                // Remove "neard:" prefix if present
+                let short_node_name = node_name.strip_prefix("neard:").unwrap_or(&node_name);
+
+                // Draw node name
+                let small_font_id =
+                    FontId::proportional(0.6 * egui::TextStyle::Body.resolve(ui.style()).size);
+                ui.painter().text(
+                    Pos2::new(x + 4.0, area.max.y - 10.0),
+                    Align2::LEFT_TOP,
+                    short_node_name,
+                    small_font_id,
+                    Color32::RED,
+                );
+
+                // Draw indicator for produce_block
+                let label_rect = Rect::from_min_size(
+                    Pos2::new(area.min.x - 15.0, area.max.y - 16.0),
+                    Vec2::new(90.0, 18.0),
+                );
+                ui.painter().rect_filled(
+                    label_rect,
+                    3.0,
+                    Color32::from_rgba_unmultiplied(60, 0, 0, 0),
+                );
+                let font_id =
+                    FontId::proportional(0.7 * egui::TextStyle::Body.resolve(ui.style()).size);
+                ui.painter().text(
+                    label_rect.center(),
+                    Align2::CENTER_CENTER,
+                    "produce_block",
+                    font_id,
+                    color,
+                );
+            }
         }
     }
 
@@ -574,6 +626,7 @@ impl App {
             time_points_area,
             Color32::from_gray(240),
             ui,
+            &self.spans_to_display,
         );
 
         let under_time_points_area =
@@ -658,13 +711,9 @@ impl App {
                             under_time_points_area.max.x,
                             ui,
                         );
-                        let t = TaskTimer::new("arrange_spans");
                         let bbox = arrange_spans(&spans_in_range, true);
-                        t.stop();
                         ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
-                        let t = TaskTimer::new("draw_arranged_spans");
                         self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height, 0);
-                        t.stop();
 
                         let next_height = cur_height
                             + bbox.height as f32 * (span_height + self.layout.span_margin);
@@ -1246,6 +1295,18 @@ fn set_display_children_rec(
             set_display_children_rec(c, collapse_children_active, cur_children);
         }
     }
+}
+
+fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint, String)> {
+    let mut result = Vec::new();
+    for span in spans {
+        if span.name.starts_with("produce_block") {
+            result.push((span.start_time, span.node.name.clone()));
+        }
+        let children = span.children.borrow();
+        result.extend(collect_produce_block_starts_with_nodes(children.as_slice()));
+    }
+    result
 }
 
 #[test]

@@ -89,6 +89,7 @@ pub fn chain_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Spa
         "validate_chunk_state_witness",
         "send_chunk_state_witness",
         "produce_optimistic_block_on_head",
+        "produce_block",
         "VCE",
     ];
 
