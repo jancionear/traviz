@@ -1124,9 +1124,10 @@ fn set_min_max_time(spans: &[Rc<Span>]) {
         let mut min_start_time = span.start_time;
         let mut max_end_time = span.end_time;
 
-        for child in span.children.borrow().iter() {
-            set_min_max_time(&[child.clone()]);
+        let children = span.children.borrow();
+        set_min_max_time(children.as_slice());
 
+        for child in children.iter() {
             min_start_time = min_start_time.min(child.min_start_time.get());
             max_end_time = max_end_time.max(child.max_end_time.get());
         }
