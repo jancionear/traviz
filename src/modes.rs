@@ -101,6 +101,7 @@ pub fn chain_mode_one_shard(
         "send_chunk_state_witness",
         "produce_optimistic_block_on_head",
         "validate_chunk_endorsement",
+        "on_approval_message",
     ];
 
     let all_spans = extract_spans(trace_data)?;
