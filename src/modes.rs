@@ -74,6 +74,18 @@ fn get_doomslug_spans(spans: &[Rc<Span>], res: &mut Vec<Rc<Span>>) {
 }
 
 pub fn chain_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
+    chain_mode_one_shard(trace_data, None)
+}
+
+pub fn chain_shard0_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
+    chain_mode_one_shard(trace_data, Some("0".to_string()))
+}
+
+// Chain mode, optionally filtered down to one shard
+pub fn chain_mode_one_shard(
+    trace_data: &[ExportTraceServiceRequest],
+    one_shard: Option<String>,
+) -> Result<Vec<Rc<Span>>> {
     let important_chain_spans = [
         "preprocess_optimistic_block",
         "process_optimistic_block",
@@ -93,7 +105,21 @@ pub fn chain_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Spa
 
     let all_spans = extract_spans(trace_data)?;
 
-    let is_important = |span: &Span| important_chain_spans.contains(&span.name.as_str());
+    let is_important = |span: &Span| {
+        if !important_chain_spans.contains(&span.name.as_str()) {
+            return false;
+        }
+
+        if let Some(filter_shard) = &one_shard {
+            if let Some(val) = span.attributes.get("shard_id") {
+                if &value_to_text(val) != filter_shard {
+                    return false;
+                }
+            }
+        }
+
+        true
+    };
 
     let res = retain_important(all_spans, &is_important);
     let res = add_height_shard_id_to_name(res);
