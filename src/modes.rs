@@ -4,6 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -100,7 +101,8 @@ pub fn chain_mode_one_shard(
         "validate_chunk_state_witness",
         "send_chunk_state_witness",
         "produce_optimistic_block_on_head",
-        "validate_chunk_endorsement",
+        "produce_block",
+        "VCE",
         "on_approval_message",
     ];
 
@@ -224,6 +226,16 @@ pub fn map_span(span: Span, f: &dyn Fn(Span) -> Span) -> Span {
 fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
     let t = TaskTimer::new("Extracting spans");
 
+    // TODO Add a new field "full_name" to be displayed in tooltip and hover.
+    // Name overrides for spans
+    let name_overrides: HashMap<&'static str, &'static str> = [
+        ("validate_chunk_endorsement", "VCE"),
+        // Add more overrides here as needed
+    ]
+    .iter()
+    .cloned()
+    .collect();
+
     let mut spans_by_id = BTreeMap::new();
     for request in requests {
         for rs in &request.resource_spans {
@@ -298,7 +310,10 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
                     spans_by_id.insert(
                         span.span_id.clone(),
                         Rc::new(Span {
-                            name: span.name.clone(),
+                            name: name_overrides
+                                .get(span.name.as_str())
+                                .map(|&s| s.to_string())
+                                .unwrap_or_else(|| span.name.clone()),
                             span_id: span.span_id.clone(),
                             trace_id: span.trace_id.clone(),
                             parent_span_id: span.parent_span_id.clone(),

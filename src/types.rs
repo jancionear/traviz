@@ -94,7 +94,11 @@ pub fn value_to_text(value_opt: &Option<Value>) -> String {
         Value::DoubleValue(d) => d.to_string(),
         Value::ArrayValue(a) => format!(
             "[{}]",
-            a.values.iter().map(|v| value_to_text(&v.value)).collect::<Vec<_>>().join(", ")
+            a.values
+                .iter()
+                .map(|v| value_to_text(&v.value))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Value::KvlistValue(kv) => format!(
             "{{{}}}",

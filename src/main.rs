@@ -139,7 +139,7 @@ impl Default for App {
                 node_name_width: 150.0,
                 span_name_threshold: 100.0,
                 span_margin: 3.0,
-                spans_time_points_height: 50.0,
+                spans_time_points_height: 80.0,
                 middle_bar_height: 30.0,
             },
             timeline: Timeline {
@@ -283,6 +283,12 @@ impl App {
 
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
+
+        self.timeline.visible_start = min_time;
+        self.timeline.visible_end = (min_time + 20.0).min(max_time);
+        self.timeline.selected_start = min_time;
+        self.timeline.selected_end = (min_time + 2.0).min(max_time);
+
         self.set_timeline_end_bars_to_selected();
 
         Ok(())
@@ -456,6 +462,7 @@ impl App {
             area,
             Color32::from_rgb(50, 50, 50),
             ui,
+            &self.spans_to_display,
         );
     }
 
@@ -477,6 +484,7 @@ impl App {
         area: Rect,
         color: Color32,
         ui: &mut Ui,
+        spans: &[Rc<Span>],
     ) {
         for dot in get_time_dots(start_time, end_time) {
             ui.painter().rect_filled(
@@ -517,6 +525,56 @@ impl App {
                 color,
             );
             cur_pos += text_rect.width() + 50.0;
+        }
+
+        // Draw red lines for produce_block
+        let produce_block_starts = collect_produce_block_starts_with_nodes(spans);
+        for (t, node_name) in produce_block_starts {
+            if (t >= start_time) && (t <= end_time) {
+                let x = time_to_screen(t, area.min.x, area.max.x, start_time, end_time);
+                let marker_height = 20.0;
+                ui.painter().line_segment(
+                    [
+                        Pos2::new(x, area.max.y),
+                        Pos2::new(x, area.max.y - marker_height),
+                    ],
+                    Stroke::new(2.0, Color32::RED),
+                );
+
+                // Remove "neard:" prefix if present
+                let short_node_name = node_name.strip_prefix("neard:").unwrap_or(&node_name);
+
+                // Draw node name
+                let small_font_id =
+                    FontId::proportional(0.6 * egui::TextStyle::Body.resolve(ui.style()).size);
+                ui.painter().text(
+                    Pos2::new(x + 4.0, area.max.y - 10.0),
+                    Align2::LEFT_TOP,
+                    short_node_name,
+                    small_font_id,
+                    Color32::RED,
+                );
+
+                // Draw indicator for produce_block
+                let label_rect = Rect::from_min_size(
+                    Pos2::new(area.min.x - 15.0, area.max.y - 16.0),
+                    Vec2::new(90.0, 18.0),
+                );
+                ui.painter().rect_filled(
+                    label_rect,
+                    3.0,
+                    Color32::from_rgba_unmultiplied(60, 0, 0, 0),
+                );
+                let font_id =
+                    FontId::proportional(0.7 * egui::TextStyle::Body.resolve(ui.style()).size);
+                ui.painter().text(
+                    label_rect.center(),
+                    Align2::CENTER_CENTER,
+                    "produce_block",
+                    font_id,
+                    color,
+                );
+            }
         }
     }
 
@@ -571,6 +629,7 @@ impl App {
             time_points_area,
             Color32::from_gray(240),
             ui,
+            &self.spans_to_display,
         );
 
         let under_time_points_area =
@@ -780,15 +839,11 @@ impl App {
         level: u64,
     ) {
         for span in spans {
-            self.draw_arranged_span(
-                span,
-                ui,
-                start_height
-                    + span.parent_height_offset.get() as f32
-                        * (span_height + self.layout.span_margin),
-                span_height,
-                level,
-            );
+            let y = start_height
+                + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
+
+            // Always recurse into children, regardless of parent's visibility
+            self.draw_arranged_span(span, ui, y, span_height, level);
         }
     }
 
@@ -800,87 +855,92 @@ impl App {
         span_height: f32,
         level: u64,
     ) {
-        let start_x = span.display_start.get();
-        let end_x = start_x + span.display_length.get();
+        let visible_rect = ui.clip_rect();
+        // Only draw if this span is visible
+        if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
+        {
+            let start_x = span.display_start.get();
+            let end_x = start_x + span.display_length.get();
 
-        let name = if end_x - start_x > self.layout.span_name_threshold {
-            span.name.as_str()
-        } else {
-            ""
-        };
+            let name = if end_x - start_x > self.layout.span_name_threshold {
+                span.name.as_str()
+            } else {
+                ""
+            };
 
-        let time_color = Color32::from_rgb(242, 176, 34);
-        let base_color = Color32::from_rgb(242, 242, 217);
-        let time_rect = Rect::from_min_max(
-            Pos2::new(start_x, start_height),
-            Pos2::new(
-                start_x + span.time_display_length.get(),
-                start_height + span_height,
-            ),
-        );
-        let display_rect = Rect::from_min_max(
-            Pos2::new(start_x, start_height),
-            Pos2::new(end_x, start_height + span_height),
-        );
-        ui.painter().rect_filled(display_rect, 0, base_color);
-        ui.painter().rect_filled(time_rect, 0, time_color);
-
-        if level == 0 {
-            // Top level spans get a color line at the top
-            ui.painter().line(
-                vec![
-                    Pos2::new(start_x, start_height),
-                    Pos2::new(end_x, start_height),
-                ],
-                Stroke::new(2.0, Color32::from_rgb(255, 51, 0)),
+            let time_color = Color32::from_rgb(242, 176, 34);
+            let base_color = Color32::from_rgb(242, 242, 217);
+            let time_rect = Rect::from_min_max(
+                Pos2::new(start_x, start_height),
+                Pos2::new(
+                    start_x + span.time_display_length.get(),
+                    start_height + span_height,
+                ),
             );
-        }
+            let display_rect = Rect::from_min_max(
+                Pos2::new(start_x, start_height),
+                Pos2::new(end_x, start_height + span_height),
+            );
+            ui.painter().rect_filled(display_rect, 0, base_color);
+            ui.painter().rect_filled(time_rect, 0, time_color);
 
-        let span_button = ui.put(
-            display_rect,
-            Button::new(name)
-                .truncate()
-                .fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
-        );
-
-        if span_button.clicked_by(PointerButton::Primary) {
-            self.clicked_span = Some(span.clone());
-        }
-
-        if span_button.clicked_by(PointerButton::Middle) {
-            span.collapse_children.set(!span.collapse_children.get());
-        }
-
-        span_button.on_hover_ui_at_pointer(|ui| {
-            ui.label(span.name.clone());
-            ui.separator();
-            ui.label(format!(
-                "{:.3} ms",
-                (span.end_time - span.start_time) * 1000.0
-            ));
-            ui.label(format!(
-                "{} - {}",
-                time_point_to_utc_string(span.start_time),
-                time_point_to_utc_string(span.end_time)
-            ));
-            ui.label(format!("span_id: {}", hex::encode(&span.span_id)));
-            ui.label(format!(
-                "parent_span_id: {}",
-                hex::encode(&span.parent_span_id)
-            ));
-            ui.separator();
-            for (name, value) in &span.attributes {
-                ui.label(format!("{}: {}", name, value_to_text(value)));
+            if level == 0 {
+                ui.painter().line(
+                    vec![
+                        Pos2::new(start_x, start_height),
+                        Pos2::new(end_x, start_height),
+                    ],
+                    Stroke::new(2.0, Color32::from_rgb(255, 51, 0)),
+                );
             }
-            ui.separator();
-            let num_events = count_events(span);
-            ui.label(format!(
-                "Events: (this span: {}) (including children: {})",
-                span.events.len(),
-                num_events
-            ));
-        });
 
+            let span_button = ui.put(
+                display_rect,
+                Button::new(name)
+                    .truncate()
+                    .fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
+            );
+
+            if span_button.clicked_by(PointerButton::Primary) {
+                self.clicked_span = Some(span.clone());
+            }
+
+            if span_button.clicked_by(PointerButton::Middle) {
+                span.collapse_children.set(!span.collapse_children.get());
+            }
+
+            span_button.on_hover_ui_at_pointer(|ui| {
+                ui.label(span.name.clone());
+                ui.separator();
+                ui.label(format!(
+                    "{:.3} ms",
+                    (span.end_time - span.start_time) * 1000.0
+                ));
+                ui.label(format!(
+                    "{} - {}",
+                    time_point_to_utc_string(span.start_time),
+                    time_point_to_utc_string(span.end_time)
+                ));
+                ui.label(format!("span_id: {}", hex::encode(&span.span_id)));
+                ui.label(format!(
+                    "parent_span_id: {}",
+                    hex::encode(&span.parent_span_id)
+                ));
+                ui.separator();
+                for (name, value) in &span.attributes {
+                    ui.label(format!("{}: {}", name, value_to_text(value)));
+                }
+                ui.separator();
+                let num_events = count_events(span);
+                ui.label(format!(
+                    "Events: (this span: {}) (including children: {})",
+                    span.events.len(),
+                    num_events
+                ));
+            });
+        }
+
+        // Always recurse into children
         self.draw_arranged_spans(
             span.display_children.borrow().as_slice(),
             ui,
@@ -1004,89 +1064,86 @@ struct SpanBoundingBox {
 /// Sets relative_display_pos for all spans and their children
 fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundingBox {
     if input_spans.is_empty() {
-        return SpanBoundingBox {
-            start: 0.0,
-            end: 0.0,
-            height: 0,
-        };
+        return SpanBoundingBox::default();
     }
 
-    let mut sorted_spans = input_spans.to_vec();
+    // Sort spans by start time
+    let mut sorted_spans = Vec::with_capacity(input_spans.len());
+    sorted_spans.extend_from_slice(input_spans);
     sorted_spans.sort_by(|a, b| {
-        if let Some(start_ordering) = a.min_start_time.partial_cmp(&b.min_start_time) {
-            return start_ordering;
-        }
-        a.max_end_time
-            .partial_cmp(&b.max_end_time)
+        a.min_start_time
+            .get()
+            .partial_cmp(&b.min_start_time.get())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut span_bounding_boxes: Vec<SpanBoundingBox> = Vec::new();
-
-    for (i, span) in sorted_spans.iter().enumerate() {
-        let mut span_bbox = arrange_span(span);
-        if first_invocation && span_bbox.height > 0 {
-            span_bbox.height += 1; // Top-level spans have one unit of padding below them
-        }
-
-        span.parent_height_offset.set(0);
-
-        loop {
-            let mut is_colliding = false;
-
-            for j in 0..i {
-                let other_span = &sorted_spans[j];
-                let other_span_bbox = &span_bounding_boxes[j];
-
-                if is_intersecting(
-                    span_bbox.start,
-                    span_bbox.end,
-                    other_span_bbox.start,
-                    other_span_bbox.end,
-                ) && do_spans_collide_in_y(
-                    span.parent_height_offset.get(),
-                    span_bbox.height,
-                    other_span.parent_height_offset.get(),
-                    other_span_bbox.height,
-                ) {
-                    is_colliding = true;
-                    break;
-                }
-
-                if span_bbox.start < other_span_bbox.end && span_bbox.end < other_span_bbox.start {
-                    assert!(is_colliding);
-                }
-            }
-
-            if is_colliding {
-                span.parent_height_offset
-                    .set(span.parent_height_offset.get() + 1);
-            } else {
-                break;
-            }
-        }
-
-        span_bounding_boxes.push(span_bbox);
-    }
-
+    let mut span_bounding_boxes: Vec<SpanBoundingBox> = Vec::with_capacity(sorted_spans.len());
     let mut final_bbox = SpanBoundingBox {
         start: f32::INFINITY,
         end: f32::NEG_INFINITY,
         height: 0,
     };
 
-    for i in 0..sorted_spans.len() {
-        let span = &sorted_spans[i];
-        let span_bbox = &span_bounding_boxes[i];
+    // Each entry is the index of a span in sorted_spans/span_bounding_boxes
+    let mut active_spans: Vec<usize> = Vec::with_capacity(sorted_spans.len());
 
+    for (i, span) in sorted_spans.iter().enumerate() {
+        let mut span_bbox = arrange_span(span);
+        if first_invocation && span_bbox.height > 0 {
+            span_bbox.height += 1;
+        }
+
+        // Default to height 0, will be updated below
+        span.parent_height_offset.set(0);
+
+        // Remove spans that end before the current span starts
+        active_spans.retain(|&j| {
+            let other_bbox = &span_bounding_boxes[j];
+            other_bbox.end >= span_bbox.start
+        });
+
+        // Find the first non-colliding height
+        let mut height = 0;
+        'height_search: loop {
+            span.parent_height_offset.set(height);
+
+            for &j in &active_spans {
+                let other_span = &sorted_spans[j];
+                let other_bbox: &SpanBoundingBox = &span_bounding_boxes[j];
+
+                if do_spans_collide_in_y(
+                    height,
+                    span_bbox.height,
+                    other_span.parent_height_offset.get(),
+                    other_bbox.height,
+                ) {
+                    height += 1;
+                    continue 'height_search;
+                }
+            }
+            break;
+        }
+
+        // Update the bounding box for this span
         final_bbox.start = final_bbox.start.min(span_bbox.start);
         final_bbox.end = final_bbox.end.max(span_bbox.end);
-        final_bbox.height = final_bbox
-            .height
-            .max(span.parent_height_offset.get() + span_bbox.height);
+        final_bbox.height = final_bbox.height.max(height + span_bbox.height);
+
+        span_bounding_boxes.push(span_bbox);
+        active_spans.push(i);
     }
 
     final_bbox
+}
+
+impl Default for SpanBoundingBox {
+    fn default() -> Self {
+        Self {
+            start: 0.0,
+            end: 0.0,
+            height: 0,
+        }
+    }
 }
 
 fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
@@ -1125,9 +1182,10 @@ fn set_min_max_time(spans: &[Rc<Span>]) {
         let mut min_start_time = span.start_time;
         let mut max_end_time = span.end_time;
 
-        for child in span.children.borrow().iter() {
-            set_min_max_time(&[child.clone()]);
+        let children = span.children.borrow();
+        set_min_max_time(children.as_slice());
 
+        for child in children.iter() {
             min_start_time = min_start_time.min(child.min_start_time.get());
             max_end_time = max_end_time.max(child.max_end_time.get());
         }
@@ -1240,6 +1298,18 @@ fn set_display_children_rec(
             set_display_children_rec(c, collapse_children_active, cur_children);
         }
     }
+}
+
+fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint, String)> {
+    let mut result = Vec::new();
+    for span in spans {
+        if span.name.starts_with("produce_block") {
+            result.push((span.start_time, span.node.name.clone()));
+        }
+        let children = span.children.borrow();
+        result.extend(collect_produce_block_starts_with_nodes(children.as_slice()));
+    }
+    result
 }
 
 #[test]
