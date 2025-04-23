@@ -17,7 +17,20 @@ use crate::types::{
 };
 
 pub fn everything_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
-    extract_spans(trace_data)
+    let spans = extract_spans(trace_data)?;
+    // Shorten the name to make arranging more efficient in everything mode.
+    // This is a bit of a hack, but that's what we have for now.
+    let spans = map_spans(spans.as_slice(), &|mut s: Span| -> Span {
+        if s.name == "validate_chunk_endorsement" {
+            s.name = "VCE".to_string();
+        }
+        s.attributes.insert(
+            "full-name".to_string(),
+            Some(Value::StringValue("validate_chunk_endorsement".to_string())),
+        );
+        s
+    });
+    Ok(spans)
 }
 
 pub fn doomslug_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
