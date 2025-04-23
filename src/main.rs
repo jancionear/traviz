@@ -47,10 +47,10 @@ impl Timeline {
         self.absolute_end = max_time;
 
         self.visible_start = min_time;
-        self.visible_end = (self.visible_start + 1.0).min(max_time);
+        self.visible_end = (self.visible_start + 5.0).min(max_time);
 
         self.selected_start = min_time;
-        self.selected_end = (self.selected_start + 0.1).min(max_time);
+        self.selected_end = (self.selected_start + 1.0).min(max_time);
     }
 }
 
