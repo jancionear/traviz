@@ -655,9 +655,13 @@ impl App {
                             under_time_points_area.max.x,
                             ui,
                         );
+                        let t = TaskTimer::new("arrange_spans");
                         let bbox = arrange_spans(&spans_in_range, true);
+                        t.stop();
                         ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
+                        let t = TaskTimer::new("draw_arranged_spans");
                         self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height, 0);
+                        t.stop();
 
                         let next_height = cur_height
                             + bbox.height as f32 * (span_height + self.layout.span_margin);
