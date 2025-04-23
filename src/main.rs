@@ -1025,7 +1025,10 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut span_bounding_boxes: Vec<SpanBoundingBox> = Vec::new();
+    let mut span_bounding_boxes: Vec<SpanBoundingBox> = Vec::with_capacity(sorted_spans.len());
+
+    // Spans that can collide with new spans (holds indexes to span_bounding_boxes).
+    let mut active_spans: Vec<usize> = Vec::new();
 
     for (i, span) in sorted_spans.iter().enumerate() {
         let mut span_bbox = arrange_span(span);
@@ -1033,12 +1036,18 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
             span_bbox.height += 1; // Top-level spans have one unit of padding below them
         }
 
+        // Default to height 0, will be updated below
         span.parent_height_offset.set(0);
+
+        // Remove spans that for sure won't collide with this span or any future ones. Spans are
+        // sorted by start time, so we can be sure that for futures ones the start time will be
+        // larger than the end of the bounding box.
+        active_spans.retain(|&j| span_bounding_boxes[j].end >= span_bbox.start);
 
         loop {
             let mut is_colliding = false;
 
-            for j in 0..i {
+            for &j in &active_spans {
                 let other_span = &sorted_spans[j];
                 let other_span_bbox = &span_bounding_boxes[j];
 
@@ -1071,6 +1080,7 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
         }
 
         span_bounding_boxes.push(span_bbox);
+        active_spans.push(i);
     }
 
     let mut final_bbox = SpanBoundingBox {
