@@ -784,15 +784,9 @@ impl App {
         level: u64,
     ) {
         for span in spans {
-            self.draw_arranged_span(
-                span,
-                ui,
-                start_height
-                    + span.parent_height_offset.get() as f32
-                        * (span_height + self.layout.span_margin),
-                span_height,
-                level,
-            );
+            let next_start_height = start_height
+                + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
+            self.draw_arranged_span(span, ui, next_start_height, span_height, level);
         }
     }
 
