@@ -115,6 +115,12 @@ pub fn chain_mode_one_shard(
         "produce_optimistic_block_on_head",
         "validate_chunk_endorsement",
         "on_approval_message",
+        "produce_block",
+        "receive_block",
+        "process_blocks_with_missing_chunks",
+        "distribute_encoded_chunk",
+        "process_partial_encoded_chunk",
+        "request_partial_encoded_chunk",
     ];
 
     let all_spans = extract_spans(trace_data)?;
