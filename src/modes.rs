@@ -114,13 +114,22 @@ pub fn chain_mode_one_shard(
         "send_chunk_state_witness",
         "produce_optimistic_block_on_head",
         "validate_chunk_endorsement",
-        "on_approval_message",
+        // "on_approval_message", - don't show these spans, they're too noisy
+        // "send_chunk_endorsement",
     ];
 
     let all_spans = extract_spans(trace_data)?;
 
     let is_important = |span: &Span| {
         if !important_chain_spans.contains(&span.name.as_str()) {
+            return false;
+        }
+
+        // Show only chunk endorsements for our debug validators, otherwise there's too much noise
+        let stringified = stringify_span(span, false);
+        if stringified.contains("validate_chunk_endorsement")
+            && !stringified.contains("debug-validator")
+        {
             return false;
         }
 

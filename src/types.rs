@@ -117,7 +117,7 @@ pub fn value_to_text(value_opt: &Option<Value>) -> String {
 
 /// Convert span to a string that can be used for text-based search/filtering etc.
 /// Not necessarily human readable.
-pub fn stringify_span(span: &Rc<Span>, include_children: bool) -> String {
+pub fn stringify_span(span: &Span, include_children: bool) -> String {
     let mut s = format!(
         "Span {{\n name: {}\n, span_id: {:x?}\n, trace_id: {:x?}\n, parent_span_id: {:x?}\n, start_time: {}\n, end_time: {}\n, attributes: {}\n",
         span.name,
