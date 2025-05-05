@@ -686,6 +686,14 @@ impl App {
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
                     for (node_name, (_node, spans)) in node_spans {
+                        if true
+                            && (!node_name.contains("validator-04")
+                                && !node_name.contains("node3")
+                                && !node_name.contains("penny"))
+                        {
+                            continue;
+                        }
+
                         let spans_in_range: Vec<Rc<Span>> = spans
                             .iter()
                             .filter(|s| {

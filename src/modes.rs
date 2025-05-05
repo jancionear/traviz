@@ -100,22 +100,22 @@ pub fn chain_mode_one_shard(
     one_shard: Option<String>,
 ) -> Result<Vec<Rc<Span>>> {
     let important_chain_spans = [
-        "preprocess_optimistic_block",
-        "process_optimistic_block",
-        "postprocess_ready_block",
-        "postprocess_optimistic_block",
-        "preprocess_block",
-        "apply_new_chunk",
-        "apply_old_chunk",
-        "produce_chunk_internal",
-        "produce_block_on",
-        "receive_optimistic_block",
-        "validate_chunk_state_witness",
-        "send_chunk_state_witness",
-        "produce_optimistic_block_on_head",
+        // "preprocess_optimistic_block",
+        // "process_optimistic_block",
+        // "postprocess_ready_block",
+        // "postprocess_optimistic_block",
+        // "preprocess_block",
+        // "apply_new_chunk",
+        // "apply_old_chunk",
+        // "produce_chunk_internal",
+        // "produce_block_on",
+        // "receive_optimistic_block",
+        //"validate_chunk_state_witness",
+        //"send_chunk_state_witness",
+        // "produce_optimistic_block_on_head",
         "validate_chunk_endorsement",
-        // "on_approval_message", - don't show these spans, they're too noisy
-        // "send_chunk_endorsement",
+        // "validate_partial_encoded_state_witness", // "on_approval_message", - don't show these spans, they're too noisy
+        "send_chunk_endorsement",
     ];
 
     let all_spans = extract_spans(trace_data)?;
@@ -128,8 +128,12 @@ pub fn chain_mode_one_shard(
         // Show only chunk endorsements for our debug validators, otherwise there's too much noise
         let stringified = stringify_span(span, false);
         if stringified.contains("validate_chunk_endorsement")
-            && !stringified.contains("debug-validator")
+            && !(stringified.contains("debug-validator-04") || stringified.contains("penny"))
         {
+            return false;
+        }
+
+        if stringified.contains("send_chunk_endorsement") && span.node.name == "neard:node3" {
             return false;
         }
 
