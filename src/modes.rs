@@ -116,6 +116,8 @@ pub fn chain_mode_one_shard(
         "validate_chunk_endorsement",
         // "validate_partial_encoded_state_witness", // "on_approval_message", - don't show these spans, they're too noisy
         "send_chunk_endorsement",
+        "receive_chunk_endorsement",
+        "receive_message",
     ];
 
     let all_spans = extract_spans(trace_data)?;
@@ -127,8 +129,9 @@ pub fn chain_mode_one_shard(
 
         // Show only chunk endorsements for our debug validators, otherwise there's too much noise
         let stringified = stringify_span(span, false);
-        if stringified.contains("validate_chunk_endorsement")
-            && !(stringified.contains("debug-validator-04") || stringified.contains("penny"))
+        if (stringified.contains("validate_chunk_endorsement")
+            || stringified.contains("receive_chunk_endorsement"))
+            && !(stringified.contains("debug-validator-03") || stringified.contains("penny"))
         {
             return false;
         }
@@ -219,7 +222,9 @@ pub fn add_height_shard_id_to_name(spans: Vec<Rc<Span>>) -> Vec<Rc<Span>> {
         if let Some(val) = s.attributes.get("shard_id") {
             s.name = format!("{} s={}", s.name, value_to_text(val));
         }
-        s.display_options.display_length = DisplayLength::Text;
+        if !s.name.contains("receive_message") {
+            s.display_options.display_length = DisplayLength::Text;
+        }
         s
     })
 }
