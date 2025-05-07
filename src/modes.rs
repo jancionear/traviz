@@ -108,7 +108,7 @@ pub fn chain_mode_one_shard(
         // "apply_new_chunk",
         // "apply_old_chunk",
         // "produce_chunk_internal",
-        // "produce_block_on",
+        "produce_block_on",
         // "receive_optimistic_block",
         //"validate_chunk_state_witness",
         //"send_chunk_state_witness",
@@ -118,6 +118,11 @@ pub fn chain_mode_one_shard(
         "send_chunk_endorsement",
         "receive_chunk_endorsement",
         "receive_message",
+        "send_message_with_encoding",
+        //"handle_msg_ready",
+        //"handle_sync_routing_table",
+        //"handle",
+        //"send_message_with_encoding",
     ];
 
     let all_spans = extract_spans(trace_data)?;
@@ -131,7 +136,9 @@ pub fn chain_mode_one_shard(
         let stringified = stringify_span(span, false);
         if (stringified.contains("validate_chunk_endorsement")
             || stringified.contains("receive_chunk_endorsement"))
-            && !(stringified.contains("debug-validator-03") || stringified.contains("penny"))
+            && !(stringified.contains("debug-validator-03")
+                || stringified.contains("penny")
+                || stringified.contains("debug-validator-04"))
         {
             return false;
         }
@@ -222,7 +229,16 @@ pub fn add_height_shard_id_to_name(spans: Vec<Rc<Span>>) -> Vec<Rc<Span>> {
         if let Some(val) = s.attributes.get("shard_id") {
             s.name = format!("{} s={}", s.name, value_to_text(val));
         }
-        if !s.name.contains("receive_message") {
+
+        let time_lens = [
+            "receive_message",
+            "send_message_with_encoding",
+            "handle_msg_ready",
+            "handle_sync_routing_table",
+            "handle",
+            "send_message_with_encoding",
+        ];
+        if !time_lens.iter().any(|n| s.name.contains(n)) {
             s.display_options.display_length = DisplayLength::Text;
         }
         s

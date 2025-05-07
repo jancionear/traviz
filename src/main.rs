@@ -688,6 +688,7 @@ impl App {
                     for (node_name, (_node, spans)) in node_spans {
                         if true
                             && (!node_name.contains("validator-03")
+                                && !node_name.contains("validator-04")
                                 && !node_name.contains("node3")
                                 && !node_name.contains("penny"))
                         {
