@@ -109,7 +109,7 @@ pub fn chain_mode_one_shard(
         // "apply_old_chunk",
         // "produce_chunk_internal",
         "produce_block_on",
-        // "receive_optimistic_block",
+        //"receive_optimistic_block",
         //"validate_chunk_state_witness",
         //"send_chunk_state_witness",
         // "produce_optimistic_block_on_head",
@@ -123,6 +123,7 @@ pub fn chain_mode_one_shard(
         //"handle_sync_routing_table",
         //"handle",
         //"send_message_with_encoding",
+        "recv_penny_endorsement",
     ];
 
     let all_spans = extract_spans(trace_data)?;
@@ -134,6 +135,7 @@ pub fn chain_mode_one_shard(
 
         // Show only chunk endorsements for our debug validators, otherwise there's too much noise
         let stringified = stringify_span(span, false);
+
         if (stringified.contains("validate_chunk_endorsement")
             || stringified.contains("receive_chunk_endorsement"))
             && !(stringified.contains("debug-validator-03")
