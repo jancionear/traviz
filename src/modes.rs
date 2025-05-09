@@ -113,17 +113,19 @@ pub fn chain_mode_one_shard(
         //"validate_chunk_state_witness",
         //"send_chunk_state_witness",
         // "produce_optimistic_block_on_head",
-        "validate_chunk_endorsement",
+        //"validate_chunk_endorsement",
         // "validate_partial_encoded_state_witness", // "on_approval_message", - don't show these spans, they're too noisy
         "send_chunk_endorsement",
-        "receive_chunk_endorsement",
-        "receive_message",
-        "send_message_with_encoding",
+        //"receive_chunk_endorsement",
+        //"receive_message",
+        //"send_message_with_encoding",
         //"handle_msg_ready",
         //"handle_sync_routing_table",
         //"handle",
         //"send_message_with_encoding",
         "recv_penny_endorsement",
+        "net_recv_endorsement",
+        "net_send_endorsement",
     ];
 
     let all_spans = extract_spans(trace_data)?;
@@ -137,7 +139,8 @@ pub fn chain_mode_one_shard(
         let stringified = stringify_span(span, false);
 
         if (stringified.contains("validate_chunk_endorsement")
-            || stringified.contains("receive_chunk_endorsement"))
+            || stringified.contains("receive_chunk_endorsement")
+            || stringified.contains("net_recv_endorsement"))
             && !(stringified.contains("debug-validator-03")
                 || stringified.contains("penny")
                 || stringified.contains("debug-validator-04"))
@@ -145,7 +148,10 @@ pub fn chain_mode_one_shard(
             return false;
         }
 
-        if stringified.contains("send_chunk_endorsement") && span.node.name == "neard:node3" {
+        if (stringified.contains("send_chunk_endorsement")
+            || stringified.contains("net_send_endorsement"))
+            && span.node.name == "neard:node3"
+        {
             return false;
         }
 
