@@ -17,9 +17,12 @@ use types::{
     TimePoint,
 };
 
+mod analyze_span;
 mod modes;
 mod task_timer;
 mod types;
+
+use modes::{chain_mode, chain_shard0_mode, doomslug_mode, everything_mode};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -85,6 +88,11 @@ fn screen_change_to_time_change(
     after - before
 }
 
+// Struct to hold error notification state
+struct ErrorNotification {
+    message: String,
+}
+
 struct App {
     layout: Layout,
     timeline: Timeline,
@@ -97,6 +105,8 @@ struct App {
     include_children_events: bool,
     display_mode: DisplayMode,
     search: Search,
+    analyze_span_modal: analyze_span::AnalyzeSpanModal,
+    error_notification: Option<ErrorNotification>,
 }
 
 struct Layout {
@@ -158,6 +168,8 @@ impl Default for App {
             include_children_events: true,
             display_mode: DisplayMode::Everything,
             search: Search::default(),
+            analyze_span_modal: analyze_span::AnalyzeSpanModal::default(),
+            error_notification: None,
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
@@ -207,6 +219,11 @@ impl eframe::App for App {
                 self.draw_spans(spans_area, ui);
 
                 self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
+
+                self.draw_analyze_span_modal(ctx, window_width - 200.0, window_height - 200.0);
+
+                // Draw error notifications on top of everything
+                self.draw_error_notification(ctx);
 
                 // If Ctrl+Q clicked, quit the app
                 if ctx.input(|i| i.key_down(Key::Q) && i.modifiers.ctrl) {
@@ -259,15 +276,25 @@ impl App {
                 });
             if display_mode_before != self.display_mode {
                 let res = match self.display_mode {
-                    DisplayMode::Everything => self.apply_mode(modes::everything_mode),
-                    DisplayMode::Doomslug => self.apply_mode(modes::doomslug_mode),
-                    DisplayMode::Chain => self.apply_mode(modes::chain_mode),
-                    DisplayMode::ChainShard0 => self.apply_mode(modes::chain_shard0_mode),
+                    DisplayMode::Everything => self.apply_mode(everything_mode),
+                    DisplayMode::Doomslug => self.apply_mode(doomslug_mode),
+                    DisplayMode::Chain => self.apply_mode(chain_mode),
+                    DisplayMode::ChainShard0 => self.apply_mode(chain_shard0_mode),
                 };
                 if let Err(e) = res {
                     println!("Error applying mode: {}", e);
                     self.display_mode = DisplayMode::Everything;
                 }
+            }
+
+            // Add Analyze Span button, disabled if no spans are loaded
+            let has_spans = !self.spans_to_display.is_empty();
+            let analyze_button = ui.add_enabled(has_spans, Button::new("Analyze Span"));
+            if analyze_button.clicked() {
+                self.analyze_span_modal.show = true;
+                self.analyze_span_modal.search_text = String::new();
+                self.analyze_span_modal
+                    .update_span_list(&self.spans_to_display);
             }
         });
     }
@@ -279,7 +306,23 @@ impl App {
 
         self.raw_data = parse_trace_file(&file_bytes)?;
 
-        self.apply_mode(modes::everything_mode)?;
+        // Store current display mode
+        let current_mode = self.display_mode;
+
+        // Apply the current display mode instead of always using everything_mode
+        let res = match current_mode {
+            DisplayMode::Everything => self.apply_mode(everything_mode),
+            DisplayMode::Doomslug => self.apply_mode(doomslug_mode),
+            DisplayMode::Chain => self.apply_mode(chain_mode),
+            DisplayMode::ChainShard0 => self.apply_mode(chain_shard0_mode),
+        };
+
+        // Only fall back to everything_mode if the current mode fails
+        if let Err(e) = res {
+            println!("Error applying mode {current_mode:?}: {e}. Falling back to Everything mode.");
+            self.display_mode = DisplayMode::Everything;
+            self.apply_mode(everything_mode)?;
+        }
 
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
@@ -1026,6 +1069,99 @@ impl App {
                 self.clicked_span = None;
             }
         })
+    }
+
+    fn draw_analyze_span_modal(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
+        if !self.analyze_span_modal.show {
+            // Reset the processed flag when closing the modal
+            if self.analyze_span_modal.spans_processed {
+                self.analyze_span_modal.spans_processed = false;
+            }
+            return;
+        }
+
+        let modal = &mut self.analyze_span_modal;
+
+        // Only process spans once when the modal is first opened
+        if !modal.spans_processed {
+            println!("Setting up analyze modal...");
+
+            if !self.raw_data.is_empty() {
+                // Extract ALL spans from raw data for analysis
+                match everything_mode(&self.raw_data) {
+                    Ok(all_spans) => {
+                        println!("Extracted {} total spans for analysis", all_spans.len());
+                        // Pass all spans to the modal for storage and analysis
+                        modal.show_modal(ctx, &all_spans, max_width, max_height);
+                        modal.spans_processed = true;
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Failed to extract spans for analysis: {}", e);
+                        modal.show = false;
+                        self.show_error_notification(&error_msg);
+                    }
+                }
+            } else {
+                modal.show = false;
+                self.show_error_notification("No trace data available for analysis");
+            }
+        } else {
+            // On subsequent calls, pass empty spans array since they're already stored
+            modal.show_modal(ctx, &[], max_width, max_height);
+        }
+    }
+
+    // Show an error notification
+    fn show_error_notification(&mut self, message: &str) {
+        self.error_notification = Some(ErrorNotification {
+            message: message.to_string(),
+        });
+        println!("Error notification shown: {}", message);
+    }
+
+    // Draw the error notification if one is active
+    fn draw_error_notification(&mut self, ctx: &egui::Context) {
+        // Check if we have an error notification to show
+        if self.error_notification.is_none() {
+            return;
+        }
+
+        // Get the message from the notification
+        let message = self.error_notification.as_ref().unwrap().message.clone();
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(Color32::from_black_alpha(120)))
+            .show(ctx, |_ui| {});
+
+        let mut open = true;
+        let mut should_close = false;
+
+        // Draw the error popup as a modal window
+        egui::Window::new("Error")
+            .id(egui::Id::new("error_window"))
+            .fixed_size([300.0, 150.0])
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.add_space(10.0);
+                    ui.colored_label(Color32::RED, message);
+                    ui.add_space(20.0);
+
+                    if ui.button("Close").clicked() {
+                        // Indicate we should close the window
+                        should_close = true;
+                    }
+                });
+            });
+
+        // Handle window being closed (either via Close button or X button)
+        if !open || should_close {
+            self.error_notification = None;
+            ctx.request_repaint();
+        }
     }
 }
 
