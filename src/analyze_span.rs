@@ -310,18 +310,30 @@ impl AnalyzeSpanModal {
                     ui.label(format!("Analysis of span: '{}'", result.span_name));
                 }
 
-                // Define consistent column widths
-                let col_widths = [140.0, 60.0, 100.0, 100.0, 100.0, 100.0];
-
                 // Create the grid headers first outside the scroll area (to keep them visible)
                 if self.analyzer.span_statistics.is_some() {
                     ui.add_space(10.0);
+
+                    // Calculate total available width
+                    let total_available_width = ui.available_width();
+
+                    // Define column widths based on available space while keeping minimums
+                    // First column is for node names, others are for values
+                    let col_widths = [
+                        (total_available_width * 0.25).max(140.0),  // Node name (25% but min 140px)
+                        (total_available_width * 0.1).max(60.0),    // Count (10% but min 60px)
+                        (total_available_width * 0.15).max(80.0),   // Min (15% but min 80px)
+                        (total_available_width * 0.15).max(80.0),   // Max (15% but min 80px)
+                        (total_available_width * 0.15).max(80.0),   // Mean (15% but min 80px)
+                        (total_available_width * 0.15).max(80.0),   // Median (15% but min 80px)
+                    ];
 
                     // Header row - outside scrollable area to make it sticky
                     Grid::new("span_analysis_header_grid")
                         .num_columns(6)
                         .spacing([10.0, 6.0])
                         .striped(true)
+                        .min_col_width(0.0) // Let the explicit width settings handle sizing
                         .show(ui, |ui| {
                             // Create header cells with consistent width and borders
                             ui.scope(|ui| {
@@ -386,11 +398,25 @@ impl AnalyzeSpanModal {
                     .id_salt("analysis_results_scroll_area")
                     .show_viewport(ui, |ui, _viewport| {
                         if let Some(result) = &self.analyzer.span_statistics {
+                            // Calculate total available width again (might be different inside the scroll area)
+                            let total_available_width = ui.available_width();
+
+                            // Define column widths based on available space while keeping minimums
+                            let col_widths = [
+                                (total_available_width * 0.25).max(140.0),  // Node name (25% but min 140px)
+                                (total_available_width * 0.1).max(60.0),    // Count (10% but min 60px)
+                                (total_available_width * 0.15).max(80.0),   // Min (15% but min 80px)
+                                (total_available_width * 0.15).max(80.0),   // Max (15% but min 80px)
+                                (total_available_width * 0.15).max(80.0),   // Mean (15% but min 80px)
+                                (total_available_width * 0.15).max(80.0),   // Median (15% but min 80px)
+                            ];
+
                             // Use Grid for tabular data (without headers)
                             Grid::new("span_analysis_grid")
                                 .num_columns(6)
                                 .spacing([10.0, 6.0])
                                 .striped(true)
+                                .min_col_width(0.0) // Let the explicit width settings handle sizing
                                 .show(ui, |ui| {
                                     // Get nodes and sort them alphabetically
                                     let mut node_names: Vec<String> =
