@@ -1,5 +1,6 @@
+use crate::analyze_utils;
 use crate::types::Span;
-use eframe::egui::{self, Button, Color32, Grid, Key, Layout, Modal, ScrollArea, TextEdit, Vec2};
+use eframe::egui::{self, Button, Color32, Grid, Key, Layout, Modal, ScrollArea, Vec2};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -117,7 +118,7 @@ impl SpanAnalyzer {
         let target_name = target_span_name.to_string();
 
         // Collect matching spans
-        collect_matching_spans(stored_spans, &target_name, &mut matching_spans);
+        analyze_utils::collect_matching_spans(stored_spans, &target_name, &mut matching_spans);
 
         if matching_spans.is_empty() {
             self.analyze_result = Some(format!("No spans found with name '{}'", target_name));
@@ -181,7 +182,7 @@ impl AnalyzeSpanModal {
 
         // Collect all spans including children
         for span in spans {
-            collect_all_spans(span, &mut self.stored_spans);
+            analyze_utils::collect_all_spans(span, &mut self.stored_spans);
         }
 
         println!(
@@ -236,14 +237,13 @@ impl AnalyzeSpanModal {
                     // Search field (left side, takes 70% of width)
                     ui.with_layout(Layout::left_to_right(eframe::emath::Align::Center), |ui| {
                         ui.set_max_width(max_width * 0.7);
-                        ui.vertical(|ui| {
-                            ui.label("Search span by name:");
-                            let text_edit = TextEdit::singleline(&mut self.search_text)
-                                .hint_text("Type to search")
-                                .background_color(Color32::from_gray(40))
-                                .desired_width(max_width * 0.65);
-                            ui.add(text_edit);
-                        });
+                        analyze_utils::span_search_ui(
+                            ui,
+                            &mut self.search_text,
+                            "Search span by name:",
+                            "Type to search",
+                            max_width * 0.65
+                        );
                     });
 
                     // Analyze button (right side)
@@ -267,39 +267,23 @@ impl AnalyzeSpanModal {
 
                 ui.add_space(10.0);
 
-                // Filter names by the search text
-                let search_term = self.search_text.to_lowercase();
-                let filtered_names: Vec<&String> = self
-                    .unique_span_names
-                    .iter()
-                    .filter(|name| {
-                        search_term.is_empty() || name.to_lowercase().contains(&search_term)
-                    })
-                    .collect();
-
                 // Split the remaining space - List takes 30% of height
                 let list_height = (max_height - 120.0) * 0.3;
                 let results_height = (max_height - 120.0) * 0.7 - 20.0;
 
                 // Show list of span names in a scrollable area
-                ui.label(format!("Spans ({}):", filtered_names.len()));
+                let selection_changed = analyze_utils::span_selection_list_ui(
+                    ui,
+                    &self.unique_span_names,
+                    &self.search_text,
+                    &mut self.selected_span_name,
+                    list_height,
+                    "analyze_span_list"
+                );
 
-                // Make sure we always have a scrollbar for the list
-                ScrollArea::vertical()
-                    .max_height(list_height)
-                    .id_salt("spans_list_scroll_area")
-                    .show_viewport(ui, |ui, _viewport| {
-                        for name in &filtered_names {
-                            let is_selected = self.selected_span_name.as_ref() == Some(name);
-
-                            let response = ui.selectable_label(is_selected, *name);
-
-                            if response.clicked() {
-                                self.selected_span_name = Some((*name).clone());
-                                self.analyzer.span_statistics = None;
-                            }
-                        }
-                    });
+                if selection_changed {
+                    self.analyzer.span_statistics = None;
+                }
 
                 ui.separator();
 
@@ -821,42 +805,5 @@ impl AnalyzeSpanModal {
         });
 
         !open || should_close
-    }
-}
-
-// Helper function to collect all existing spans.
-fn collect_all_spans(span: &Rc<Span>, all_spans: &mut Vec<Rc<Span>>) {
-    // Use a HashSet to track span IDs we've already collected
-    let mut seen_span_ids: HashSet<Vec<u8>> = HashSet::new();
-    collect_all_spans_with_deduplication(span, all_spans, &mut seen_span_ids);
-}
-
-fn collect_all_spans_with_deduplication(
-    span: &Rc<Span>,
-    all_spans: &mut Vec<Rc<Span>>,
-    seen_span_ids: &mut HashSet<Vec<u8>>,
-) {
-    // Only add this span if we haven't seen its ID before
-    if !seen_span_ids.contains(&span.span_id) {
-        seen_span_ids.insert(span.span_id.clone());
-        all_spans.push(span.clone());
-        // Recursively add all children
-        for child in span.children.borrow().iter() {
-            collect_all_spans_with_deduplication(child, all_spans, seen_span_ids);
-        }
-    }
-}
-
-fn collect_matching_spans(
-    spans: &[Rc<Span>],
-    target_name: &str,
-    matching_spans: &mut Vec<Rc<Span>>,
-) {
-    // Since the input spans are already deduplicated, we can simply filter
-    // for spans with matching names
-    for span in spans {
-        if span.name == target_name {
-            matching_spans.push(span.clone());
-        }
     }
 }
