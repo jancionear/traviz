@@ -314,18 +314,22 @@ impl AnalyzeSpanModal {
                 if self.analyzer.span_statistics.is_some() {
                     ui.add_space(10.0);
 
-                    // Calculate total available width
-                    let total_available_width = ui.available_width();
+                    let available_width = ui.available_width();
 
-                    // Define column widths based on available space while keeping minimums
-                    // First column is for node names, others are for values
+                    // Define percentage-based column widths that sum exactly to 100%
+                    // This ensures the full width is used in both header and data grid
+                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15]; // Sums to 1.0
+
+                    let grid_width = available_width;
+
+                    // Calculate pixel widths for columns based on percentages of the full width
                     let col_widths = [
-                        (total_available_width * 0.25).max(140.0),  // Node name (25% but min 140px)
-                        (total_available_width * 0.1).max(60.0),    // Count (10% but min 60px)
-                        (total_available_width * 0.15).max(80.0),   // Min (15% but min 80px)
-                        (total_available_width * 0.15).max(80.0),   // Max (15% but min 80px)
-                        (total_available_width * 0.15).max(80.0),   // Mean (15% but min 80px)
-                        (total_available_width * 0.15).max(80.0),   // Median (15% but min 80px)
+                        (grid_width * col_percentages[0]).max(140.0), // Node
+                        (grid_width * col_percentages[1]).max(60.0),  // Count
+                        (grid_width * col_percentages[2]).max(80.0),  // Min
+                        (grid_width * col_percentages[3]).max(80.0),  // Max
+                        (grid_width * col_percentages[4]).max(80.0),  // Mean
+                        (grid_width * col_percentages[5]).max(80.0),  // Median
                     ];
 
                     // Header row - outside scrollable area to make it sticky
@@ -390,6 +394,12 @@ impl AnalyzeSpanModal {
 
                     // Add a horizontal separator line
                     ui.separator();
+
+                    // Store the grid width and column percentages for the data grid
+                    ui.memory_mut(|mem| {
+                        mem.data.insert_temp(egui::Id::new("analyze_grid_width"), grid_width);
+                        mem.data.insert_temp(egui::Id::new("analyze_col_percentages"), col_percentages);
+                    });
                 }
 
                 // Grid contents in a scrollable area
@@ -398,17 +408,23 @@ impl AnalyzeSpanModal {
                     .id_salt("analysis_results_scroll_area")
                     .show_viewport(ui, |ui, _viewport| {
                         if let Some(result) = &self.analyzer.span_statistics {
-                            // Calculate total available width again (might be different inside the scroll area)
-                            let total_available_width = ui.available_width();
+                            // Retrieve the stored grid width and column percentages
+                            let (grid_width, col_percentages) = ui.memory(|mem| {
+                                let width = mem.data.get_temp::<f32>(egui::Id::new("analyze_grid_width"))
+                                    .unwrap_or_else(|| ui.available_width());
+                                let percentages = mem.data.get_temp::<[f32; 6]>(egui::Id::new("analyze_col_percentages"))
+                                    .unwrap_or([0.25, 0.1, 0.15, 0.2, 0.15, 0.15]);
+                                (width, percentages)
+                            });
 
-                            // Define column widths based on available space while keeping minimums
+                            // Calculate column widths using the same grid width and percentages
                             let col_widths = [
-                                (total_available_width * 0.25).max(140.0),  // Node name (25% but min 140px)
-                                (total_available_width * 0.1).max(60.0),    // Count (10% but min 60px)
-                                (total_available_width * 0.15).max(80.0),   // Min (15% but min 80px)
-                                (total_available_width * 0.15).max(80.0),   // Max (15% but min 80px)
-                                (total_available_width * 0.15).max(80.0),   // Mean (15% but min 80px)
-                                (total_available_width * 0.15).max(80.0),   // Median (15% but min 80px)
+                                (grid_width * col_percentages[0]).max(140.0), // Node
+                                (grid_width * col_percentages[1]).max(60.0),  // Count
+                                (grid_width * col_percentages[2]).max(80.0),  // Min
+                                (grid_width * col_percentages[3]).max(80.0),  // Max
+                                (grid_width * col_percentages[4]).max(80.0),  // Mean
+                                (grid_width * col_percentages[5]).max(80.0),  // Median
                             ];
 
                             // Use Grid for tabular data (without headers)
