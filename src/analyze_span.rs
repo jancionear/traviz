@@ -12,6 +12,8 @@ pub struct AnalyzeSpanModal {
     pub analyzer: SpanAnalyzer,
     pub spans_processed: bool,
     stored_spans: Vec<Rc<Span>>,
+    // Track the span to display details for
+    span_details: Option<Rc<Span>>,
 }
 
 // Separate struct for handling span analysis to avoid borrow issues
@@ -28,6 +30,9 @@ struct SpanStatistics {
     min_duration: f64,
     total_duration: f64,
     durations: Vec<f64>,
+    // Store references to the actual min and max spans
+    min_span: Option<Rc<Span>>,
+    max_span: Option<Rc<Span>>,
 }
 
 impl SpanStatistics {
@@ -38,14 +43,27 @@ impl SpanStatistics {
             min_duration: f64::MAX,
             total_duration: 0.0,
             durations: Vec::new(),
+            min_span: None,
+            max_span: None,
         }
     }
 
     fn add_span(&mut self, span: &Rc<Span>) {
         let duration = span.end_time - span.start_time;
         self.count += 1;
-        self.max_duration = self.max_duration.max(duration);
-        self.min_duration = self.min_duration.min(duration);
+
+        // Update max duration and store the span if it's the new max
+        if duration > self.max_duration {
+            self.max_duration = duration;
+            self.max_span = Some(span.clone());
+        }
+
+        // Update min duration and store the span if it's the new min
+        if duration < self.min_duration {
+            self.min_duration = duration;
+            self.min_span = Some(span.clone());
+        }
+
         self.total_duration += duration;
         self.durations.push(duration);
     }
@@ -71,6 +89,16 @@ impl SpanStatistics {
         } else {
             sorted_durations[mid]
         }
+    }
+
+    // Get the stored min span if available
+    fn get_min_span(&self) -> Option<Rc<Span>> {
+        self.min_span.clone()
+    }
+
+    // Get the stored max span if available
+    fn get_max_span(&self) -> Option<Rc<Span>> {
+        self.max_span.clone()
     }
 }
 
@@ -119,6 +147,30 @@ impl SpanAnalyzer {
             overall_stats,
         });
     }
+
+    // Find span with minimum duration for a node - now uses the stored references
+    pub fn find_min_span(&self, node_name: &str) -> Option<Rc<Span>> {
+        if let Some(result) = &self.span_statistics {
+            if node_name == "ALL NODES" {
+                return result.overall_stats.get_min_span();
+            } else if let Some(stats) = result.per_node_stats.get(node_name) {
+                return stats.get_min_span();
+            }
+        }
+        None
+    }
+
+    // Find span with maximum duration for a node - now uses the stored references
+    pub fn find_max_span(&self, node_name: &str) -> Option<Rc<Span>> {
+        if let Some(result) = &self.span_statistics {
+            if node_name == "ALL NODES" {
+                return result.overall_stats.get_max_span();
+            } else if let Some(stats) = result.per_node_stats.get(node_name) {
+                return stats.get_max_span();
+            }
+        }
+        None
+    }
 }
 
 impl AnalyzeSpanModal {
@@ -133,7 +185,7 @@ impl AnalyzeSpanModal {
         }
 
         println!(
-            "Stored {} spans in the analyze modal",
+            "Stored {} total spans in the analyze modal",
             self.stored_spans.len()
         );
 
@@ -166,6 +218,9 @@ impl AnalyzeSpanModal {
             self.update_span_list(spans);
             self.spans_processed = true;
         }
+
+        // Track if we need to view a span's details after modal closes
+        let mut span_to_view: Option<Rc<Span>> = None;
 
         let mut modal_closed = false;
 
@@ -376,13 +431,24 @@ impl AnalyzeSpanModal {
                                                         egui::Align::Center,
                                                     ),
                                                     |ui| {
-                                                        ui.label(
-                                                            egui::RichText::new(format!(
-                                                                "{:.3}",
-                                                                stats.min_duration * 1000.0
-                                                            ))
-                                                            .monospace(),
+                                                        let min_text = format!("{:.3}", stats.min_duration * 1000.0);
+                                                        let min_response = ui.add(
+                                                            egui::Label::new(
+                                                                egui::RichText::new(min_text)
+                                                                    .monospace()
+                                                                    .color(Color32::from_rgb(50, 150, 200))
+                                                            )
+                                                            .sense(egui::Sense::click())
                                                         );
+
+                                                        if min_response.clicked() {
+                                                            if let Some(min_span) = self.analyzer.find_min_span(&node_name) {
+                                                                span_to_view = Some(min_span);
+                                                            }
+                                                        }
+                                                        if min_response.hovered() {
+                                                            min_response.on_hover_text("Click to see details of span with minimum duration");
+                                                        }
                                                     },
                                                 );
                                             });
@@ -393,13 +459,25 @@ impl AnalyzeSpanModal {
                                                         egui::Align::Center,
                                                     ),
                                                     |ui| {
-                                                        ui.label(
-                                                            egui::RichText::new(format!(
-                                                                "{:.3}",
-                                                                stats.max_duration * 1000.0
-                                                            ))
-                                                            .monospace(),
+                                                        let max_text = format!("{:.3}", stats.max_duration * 1000.0);
+                                                        let max_response = ui.add(
+                                                            egui::Label::new(
+                                                                egui::RichText::new(max_text)
+                                                                    .monospace()
+                                                                    .color(Color32::from_rgb(50, 150, 200))
+                                                            )
+                                                            .sense(egui::Sense::click())
                                                         );
+
+                                                        if max_response.clicked() {
+                                                            if let Some(max_span) = self.analyzer.find_max_span(&node_name) {
+                                                                span_to_view = Some(max_span);
+                                                            }
+                                                        }
+
+                                                        if max_response.hovered() {
+                                                            max_response.on_hover_text("Click to see details of span with maximum duration");
+                                                        }
                                                     },
                                                 );
                                             });
@@ -467,13 +545,26 @@ impl AnalyzeSpanModal {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                ui.strong(
-                                                    egui::RichText::new(format!(
-                                                        "{:.3}",
-                                                        overall.min_duration * 1000.0
-                                                    ))
-                                                    .monospace(),
+                                                let min_text = format!("{:.3}", overall.min_duration * 1000.0);
+                                                let min_response = ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(min_text)
+                                                            .monospace()
+                                                            .color(Color32::from_rgb(50, 150, 200))
+                                                            .strong()
+                                                    )
+                                                    .sense(egui::Sense::click())
                                                 );
+
+                                                if min_response.clicked() {
+                                                    if let Some(min_span) = self.analyzer.find_min_span("ALL NODES") {
+                                                        span_to_view = Some(min_span);
+                                                    }
+                                                }
+
+                                                if min_response.hovered() {
+                                                    min_response.on_hover_text("Click to see details of span with minimum duration");
+                                                }
                                             },
                                         );
                                     });
@@ -482,13 +573,26 @@ impl AnalyzeSpanModal {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                ui.strong(
-                                                    egui::RichText::new(format!(
-                                                        "{:.3}",
-                                                        overall.max_duration * 1000.0
-                                                    ))
-                                                    .monospace(),
+                                                let max_text = format!("{:.3}", overall.max_duration * 1000.0);
+                                                let max_response = ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(max_text)
+                                                            .monospace()
+                                                            .color(Color32::from_rgb(50, 150, 200))
+                                                            .strong()
+                                                    )
+                                                    .sense(egui::Sense::click())
                                                 );
+
+                                                if max_response.clicked() {
+                                                    if let Some(max_span) = self.analyzer.find_max_span("ALL NODES") {
+                                                        span_to_view = Some(max_span);
+                                                    }
+                                                }
+
+                                                if max_response.hovered() {
+                                                    max_response.on_hover_text("Click to see details of span with maximum duration");
+                                                }
                                             },
                                         );
                                     });
@@ -497,7 +601,7 @@ impl AnalyzeSpanModal {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                ui.strong(
+                                                ui.label(
                                                     egui::RichText::new(format!(
                                                         "{:.3}",
                                                         overall.mean_duration() * 1000.0
@@ -512,7 +616,7 @@ impl AnalyzeSpanModal {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                ui.strong(
+                                                ui.label(
                                                     egui::RichText::new(format!(
                                                         "{:.3}",
                                                         overall.median_duration() * 1000.0
@@ -533,29 +637,148 @@ impl AnalyzeSpanModal {
 
                 ui.separator();
 
-                // Only Close button at the bottom
+                ui.add_space(10.0);
                 if ui.button("Close").clicked() {
                     modal_closed = true;
                 }
             });
         });
 
-        // Close with Escape key
-        ctx.input(|i| {
-            if i.key_down(Key::Escape) {
-                modal_closed = true;
-            }
-        });
-
         // Apply changes if modal closed
-        // Reset all selections
         if modal_closed {
             self.show = false;
             self.spans_processed = false;
             self.selected_span_name = None;
             self.search_text = String::new();
             self.analyzer.span_statistics = None;
+            self.span_details = None;
         }
+
+        if let Some(span) = span_to_view {
+            self.span_details = Some(span);
+            ctx.request_repaint();
+        }
+
+        if let Some(span) = &self.span_details {
+            if self.show_span_details(ctx, span, max_width, max_height) {
+                self.span_details = None;
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    // Show details of a specific span
+    fn show_span_details(
+        &self,
+        ctx: &egui::Context,
+        span: &Rc<Span>,
+        max_width: f32,
+        max_height: f32,
+    ) -> bool {
+        let mut should_close = false;
+
+        // Create a modal dialog for the span details
+        let mut open = true;
+        egui::Window::new("Span Details")
+            .fixed_size([max_width * 0.8, max_height * 0.6])
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.heading(&span.name);
+                    ui.add_space(10.0);
+
+                    // Display timing information
+                    ui.strong(format!(
+                        "Duration: {:.3} ms",
+                        (span.end_time - span.start_time) * 1000.0
+                    ));
+                    ui.label(format!(
+                        "Time: {} - {}",
+                        crate::types::time_point_to_utc_string(span.start_time),
+                        crate::types::time_point_to_utc_string(span.end_time)
+                    ));
+
+                    // Display span identification
+                    ui.add_space(5.0);
+                    ui.label(format!("Node: {}", span.node.name));
+                    ui.label(format!("Span ID: {}", hex::encode(&span.span_id)));
+                    ui.label(format!(
+                        "Parent Span ID: {}",
+                        hex::encode(&span.parent_span_id)
+                    ));
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+
+                    // Display attributes
+                    ui.heading("Attributes");
+                    if span.attributes.is_empty() {
+                        ui.label("No attributes");
+                    } else {
+                        egui::Grid::new("span_details_attributes")
+                            .num_columns(2)
+                            .spacing([10.0, 6.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for (name, value) in &span.attributes {
+                                    ui.strong(name);
+                                    ui.label(crate::types::value_to_text(value));
+                                    ui.end_row();
+                                }
+                            });
+                    }
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+
+                    // Display events
+                    ui.heading("Events");
+                    ScrollArea::vertical()
+                        .max_height(max_height * 0.3)
+                        .show(ui, |ui| {
+                            if span.events.is_empty() {
+                                ui.label("No events");
+                            } else {
+                                for event in &span.events {
+                                    ui.collapsing(event.name.clone(), |ui| {
+                                        ui.label(format!(
+                                            "Time: {}",
+                                            crate::types::time_point_to_utc_string(event.time)
+                                        ));
+
+                                        for (name, value) in &event.attributes {
+                                            ui.label(format!(
+                                                "{}: {}",
+                                                name,
+                                                crate::types::value_to_text(value)
+                                            ));
+                                        }
+                                    });
+                                }
+                            }
+                        });
+
+                    ui.add_space(10.0);
+                    if ui.button("Close").clicked() {
+                        should_close = true;
+                    }
+                });
+            });
+
+        // Check for ESC key to close the span details window
+        ctx.input(|i| {
+            if i.key_pressed(Key::Escape) {
+                should_close = true;
+            }
+        });
+
+        !open || should_close
     }
 }
 

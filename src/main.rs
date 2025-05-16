@@ -1090,7 +1090,7 @@ impl App {
                 // Extract ALL spans from raw data for analysis
                 match everything_mode(&self.raw_data) {
                     Ok(all_spans) => {
-                        println!("Extracted {} total spans for analysis", all_spans.len());
+                        println!("Extracted {} parent spans for analysis", all_spans.len());
                         // Pass all spans to the modal for storage and analysis
                         modal.show_modal(ctx, &all_spans, max_width, max_height);
                         modal.spans_processed = true;
