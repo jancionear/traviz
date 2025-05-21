@@ -3,25 +3,27 @@ use eframe::egui::{self, Color32, ScrollArea, TextEdit};
 use std::collections::HashSet;
 use std::rc::Rc;
 
-// Helper function to collect all existing spans with deduplication
-pub fn collect_all_spans(span: &Rc<Span>, all_spans: &mut Vec<Rc<Span>>) {
-    // Use a HashSet to track span IDs we've already collected
+// Helper function to collect all spans in a span tree with deduplication
+pub fn collect_span_tree_with_deduplication(
+    root_span: &Rc<Span>,
+    collected_spans: &mut Vec<Rc<Span>>,
+) {
     let mut seen_span_ids: HashSet<Vec<u8>> = HashSet::new();
-    collect_all_spans_with_deduplication(span, all_spans, &mut seen_span_ids);
+    collect_descendant_spans_with_deduplication(root_span, collected_spans, &mut seen_span_ids);
 }
 
-fn collect_all_spans_with_deduplication(
-    span: &Rc<Span>,
-    all_spans: &mut Vec<Rc<Span>>,
+fn collect_descendant_spans_with_deduplication(
+    current_span: &Rc<Span>,
+    collected_spans: &mut Vec<Rc<Span>>,
     seen_span_ids: &mut HashSet<Vec<u8>>,
 ) {
     // Only add this span if we haven't seen its ID before
-    if !seen_span_ids.contains(&span.span_id) {
-        seen_span_ids.insert(span.span_id.clone());
-        all_spans.push(span.clone());
+    if !seen_span_ids.contains(&current_span.span_id) {
+        seen_span_ids.insert(current_span.span_id.clone());
+        collected_spans.push(current_span.clone());
         // Recursively add all children
-        for child in span.children.borrow().iter() {
-            collect_all_spans_with_deduplication(child, all_spans, seen_span_ids);
+        for child_span in current_span.children.borrow().iter() {
+            collect_descendant_spans_with_deduplication(child_span, collected_spans, seen_span_ids);
         }
     }
 }
@@ -32,8 +34,6 @@ pub fn collect_matching_spans(
     target_name: &str,
     matching_spans: &mut Vec<Rc<Span>>,
 ) {
-    // Since the input spans are already deduplicated, we can simply filter
-    // for spans with matching names
     for span in spans {
         if span.name == target_name {
             matching_spans.push(span.clone());
@@ -41,7 +41,7 @@ pub fn collect_matching_spans(
     }
 }
 
-// Reusable search box UI component
+// Creates a search input field with a label and hint text
 pub fn span_search_ui(
     ui: &mut egui::Ui,
     search_text: &mut String,
@@ -59,7 +59,8 @@ pub fn span_search_ui(
     });
 }
 
-// Reusable span selection list UI component
+// Creates a scrollable list of selectable span names with search filtering
+// Returns true if the user selected a different span name in this frame
 pub fn span_selection_list_ui(
     ui: &mut egui::Ui,
     unique_span_names: &[String],
@@ -105,7 +106,7 @@ pub struct Statistics {
     pub min: f64,
     pub max: f64,
     pub total: f64,
-    pub values: Vec<f64>,
+    pub data_points: Vec<f64>,
 }
 
 impl Statistics {
@@ -115,7 +116,7 @@ impl Statistics {
             min: f64::MAX,
             max: f64::MIN,
             total: 0.0,
-            values: Vec::new(),
+            data_points: Vec::new(),
         }
     }
 
@@ -124,7 +125,7 @@ impl Statistics {
         self.min = self.min.min(value);
         self.max = self.max.max(value);
         self.total += value;
-        self.values.push(value);
+        self.data_points.push(value);
     }
 
     pub fn mean(&self) -> f64 {
@@ -135,11 +136,11 @@ impl Statistics {
     }
 
     pub fn median(&self) -> f64 {
-        if self.values.is_empty() {
+        if self.data_points.is_empty() {
             return 0.0;
         }
 
-        let mut sorted_values = self.values.clone();
+        let mut sorted_values = self.data_points.clone();
         sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let mid = sorted_values.len() / 2;

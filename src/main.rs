@@ -1340,9 +1340,7 @@ impl App {
     fn draw_analyze_span_modal(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
         if !self.analyze_span_modal.show {
             // Reset the processed flag when closing the modal
-            if self.analyze_span_modal.spans_processed {
-                self.analyze_span_modal.spans_processed = false;
-            }
+            self.analyze_span_modal.spans_processed = false;
             return;
         }
 
@@ -1353,10 +1351,6 @@ impl App {
             println!("Setting up analyze span modal using pre-loaded spans...");
 
             if !self.all_spans_for_analysis.is_empty() {
-                println!(
-                    "Using {} pre-loaded parent spans for analysis modal.",
-                    self.all_spans_for_analysis.len()
-                );
                 // Pass all spans to the modal for storage and analysis
                 modal.show_modal(ctx, &self.all_spans_for_analysis, max_width, max_height);
                 modal.spans_processed = true; // Mark as processed for this dataset
@@ -1386,7 +1380,6 @@ impl App {
         if !self.analyze_dependency_modal.show && self.analyze_dependency_modal.focus_node.is_some()
         {
             let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
-            println!("Focus requested for node: {}", focus_node_name);
             self.dependency_focus_target_node = Some(focus_node_name.clone()); // Set here
 
             // Clear previous highlights
@@ -1436,8 +1429,6 @@ impl App {
                         "Looking for {} span IDs to highlight",
                         span_ids_to_find.len()
                     );
-                    println!("Spans to display count: {}", self.spans_to_display.len());
-
                     // Then search for all spans in the display tree
                     for id_pair in span_ids_to_find.iter() {
                         let mut candidates = Vec::new();
@@ -1453,12 +1444,6 @@ impl App {
                                     spans_to_highlight.push(candidate.clone());
                                 }
                             }
-                        } else {
-                            println!(
-                                "  No span found with ID: {} in node: {}",
-                                hex::encode(&id_pair.0),
-                                id_pair.1
-                            );
                         }
                     }
 
@@ -1480,7 +1465,6 @@ impl App {
 
                     // Adjust timeline to show these spans if needed
                     if !self.highlighted_spans.is_empty() {
-                        println!("Highlighting {} spans", self.highlighted_spans.len());
                         let mut min_time = f64::MAX;
                         let mut max_time = f64::MIN;
 
@@ -1534,10 +1518,6 @@ impl App {
             println!("Setting up analyze dependency modal using pre-loaded spans...");
 
             if !self.all_spans_for_analysis.is_empty() {
-                println!(
-                    "Using {} pre-loaded parent spans for dependency analysis modal.",
-                    self.all_spans_for_analysis.len()
-                );
                 // Pass all spans to the modal for storage and analysis
                 self.analyze_dependency_modal.show_modal(
                     ctx,
@@ -1683,8 +1663,6 @@ impl App {
             // Use the explicitly stored focused target node name
             if let Some(ref focused_target_node_name) = self.dependency_focus_target_node {
                 if let Some(node_result) = analysis.per_node_results.get(focused_target_node_name) {
-                    // All initial println! and drawn_links_count removed here
-
                     for link in node_result.links.iter() {
                         if link.source_spans.is_empty() {
                             continue;
@@ -2297,11 +2275,6 @@ fn find_spans_with_id(
         // Also check children
         if !span.children.borrow().is_empty() {
             find_spans_with_id(&span.children.borrow(), span_id, node_name, results);
-        }
-
-        // Also check all spans in the display_children (which may differ from children)
-        if !span.display_children.borrow().is_empty() {
-            find_spans_with_id(&span.display_children.borrow(), span_id, node_name, results);
         }
     }
 }

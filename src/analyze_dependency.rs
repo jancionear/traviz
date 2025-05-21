@@ -15,7 +15,7 @@ pub struct DependencyLink {
 
 // Analysis result for a specific node
 pub struct NodeDependencyResult {
-    pub statistics: Statistics,
+    pub link_delay_statistics: Statistics,
     pub links: Vec<DependencyLink>,
 }
 
@@ -45,7 +45,7 @@ pub struct AnalyzeDependencyModal {
     pub spans_processed: bool,
     pub analysis_result: Option<DependencyAnalysisResult>,
     pub error_message: Option<String>,
-    stored_spans: Vec<Rc<Span>>,
+    all_spans_for_analysis: Vec<Rc<Span>>,
     pub focus_node: Option<String>,
 }
 
@@ -66,7 +66,7 @@ impl AnalyzeDependencyModal {
             spans_processed: false,
             analysis_result: None,
             error_message: None,
-            stored_spans: Vec::new(),
+            all_spans_for_analysis: Vec::new(),
             focus_node: None,
         }
     }
@@ -74,22 +74,20 @@ impl AnalyzeDependencyModal {
     // Update span list and store spans internally
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
         // Store all spans including children
-        self.stored_spans.clear();
+        self.all_spans_for_analysis.clear();
 
         // Collect all spans including children
         for span in spans {
-            analyze_utils::collect_all_spans(span, &mut self.stored_spans);
+            analyze_utils::collect_span_tree_with_deduplication(
+                span,
+                &mut self.all_spans_for_analysis,
+            );
         }
-
-        println!(
-            "Stored {} total spans in the dependency analyze modal",
-            self.stored_spans.len()
-        );
 
         // Create a set of unique span names
         let mut unique_span_names: HashSet<String> = HashSet::new();
 
-        for span in &self.stored_spans {
+        for span in &self.all_spans_for_analysis {
             unique_span_names.insert(span.name.clone());
         }
 
@@ -130,8 +128,16 @@ impl AnalyzeDependencyModal {
         let mut source_spans = Vec::new();
         let mut target_spans = Vec::new();
 
-        analyze_utils::collect_matching_spans(&self.stored_spans, &source_name, &mut source_spans);
-        analyze_utils::collect_matching_spans(&self.stored_spans, &target_name, &mut target_spans);
+        analyze_utils::collect_matching_spans(
+            &self.all_spans_for_analysis,
+            &source_name,
+            &mut source_spans,
+        );
+        analyze_utils::collect_matching_spans(
+            &self.all_spans_for_analysis,
+            &target_name,
+            &mut target_spans,
+        );
 
         if source_spans.is_empty() {
             self.error_message = Some(format!("No spans found with name '{}'", source_name));
@@ -354,7 +360,7 @@ impl AnalyzeDependencyModal {
                 per_node_results.insert(
                     node_name.clone(),
                     NodeDependencyResult {
-                        statistics,
+                        link_delay_statistics: statistics,
                         links: node_links,
                     },
                 );
@@ -731,7 +737,7 @@ impl AnalyzeDependencyModal {
                                     // Rows for each node
                                     for node_name in node_names {
                                         if let Some(node_result) = result.per_node_results.get(&node_name) {
-                                            let stats = &node_result.statistics;
+                                            let stats = &node_result.link_delay_statistics;
 
                                             // Node Name + Focus Button Column
                                             ui.scope(|ui| {

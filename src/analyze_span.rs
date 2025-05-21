@@ -12,7 +12,7 @@ pub struct AnalyzeSpanModal {
     pub unique_span_names: Vec<String>,
     pub analyzer: SpanAnalyzer,
     pub spans_processed: bool,
-    stored_spans: Vec<Rc<Span>>,
+    all_spans_for_analysis: Vec<Rc<Span>>,
     // Track the span to display details for
     span_details: Option<Rc<Span>>,
 }
@@ -20,8 +20,8 @@ pub struct AnalyzeSpanModal {
 // Separate struct for handling span analysis to avoid borrow issues
 #[derive(Default)]
 pub struct SpanAnalyzer {
-    pub analyze_result: Option<String>,
-    span_statistics: Option<SpanAnalysisResult>,
+    pub analysis_summary_message: Option<String>,
+    detailed_span_analysis: Option<SpanAnalysisResult>,
 }
 
 // Struct to hold duration statistics for spans
@@ -30,7 +30,7 @@ struct SpanStatistics {
     max_duration: f64,
     min_duration: f64,
     total_duration: f64,
-    durations: Vec<f64>,
+    duration_values: Vec<f64>,
     // Store references to the actual min and max spans
     min_span: Option<Rc<Span>>,
     max_span: Option<Rc<Span>>,
@@ -43,7 +43,7 @@ impl SpanStatistics {
             max_duration: f64::MIN,
             min_duration: f64::MAX,
             total_duration: 0.0,
-            durations: Vec::new(),
+            duration_values: Vec::new(),
             min_span: None,
             max_span: None,
         }
@@ -66,7 +66,7 @@ impl SpanStatistics {
         }
 
         self.total_duration += duration;
-        self.durations.push(duration);
+        self.duration_values.push(duration);
     }
 
     fn mean_duration(&self) -> f64 {
@@ -77,11 +77,11 @@ impl SpanStatistics {
     }
 
     fn median_duration(&self) -> f64 {
-        if self.durations.is_empty() {
+        if self.duration_values.is_empty() {
             return 0.0;
         }
 
-        let mut sorted_durations = self.durations.clone();
+        let mut sorted_durations = self.duration_values.clone();
         sorted_durations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let mid = sorted_durations.len() / 2;
@@ -121,7 +121,8 @@ impl SpanAnalyzer {
         analyze_utils::collect_matching_spans(stored_spans, &target_name, &mut matching_spans);
 
         if matching_spans.is_empty() {
-            self.analyze_result = Some(format!("No spans found with name '{}'", target_name));
+            self.analysis_summary_message =
+                Some(format!("No spans found with name '{}'", target_name));
             return;
         }
 
@@ -142,7 +143,7 @@ impl SpanAnalyzer {
         }
 
         // Store the results
-        self.span_statistics = Some(SpanAnalysisResult {
+        self.detailed_span_analysis = Some(SpanAnalysisResult {
             span_name: target_name,
             per_node_stats,
             overall_stats,
@@ -151,7 +152,7 @@ impl SpanAnalyzer {
 
     // Find span with minimum duration for a node - now uses the stored references
     pub fn find_min_span(&self, node_name: &str) -> Option<Rc<Span>> {
-        if let Some(result) = &self.span_statistics {
+        if let Some(result) = &self.detailed_span_analysis {
             if node_name == "ALL NODES" {
                 return result.overall_stats.get_min_span();
             } else if let Some(stats) = result.per_node_stats.get(node_name) {
@@ -163,7 +164,7 @@ impl SpanAnalyzer {
 
     // Find span with maximum duration for a node - now uses the stored references
     pub fn find_max_span(&self, node_name: &str) -> Option<Rc<Span>> {
-        if let Some(result) = &self.span_statistics {
+        if let Some(result) = &self.detailed_span_analysis {
             if node_name == "ALL NODES" {
                 return result.overall_stats.get_max_span();
             } else if let Some(stats) = result.per_node_stats.get(node_name) {
@@ -178,22 +179,20 @@ impl AnalyzeSpanModal {
     // Update span list and store spans internally
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
         // Store all spans including children
-        self.stored_spans.clear();
+        self.all_spans_for_analysis.clear();
 
         // Collect all spans including children
         for span in spans {
-            analyze_utils::collect_all_spans(span, &mut self.stored_spans);
+            analyze_utils::collect_span_tree_with_deduplication(
+                span,
+                &mut self.all_spans_for_analysis,
+            );
         }
-
-        println!(
-            "Stored {} total spans in the analyze modal",
-            self.stored_spans.len()
-        );
 
         // Create a set of unique span names
         let mut unique_span_names: HashSet<String> = HashSet::new();
 
-        for span in &self.stored_spans {
+        for span in &self.all_spans_for_analysis {
             unique_span_names.insert(span.name.clone());
         }
 
@@ -259,7 +258,7 @@ impl AnalyzeSpanModal {
                             if let Some(span_name) = &self.selected_span_name {
                                 // Run the actual analysis when the button is clicked
                                 // Use stored_spans instead of passing them from outside
-                                self.analyzer.analyze_spans(&self.stored_spans, span_name);
+                                self.analyzer.analyze_spans(&self.all_spans_for_analysis, span_name);
                             }
                         }
                     });
@@ -282,7 +281,7 @@ impl AnalyzeSpanModal {
                 );
 
                 if selection_changed {
-                    self.analyzer.span_statistics = None;
+                    self.analyzer.detailed_span_analysis = None;
                 }
 
                 ui.separator();
@@ -290,12 +289,12 @@ impl AnalyzeSpanModal {
                 // Results area
                 ui.label("Analysis Results:");
 
-                if let Some(result) = &self.analyzer.span_statistics {
+                if let Some(result) = &self.analyzer.detailed_span_analysis {
                     ui.label(format!("Analysis of span: '{}'", result.span_name));
                 }
 
                 // Create the grid headers first outside the scroll area (to keep them visible)
-                if self.analyzer.span_statistics.is_some() {
+                if self.analyzer.detailed_span_analysis.is_some() {
                     ui.add_space(10.0);
 
                     let available_width = ui.available_width();
@@ -391,7 +390,7 @@ impl AnalyzeSpanModal {
                     .max_height(results_height)
                     .id_salt("analysis_results_scroll_area")
                     .show_viewport(ui, |ui, _viewport| {
-                        if let Some(result) = &self.analyzer.span_statistics {
+                        if let Some(result) = &self.analyzer.detailed_span_analysis {
                             // Retrieve the stored grid width and column percentages
                             let (grid_width, col_percentages) = ui.memory(|mem| {
                                 let width = mem.data.get_temp::<f32>(egui::Id::new("analyze_grid_width"))
@@ -676,7 +675,7 @@ impl AnalyzeSpanModal {
             self.spans_processed = false;
             self.selected_span_name = None;
             self.search_text = String::new();
-            self.analyzer.span_statistics = None;
+            self.analyzer.detailed_span_analysis = None;
             self.span_details = None;
         }
 
