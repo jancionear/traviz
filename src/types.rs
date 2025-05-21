@@ -1,6 +1,7 @@
 #![allow(unused)]
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::rc::Rc;
 
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
@@ -182,4 +183,19 @@ pub fn stringify_attributes(attributes: &BTreeMap<String, Option<Value>>) -> Str
     }
     s.push('}');
     s
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NodeIdentifier {
+    Node(String),
+    AllNodes,
+}
+
+impl fmt::Display for NodeIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeIdentifier::Node(name) => write!(f, "{}", name),
+            NodeIdentifier::AllNodes => write!(f, "ALL NODES"),
+        }
+    }
 }

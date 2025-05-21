@@ -1,7 +1,9 @@
 use crate::analyze_utils;
-use crate::types::Span;
-use crate::types::MILLISECONDS_PER_SECOND;
-use eframe::egui::{self, Button, Color32, Grid, Key, Layout, Modal, ScrollArea, Vec2};
+use crate::types::{NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
+use eframe::egui::{
+    Align, Align2, Button, Color32, Context, Grid, Id, Key, Label, Layout, Modal, Order, RichText,
+    ScrollArea, Sense, Ui, Vec2, Window,
+};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -87,6 +89,18 @@ struct SpanAnalysisResult {
 }
 
 impl AnalyzeSpanModal {
+    /// Helper function to calculate column widths based on percentages.
+    fn calculate_column_widths(grid_width: f32, col_percentages: &[f32; 6]) -> [f32; 6] {
+        [
+            (grid_width * col_percentages[0]).max(140.0), // Node
+            (grid_width * col_percentages[1]).max(60.0),  // Count
+            (grid_width * col_percentages[2]).max(80.0),  // Min
+            (grid_width * col_percentages[3]).max(80.0),  // Max
+            (grid_width * col_percentages[4]).max(80.0),  // Mean
+            (grid_width * col_percentages[5]).max(80.0),  // Median
+        ]
+    }
+
     /// Update span list and store spans internally.
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
         self.all_spans_for_analysis.clear();
@@ -152,33 +166,34 @@ impl AnalyzeSpanModal {
     }
 
     /// Returns the span with the minimum duration.
-    fn find_min_span_for_node(&self, node_name: &str) -> Option<Rc<Span>> {
-        if let Some(result) = &self.detailed_span_analysis {
-            if node_name == "ALL NODES" {
-                return result.overall_stats.get_min_span();
-            } else if let Some(stats) = result.per_node_stats.get(node_name) {
-                return stats.get_min_span();
-            }
-        }
-        None
+    fn find_min_span_for_node(&self, node_identifier: &NodeIdentifier) -> Option<Rc<Span>> {
+        self.detailed_span_analysis
+            .as_ref()
+            .and_then(|result| match node_identifier {
+                NodeIdentifier::AllNodes => result.overall_stats.get_min_span(),
+                NodeIdentifier::Node(node_name) => result
+                    .per_node_stats
+                    .get(node_name)
+                    .and_then(|stats| stats.get_min_span()),
+            })
     }
 
     /// Returns the span with the maximum duration.
-    fn find_max_span_for_node(&self, node_name: &str) -> Option<Rc<Span>> {
-        if let Some(result) = &self.detailed_span_analysis {
-            if node_name == "ALL NODES" {
-                return result.overall_stats.get_max_span();
-            } else if let Some(stats) = result.per_node_stats.get(node_name) {
-                return stats.get_max_span();
-            }
-        }
-        None
+    fn find_max_span_for_node(&self, node_identifier: &NodeIdentifier) -> Option<Rc<Span>> {
+        self.detailed_span_analysis
+            .as_ref()
+            .and_then(|result| match node_identifier {
+                NodeIdentifier::AllNodes => result.overall_stats.get_max_span(),
+                NodeIdentifier::Node(node_name) => result
+                    .per_node_stats
+                    .get(node_name)
+                    .and_then(|stats| stats.get_max_span()),
+            })
     }
 
-    // Show the modal without requiring spans to be passed each time
     pub fn show_modal(
         &mut self,
-        ctx: &egui::Context,
+        ctx: &Context,
         spans: &[Rc<Span>],
         max_width: f32,
         max_height: f32,
@@ -230,9 +245,7 @@ impl AnalyzeSpanModal {
                             .clicked()
                         {
                             if let Some(span_name_ref) = &self.selected_span_name {
-                                let span_name_cloned = span_name_ref.clone(); // Clone here
-                                // Run the actual analysis when the button is clicked
-                                self.perform_span_analysis(&span_name_cloned); // Use the cloned value
+                                self.perform_span_analysis(&span_name_ref.clone());
                             }
                         }
                     });
@@ -256,7 +269,7 @@ impl AnalyzeSpanModal {
 
                 if selection_changed {
                     self.detailed_span_analysis = None;
-                    self.analysis_summary_message = None; // Also clear summary message
+                    self.analysis_summary_message = None;
                 }
 
                 ui.separator();
@@ -279,87 +292,52 @@ impl AnalyzeSpanModal {
 
                     // Define percentage-based column widths that sum exactly to 100%
                     // This ensures the full width is used in both header and data grid
-                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15]; // Sums to 1.0
+                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15];
 
                     let grid_width = available_width;
 
                     // Calculate pixel widths for columns based on percentages of the full width
-                    let col_widths = [
-                        (grid_width * col_percentages[0]).max(140.0), // Node
-                        (grid_width * col_percentages[1]).max(60.0),  // Count
-                        (grid_width * col_percentages[2]).max(80.0),  // Min
-                        (grid_width * col_percentages[3]).max(80.0),  // Max
-                        (grid_width * col_percentages[4]).max(80.0),  // Mean
-                        (grid_width * col_percentages[5]).max(80.0),  // Median
-                    ];
+                    let col_widths = Self::calculate_column_widths(grid_width, &col_percentages);
 
                     // Header row - outside scrollable area to make it sticky
                     Grid::new("span_analysis_header_grid")
                         .num_columns(6)
                         .spacing([10.0, 6.0])
                         .striped(true)
-                        .min_col_width(0.0) // Let the explicit width settings handle sizing
+                        .min_col_width(0.0)
                         .show(ui, |ui| {
-                            // Create header cells with consistent width and borders
+                            // Helper closure for right-aligned header cells
+                            let add_right_aligned_header_cell = |cell_ui: &mut Ui, text: &str, width: f32| {
+                                cell_ui.scope(|s_ui| {
+                                    s_ui.set_min_width(width);
+                                    s_ui.with_layout(Layout::right_to_left(Align::Center), |l_ui| {
+                                        l_ui.strong(RichText::new(text).monospace());
+                                    });
+                                });
+                            };
+
+                            // First cell (Node) is left-aligned
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[0]);
-                                ui.strong(egui::RichText::new("Node").monospace());
+                                ui.strong(RichText::new("Node").monospace());
                             });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[1]);
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.strong(egui::RichText::new("Count").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[2]);
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.strong(egui::RichText::new("Min (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[3]);
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.strong(egui::RichText::new("Max (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[4]);
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.strong(egui::RichText::new("Mean (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[5]);
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.strong(egui::RichText::new("Median (ms)").monospace());
-                                    },
-                                );
-                            });
+
+                            // Subsequent cells are right-aligned
+                            add_right_aligned_header_cell(ui, "Count", col_widths[1]);
+                            add_right_aligned_header_cell(ui, "Min (ms)", col_widths[2]);
+                            add_right_aligned_header_cell(ui, "Max (ms)", col_widths[3]);
+                            add_right_aligned_header_cell(ui, "Mean (ms)", col_widths[4]);
+                            add_right_aligned_header_cell(ui, "Median (ms)", col_widths[5]);
+
                             ui.end_row();
                         });
 
-                    // Add a horizontal separator line
                     ui.separator();
 
                     // Store the grid width and column percentages for the data grid
                     ui.memory_mut(|mem| {
-                        mem.data.insert_temp(egui::Id::new("analyze_grid_width"), grid_width);
-                        mem.data.insert_temp(egui::Id::new("analyze_col_percentages"), col_percentages);
+                        mem.data.insert_temp(Id::new("analyze_grid_width"), grid_width);
+                        mem.data.insert_temp(Id::new("analyze_col_percentages"), col_percentages);
                     });
                 }
 
@@ -371,29 +349,22 @@ impl AnalyzeSpanModal {
                         if let Some(result) = &self.detailed_span_analysis {
                             // Retrieve the stored grid width and column percentages
                             let (grid_width, col_percentages) = ui.memory(|mem| {
-                                let width = mem.data.get_temp::<f32>(egui::Id::new("analyze_grid_width"))
+                                let width = mem.data.get_temp::<f32>(Id::new("analyze_grid_width"))
                                     .unwrap_or_else(|| ui.available_width());
-                                let percentages = mem.data.get_temp::<[f32; 6]>(egui::Id::new("analyze_col_percentages"))
+                                let percentages = mem.data.get_temp::<[f32; 6]>(Id::new("analyze_col_percentages"))
                                     .unwrap_or([0.25, 0.1, 0.15, 0.2, 0.15, 0.15]);
                                 (width, percentages)
                             });
 
                             // Calculate column widths using the same grid width and percentages
-                            let col_widths = [
-                                (grid_width * col_percentages[0]).max(140.0), // Node
-                                (grid_width * col_percentages[1]).max(60.0),  // Count
-                                (grid_width * col_percentages[2]).max(80.0),  // Min
-                                (grid_width * col_percentages[3]).max(80.0),  // Max
-                                (grid_width * col_percentages[4]).max(80.0),  // Mean
-                                (grid_width * col_percentages[5]).max(80.0),  // Median
-                            ];
+                            let col_widths = Self::calculate_column_widths(grid_width, &col_percentages);
 
                             // Use Grid for tabular data (without headers)
                             Grid::new("span_analysis_grid")
                                 .num_columns(6)
                                 .spacing([10.0, 6.0])
                                 .striped(true)
-                                .min_col_width(0.0) // Let the explicit width settings handle sizing
+                                .min_col_width(0.0)
                                 .show(ui, |ui| {
                                     // Get nodes and sort them alphabetically
                                     let mut node_names: Vec<String> =
@@ -403,22 +374,21 @@ impl AnalyzeSpanModal {
                                     // Rows for each node
                                     for node_name in node_names {
                                         if let Some(stats) = result.per_node_stats.get(&node_name) {
-                                            // Apply consistent width to each cell with monospace font
                                             ui.scope(|ui| {
                                                 ui.set_min_width(col_widths[0]);
                                                 ui.label(
-                                                    egui::RichText::new(&node_name).monospace(),
+                                                    RichText::new(&node_name).monospace(),
                                                 );
                                             });
                                             ui.scope(|ui| {
                                                 ui.set_min_width(col_widths[1]);
                                                 ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
+                                                    Layout::right_to_left(
+                                                        Align::Center,
                                                     ),
                                                     |ui| {
                                                         ui.label(
-                                                            egui::RichText::new(format!(
+                                                            RichText::new(format!(
                                                                 "{}",
                                                                 stats.duration_stats.count
                                                             ))
@@ -430,22 +400,22 @@ impl AnalyzeSpanModal {
                                             ui.scope(|ui| {
                                                 ui.set_min_width(col_widths[2]);
                                                 ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
+                                                    Layout::right_to_left(
+                                                        Align::Center,
                                                     ),
                                                     |ui| {
                                                         let min_text = format!("{:.3}", stats.duration_stats.min * MILLISECONDS_PER_SECOND);
                                                         let min_response = ui.add(
-                                                            egui::Label::new(
-                                                                egui::RichText::new(min_text)
+                                                            Label::new(
+                                                                RichText::new(min_text)
                                                                     .monospace()
                                                                     .color(Color32::from_rgb(50, 150, 200))
                                                             )
-                                                            .sense(egui::Sense::click())
+                                                            .sense(Sense::click())
                                                         );
 
                                                         if min_response.clicked() {
-                                                            if let Some(min_span) = self.find_min_span_for_node(&node_name) {
+                                                            if let Some(min_span) = self.find_min_span_for_node(&NodeIdentifier::Node(node_name.clone())) {
                                                                 span_to_view = Some(min_span);
                                                             }
                                                         }
@@ -458,22 +428,22 @@ impl AnalyzeSpanModal {
                                             ui.scope(|ui| {
                                                 ui.set_min_width(col_widths[3]);
                                                 ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
+                                                    Layout::right_to_left(
+                                                        Align::Center,
                                                     ),
                                                     |ui| {
                                                         let max_text = format!("{:.3}", stats.duration_stats.max * MILLISECONDS_PER_SECOND);
                                                         let max_response = ui.add(
-                                                            egui::Label::new(
-                                                                egui::RichText::new(max_text)
+                                                            Label::new(
+                                                                RichText::new(max_text)
                                                                     .monospace()
                                                                     .color(Color32::from_rgb(50, 150, 200))
                                                             )
-                                                            .sense(egui::Sense::click())
+                                                            .sense(Sense::click())
                                                         );
 
                                                         if max_response.clicked() {
-                                                            if let Some(max_span) = self.find_max_span_for_node(&node_name) {
+                                                            if let Some(max_span) = self.find_max_span_for_node(&NodeIdentifier::Node(node_name.clone())) {
                                                                 span_to_view = Some(max_span);
                                                             }
                                                         }
@@ -487,12 +457,12 @@ impl AnalyzeSpanModal {
                                             ui.scope(|ui| {
                                                 ui.set_min_width(col_widths[4]);
                                                 ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
+                                                    Layout::right_to_left(
+                                                        Align::Center,
                                                     ),
                                                     |ui| {
                                                         ui.label(
-                                                            egui::RichText::new(format!(
+                                                            RichText::new(format!(
                                                                 "{:.3}",
                                                                 stats.duration_stats.mean() * MILLISECONDS_PER_SECOND
                                                             ))
@@ -504,12 +474,12 @@ impl AnalyzeSpanModal {
                                             ui.scope(|ui| {
                                                 ui.set_min_width(col_widths[5]);
                                                 ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
+                                                    Layout::right_to_left(
+                                                        Align::Center,
                                                     ),
                                                     |ui| {
                                                         ui.label(
-                                                            egui::RichText::new(format!(
+                                                            RichText::new(format!(
                                                                 "{:.3}",
                                                                 stats.duration_stats.median() * MILLISECONDS_PER_SECOND
                                                             ))
@@ -526,15 +496,15 @@ impl AnalyzeSpanModal {
                                     let overall = &result.overall_stats;
                                     ui.scope(|ui| {
                                         ui.set_min_width(col_widths[0]);
-                                        ui.strong(egui::RichText::new("ALL NODES").monospace());
+                                        ui.strong(RichText::new(NodeIdentifier::AllNodes.to_string()).monospace());
                                     });
                                     ui.scope(|ui| {
                                         ui.set_min_width(col_widths[1]);
                                         ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            Layout::right_to_left(Align::Center),
                                             |ui| {
                                                 ui.strong(
-                                                    egui::RichText::new(format!(
+                                                    RichText::new(format!(
                                                         "{}",
                                                         overall.duration_stats.count
                                                     ))
@@ -546,21 +516,21 @@ impl AnalyzeSpanModal {
                                     ui.scope(|ui| {
                                         ui.set_min_width(col_widths[2]);
                                         ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            Layout::right_to_left(Align::Center),
                                             |ui| {
                                                 let min_text = format!("{:.3}", overall.duration_stats.min * MILLISECONDS_PER_SECOND);
                                                 let min_response = ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(min_text)
+                                                    Label::new(
+                                                        RichText::new(min_text)
                                                             .monospace()
                                                             .color(Color32::from_rgb(50, 150, 200))
                                                             .strong()
                                                     )
-                                                    .sense(egui::Sense::click())
+                                                    .sense(Sense::click())
                                                 );
 
                                                 if min_response.clicked() {
-                                                    if let Some(min_span) = self.find_min_span_for_node("ALL NODES") {
+                                                    if let Some(min_span) = self.find_min_span_for_node(&NodeIdentifier::AllNodes) {
                                                         span_to_view = Some(min_span);
                                                     }
                                                 }
@@ -574,21 +544,21 @@ impl AnalyzeSpanModal {
                                     ui.scope(|ui| {
                                         ui.set_min_width(col_widths[3]);
                                         ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            Layout::right_to_left(Align::Center),
                                             |ui| {
                                                 let max_text = format!("{:.3}", overall.duration_stats.max * 1000.0);
                                                 let max_response = ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(max_text)
+                                                    Label::new(
+                                                        RichText::new(max_text)
                                                             .monospace()
                                                             .color(Color32::from_rgb(50, 150, 200))
                                                             .strong()
                                                     )
-                                                    .sense(egui::Sense::click())
+                                                    .sense(Sense::click())
                                                 );
 
                                                 if max_response.clicked() {
-                                                    if let Some(max_span) = self.find_max_span_for_node("ALL NODES") {
+                                                    if let Some(max_span) = self.find_max_span_for_node(&NodeIdentifier::AllNodes) {
                                                         span_to_view = Some(max_span);
                                                     }
                                                 }
@@ -602,10 +572,10 @@ impl AnalyzeSpanModal {
                                     ui.scope(|ui| {
                                         ui.set_min_width(col_widths[4]);
                                         ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            Layout::right_to_left(Align::Center),
                                             |ui| {
                                                 ui.label(
-                                                    egui::RichText::new(format!(
+                                                    RichText::new(format!(
                                                         "{:.3}",
                                                         overall.duration_stats.mean() * 1000.0
                                                     ))
@@ -617,10 +587,10 @@ impl AnalyzeSpanModal {
                                     ui.scope(|ui| {
                                         ui.set_min_width(col_widths[5]);
                                         ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            Layout::right_to_left(Align::Center),
                                             |ui| {
                                                 ui.label(
-                                                    egui::RichText::new(format!(
+                                                    RichText::new(format!(
                                                         "{:.3}",
                                                         overall.duration_stats.median() * 1000.0
                                                     ))
@@ -674,7 +644,7 @@ impl AnalyzeSpanModal {
     // Show details of a specific span
     fn show_span_details(
         &self,
-        ctx: &egui::Context,
+        ctx: &Context,
         span: &Rc<Span>,
         max_width: f32,
         max_height: f32,
@@ -683,13 +653,13 @@ impl AnalyzeSpanModal {
 
         // Create a modal dialog for the span details
         let mut open = true;
-        egui::Window::new("Span Details")
+        Window::new("Span Details")
             .fixed_size([max_width * 0.8, max_height * 0.6])
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .order(egui::Order::Foreground)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(Order::Foreground)
             .show(ctx, |ui| {
                 ui.vertical_centered_justified(|ui| {
                     ui.heading(&span.name);
@@ -724,7 +694,7 @@ impl AnalyzeSpanModal {
                     if span.attributes.is_empty() {
                         ui.label("No attributes");
                     } else {
-                        egui::Grid::new("span_details_attributes")
+                        Grid::new("span_details_attributes")
                             .num_columns(2)
                             .spacing([10.0, 6.0])
                             .striped(true)

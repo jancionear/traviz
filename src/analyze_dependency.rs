@@ -2,7 +2,8 @@ use crate::analyze_utils::{self, Statistics};
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
-    self, Button, Color32, ComboBox, Grid, Key, Layout, Modal, ScrollArea, TextEdit, Vec2,
+    self, Align, Button, Color32, ComboBox, Grid, Id, Key, Layout, Modal, RichText, ScrollArea,
+    TextEdit, Vec2,
 };
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -631,50 +632,50 @@ impl AnalyzeDependencyModal {
                             // Create header cells with consistent width and borders
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[0]);
-                                ui.strong(egui::RichText::new("Node").monospace());
+                                ui.strong(RichText::new("Node").monospace());
                             });
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[1]);
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    Layout::right_to_left(Align::Center),
                                     |ui| {
-                                        ui.strong(egui::RichText::new("Count").monospace());
+                                        ui.strong(RichText::new("Count").monospace());
                                     },
                                 );
                             });
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[2]);
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    Layout::right_to_left(Align::Center),
                                     |ui| {
-                                        ui.strong(egui::RichText::new("Min (ms)").monospace());
+                                        ui.strong(RichText::new("Min (ms)").monospace());
                                     },
                                 );
                             });
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[3]);
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    Layout::right_to_left(Align::Center),
                                     |ui| {
-                                        ui.strong(egui::RichText::new("Max (ms)").monospace());
+                                        ui.strong(RichText::new("Max (ms)").monospace());
                                     },
                                 );
                             });
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[4]);
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    Layout::right_to_left(Align::Center),
                                     |ui| {
-                                        ui.strong(egui::RichText::new("Mean (ms)").monospace());
+                                        ui.strong(RichText::new("Mean (ms)").monospace());
                                     },
                                 );
                             });
                             ui.scope(|ui| {
                                 ui.set_min_width(col_widths[5]);
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    Layout::right_to_left(Align::Center),
                                     |ui| {
-                                        ui.strong(egui::RichText::new("Median (ms)").monospace());
+                                        ui.strong(RichText::new("Median (ms)").monospace());
                                     },
                                 );
                             });
@@ -686,8 +687,8 @@ impl AnalyzeDependencyModal {
 
                     // Store the grid width and column percentages for the data grid
                     ui.memory_mut(|mem| {
-                        mem.data.insert_temp(egui::Id::new("dependency_grid_width"), grid_width);
-                        mem.data.insert_temp(egui::Id::new("dependency_col_percentages"), col_percentages);
+                        mem.data.insert_temp(Id::new("dependency_grid_width"), grid_width);
+                        mem.data.insert_temp(Id::new("dependency_col_percentages"), col_percentages);
                     });
                 }
 
@@ -706,9 +707,9 @@ impl AnalyzeDependencyModal {
                         if let Some(result) = &self.analysis_result {
                             // Retrieve the stored grid width and column percentages
                             let (grid_width, col_percentages) = ui.memory(|mem| {
-                                let width = mem.data.get_temp::<f32>(egui::Id::new("dependency_grid_width"))
+                                let width = mem.data.get_temp::<f32>(Id::new("dependency_grid_width"))
                                     .unwrap_or_else(|| ui.available_width());
-                                let percentages = mem.data.get_temp::<[f32; 6]>(egui::Id::new("dependency_col_percentages"))
+                                let percentages = mem.data.get_temp::<[f32; 6]>(Id::new("dependency_col_percentages"))
                                     .unwrap_or([0.25, 0.1, 0.15, 0.2, 0.15, 0.15]);
                                 (width, percentages)
                             });
@@ -745,7 +746,7 @@ impl AnalyzeDependencyModal {
                                                 ui.set_min_width(col_widths[0]);
                                                 ui.horizontal(|ui| {
                                                     ui.label(
-                                                        egui::RichText::new(&node_name).monospace(),
+                                                        RichText::new(&node_name).monospace(),
                                                     );
                                                     ui.add_space(5.0); // Padding
                                                     let focus_response = ui.button("🔍");
@@ -762,10 +763,10 @@ impl AnalyzeDependencyModal {
                                                 ui.scope(|ui| {
                                                     ui.set_min_width(col_widths[1]);
                                                     ui.with_layout(
-                                                        egui::Layout::right_to_left(egui::Align::Center),
+                                                        Layout::right_to_left(Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{}", stats.count))
+                                                                RichText::new(format!("{}", stats.count))
                                                                     .monospace(),
                                                             );
                                                         },
@@ -775,10 +776,10 @@ impl AnalyzeDependencyModal {
                                                 ui.scope(|ui| {
                                                     ui.set_min_width(col_widths[2]);
                                                     ui.with_layout(
-                                                        egui::Layout::right_to_left(egui::Align::Center),
+                                                        Layout::right_to_left(Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND))
+                                                                RichText::new(format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND))
                                                                     .monospace()
                                                                     .color(Color32::from_rgb(50, 150, 200)),
                                                             );
@@ -789,10 +790,10 @@ impl AnalyzeDependencyModal {
                                                 ui.scope(|ui| {
                                                     ui.set_min_width(col_widths[3]);
                                                     ui.with_layout(
-                                                        egui::Layout::right_to_left(egui::Align::Center),
+                                                        Layout::right_to_left(Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND))
+                                                                RichText::new(format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND))
                                                                     .monospace()
                                                                     .color(Color32::from_rgb(50, 150, 200)),
                                                             );
@@ -803,10 +804,10 @@ impl AnalyzeDependencyModal {
                                                 ui.scope(|ui| {
                                                     ui.set_min_width(col_widths[4]);
                                                     ui.with_layout(
-                                                        egui::Layout::right_to_left(egui::Align::Center),
+                                                        Layout::right_to_left(Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND))
+                                                                RichText::new(format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND))
                                                                     .monospace(),
                                                             );
                                                         },
@@ -816,10 +817,10 @@ impl AnalyzeDependencyModal {
                                                 ui.scope(|ui| {
                                                     ui.set_min_width(col_widths[5]);
                                                     ui.with_layout(
-                                                        egui::Layout::right_to_left(egui::Align::Center),
+                                                        Layout::right_to_left(Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND)) // Corrected: median is also in ms
+                                                                RichText::new(format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND)) // Corrected: median is also in ms
                                                                     .monospace(),
                                                             );
                                                         },
@@ -831,10 +832,10 @@ impl AnalyzeDependencyModal {
                                                     ui.scope(|ui| {
                                                         ui.set_min_width(*col_width);
                                                         ui.with_layout(
-                                                            egui::Layout::right_to_left(egui::Align::Center),
+                                                            Layout::right_to_left(Align::Center),
                                                             |ui| {
                                                                 ui.label(
-                                                                    egui::RichText::new("-").monospace(),
+                                                                    RichText::new("-").monospace(),
                                                                 );
                                                             },
                                                         );
@@ -850,7 +851,7 @@ impl AnalyzeDependencyModal {
                                         ui.scope(|ui| {
                                             ui.set_min_width(col_widths[0]);
                                             ui.label(
-                                                egui::RichText::new("No matching dependencies found").monospace(),
+                                                RichText::new("No matching dependencies found").monospace(),
                                             );
                                         });
                                         for _ in 0..5 {
