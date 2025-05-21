@@ -88,6 +88,51 @@ struct SpanAnalysisResult {
     overall_stats: SpanStatistics,
 }
 
+/// Enum to specify the type of statistic (Min or Max).
+#[derive(Clone, Copy, Debug)]
+enum StatType {
+    Min,
+    Max,
+}
+
+/// Struct to group parameters for drawing a clickable stat cell.
+struct ClickableStatCellDrawParams<'a> {
+    ui: &'a mut Ui,
+    width: f32,
+    value_str: &'a str,
+    is_strong: bool,
+    node_identifier: NodeIdentifier,
+    stat_type: StatType,
+}
+
+// Helper function to draw a left-aligned node name cell.
+fn draw_node_name_cell(ui: &mut Ui, width: f32, text: &str, is_strong: bool) {
+    ui.scope(|cell_ui| {
+        cell_ui.set_min_width(width);
+        let rich_text = RichText::new(text).monospace();
+        if is_strong {
+            cell_ui.strong(rich_text);
+        } else {
+            cell_ui.label(rich_text);
+        }
+    });
+}
+
+// Helper function to draw a right-aligned statistics cell (non-clickable).
+fn draw_right_stat_cell(ui: &mut Ui, width: f32, value_str: &str, is_strong: bool) {
+    ui.scope(|cell_ui| {
+        cell_ui.set_min_width(width);
+        cell_ui.with_layout(Layout::right_to_left(Align::Center), |inner_ui| {
+            let rich_text = RichText::new(value_str).monospace();
+            if is_strong {
+                inner_ui.strong(rich_text);
+            } else {
+                inner_ui.label(rich_text);
+            }
+        });
+    });
+}
+
 impl AnalyzeSpanModal {
     /// Helper function to calculate column widths based on percentages.
     fn calculate_column_widths(grid_width: f32, col_percentages: &[f32; 6]) -> [f32; 6] {
@@ -99,6 +144,43 @@ impl AnalyzeSpanModal {
             (grid_width * col_percentages[4]).max(80.0),  // Mean
             (grid_width * col_percentages[5]).max(80.0),  // Median
         ]
+    }
+
+    /// Helper method to draw a right-aligned, clickable statistics cell (for Min/Max).
+    fn draw_clickable_stat_cell(
+        &self,
+        params: ClickableStatCellDrawParams,
+        span_to_view: &mut Option<Rc<Span>>,
+    ) {
+        params.ui.scope(|cell_ui| {
+            cell_ui.set_min_width(params.width);
+            cell_ui.with_layout(Layout::right_to_left(Align::Center), |inner_ui| {
+                let mut rich_text = RichText::new(params.value_str)
+                    .monospace()
+                    .color(Color32::from_rgb(50, 150, 200));
+                if params.is_strong {
+                    rich_text = rich_text.strong();
+                }
+                let response = inner_ui.add(Label::new(rich_text).sense(Sense::click()));
+
+                if response.clicked() {
+                    let found_span = match params.stat_type {
+                        StatType::Min => self.find_min_span_for_node(&params.node_identifier),
+                        StatType::Max => self.find_max_span_for_node(&params.node_identifier),
+                    };
+                    if let Some(s) = found_span {
+                        *span_to_view = Some(s);
+                    }
+                }
+                let hover_text = match params.stat_type {
+                    StatType::Min => "Click to see details of span with minimum duration",
+                    StatType::Max => "Click to see details of span with maximum duration",
+                };
+                if response.hovered() {
+                    response.on_hover_text(hover_text);
+                }
+            });
+        });
     }
 
     /// Update span list and store spans internally.
@@ -230,7 +312,7 @@ impl AnalyzeSpanModal {
                             &mut self.search_text,
                             "Search span by name:",
                             "Type to search",
-                            max_width * 0.65
+                            max_width * 0.65,
                         );
                     });
 
@@ -264,7 +346,7 @@ impl AnalyzeSpanModal {
                     &self.search_text,
                     &mut self.selected_span_name,
                     list_height,
-                    "analyze_span_list"
+                    "analyze_span_list",
                 );
 
                 if selection_changed {
@@ -305,39 +387,28 @@ impl AnalyzeSpanModal {
                         .spacing([10.0, 6.0])
                         .striped(true)
                         .min_col_width(0.0)
-                        .show(ui, |ui| {
-                            // Helper closure for right-aligned header cells
-                            let add_right_aligned_header_cell = |cell_ui: &mut Ui, text: &str, width: f32| {
-                                cell_ui.scope(|s_ui| {
-                                    s_ui.set_min_width(width);
-                                    s_ui.with_layout(Layout::right_to_left(Align::Center), |l_ui| {
-                                        l_ui.strong(RichText::new(text).monospace());
-                                    });
-                                });
-                            };
-
+                        .show(ui, |ui_grid| {
                             // First cell (Node) is left-aligned
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[0]);
-                                ui.strong(RichText::new("Node").monospace());
-                            });
+                            draw_node_name_cell(ui_grid, col_widths[0], "Node", true);
 
                             // Subsequent cells are right-aligned
-                            add_right_aligned_header_cell(ui, "Count", col_widths[1]);
-                            add_right_aligned_header_cell(ui, "Min (ms)", col_widths[2]);
-                            add_right_aligned_header_cell(ui, "Max (ms)", col_widths[3]);
-                            add_right_aligned_header_cell(ui, "Mean (ms)", col_widths[4]);
-                            add_right_aligned_header_cell(ui, "Median (ms)", col_widths[5]);
+                            draw_right_stat_cell(ui_grid, col_widths[1], "Count", true);
+                            draw_right_stat_cell(ui_grid, col_widths[2], "Min (ms)", true);
+                            draw_right_stat_cell(ui_grid, col_widths[3], "Max (ms)", true);
+                            draw_right_stat_cell(ui_grid, col_widths[4], "Mean (ms)", true);
+                            draw_right_stat_cell(ui_grid, col_widths[5], "Median (ms)", true);
 
-                            ui.end_row();
+                            ui_grid.end_row();
                         });
 
                     ui.separator();
 
                     // Store the grid width and column percentages for the data grid
                     ui.memory_mut(|mem| {
-                        mem.data.insert_temp(Id::new("analyze_grid_width"), grid_width);
-                        mem.data.insert_temp(Id::new("analyze_col_percentages"), col_percentages);
+                        mem.data
+                            .insert_temp(Id::new("analyze_grid_width"), grid_width);
+                        mem.data
+                            .insert_temp(Id::new("analyze_col_percentages"), col_percentages);
                     });
                 }
 
@@ -349,15 +420,20 @@ impl AnalyzeSpanModal {
                         if let Some(result) = &self.detailed_span_analysis {
                             // Retrieve the stored grid width and column percentages
                             let (grid_width, col_percentages) = ui.memory(|mem| {
-                                let width = mem.data.get_temp::<f32>(Id::new("analyze_grid_width"))
+                                let width = mem
+                                    .data
+                                    .get_temp::<f32>(Id::new("analyze_grid_width"))
                                     .unwrap_or_else(|| ui.available_width());
-                                let percentages = mem.data.get_temp::<[f32; 6]>(Id::new("analyze_col_percentages"))
+                                let percentages = mem
+                                    .data
+                                    .get_temp::<[f32; 6]>(Id::new("analyze_col_percentages"))
                                     .unwrap_or([0.25, 0.1, 0.15, 0.2, 0.15, 0.15]);
                                 (width, percentages)
                             });
 
                             // Calculate column widths using the same grid width and percentages
-                            let col_widths = Self::calculate_column_widths(grid_width, &col_percentages);
+                            let col_widths =
+                                Self::calculate_column_widths(grid_width, &col_percentages);
 
                             // Use Grid for tabular data (without headers)
                             Grid::new("span_analysis_grid")
@@ -365,7 +441,7 @@ impl AnalyzeSpanModal {
                                 .spacing([10.0, 6.0])
                                 .striped(true)
                                 .min_col_width(0.0)
-                                .show(ui, |ui| {
+                                .show(ui, |ui_grid| {
                                     // Get nodes and sort them alphabetically
                                     let mut node_names: Vec<String> =
                                         result.per_node_stats.keys().cloned().collect();
@@ -374,232 +450,148 @@ impl AnalyzeSpanModal {
                                     // Rows for each node
                                     for node_name in node_names {
                                         if let Some(stats) = result.per_node_stats.get(&node_name) {
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[0]);
-                                                ui.label(
-                                                    RichText::new(&node_name).monospace(),
-                                                );
-                                            });
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[1]);
-                                                ui.with_layout(
-                                                    Layout::right_to_left(
-                                                        Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        ui.label(
-                                                            RichText::new(format!(
-                                                                "{}",
-                                                                stats.duration_stats.count
-                                                            ))
-                                                            .monospace(),
-                                                        );
-                                                    },
-                                                );
-                                            });
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[2]);
-                                                ui.with_layout(
-                                                    Layout::right_to_left(
-                                                        Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        let min_text = format!("{:.3}", stats.duration_stats.min * MILLISECONDS_PER_SECOND);
-                                                        let min_response = ui.add(
-                                                            Label::new(
-                                                                RichText::new(min_text)
-                                                                    .monospace()
-                                                                    .color(Color32::from_rgb(50, 150, 200))
-                                                            )
-                                                            .sense(Sense::click())
-                                                        );
+                                            draw_node_name_cell(
+                                                ui_grid,
+                                                col_widths[0],
+                                                &node_name,
+                                                false,
+                                            );
+                                            draw_right_stat_cell(
+                                                ui_grid,
+                                                col_widths[1],
+                                                &format!("{}", stats.duration_stats.count),
+                                                false,
+                                            );
 
-                                                        if min_response.clicked() {
-                                                            if let Some(min_span) = self.find_min_span_for_node(&NodeIdentifier::Node(node_name.clone())) {
-                                                                span_to_view = Some(min_span);
-                                                            }
-                                                        }
-                                                        if min_response.hovered() {
-                                                            min_response.on_hover_text("Click to see details of span with minimum duration");
-                                                        }
-                                                    },
-                                                );
-                                            });
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[3]);
-                                                ui.with_layout(
-                                                    Layout::right_to_left(
-                                                        Align::Center,
+                                            let min_text = format!(
+                                                "{:.3}",
+                                                stats.duration_stats.min * MILLISECONDS_PER_SECOND
+                                            );
+                                            self.draw_clickable_stat_cell(
+                                                ClickableStatCellDrawParams {
+                                                    ui: ui_grid,
+                                                    width: col_widths[2],
+                                                    value_str: &min_text,
+                                                    is_strong: false,
+                                                    node_identifier: NodeIdentifier::Node(
+                                                        node_name.clone(),
                                                     ),
-                                                    |ui| {
-                                                        let max_text = format!("{:.3}", stats.duration_stats.max * MILLISECONDS_PER_SECOND);
-                                                        let max_response = ui.add(
-                                                            Label::new(
-                                                                RichText::new(max_text)
-                                                                    .monospace()
-                                                                    .color(Color32::from_rgb(50, 150, 200))
-                                                            )
-                                                            .sense(Sense::click())
-                                                        );
+                                                    stat_type: StatType::Min,
+                                                },
+                                                &mut span_to_view,
+                                            );
 
-                                                        if max_response.clicked() {
-                                                            if let Some(max_span) = self.find_max_span_for_node(&NodeIdentifier::Node(node_name.clone())) {
-                                                                span_to_view = Some(max_span);
-                                                            }
-                                                        }
+                                            let max_text = format!(
+                                                "{:.3}",
+                                                stats.duration_stats.max * MILLISECONDS_PER_SECOND
+                                            );
+                                            self.draw_clickable_stat_cell(
+                                                ClickableStatCellDrawParams {
+                                                    ui: ui_grid,
+                                                    width: col_widths[3],
+                                                    value_str: &max_text,
+                                                    is_strong: false,
+                                                    node_identifier: NodeIdentifier::Node(
+                                                        node_name.clone(),
+                                                    ),
+                                                    stat_type: StatType::Max,
+                                                },
+                                                &mut span_to_view,
+                                            );
 
-                                                        if max_response.hovered() {
-                                                            max_response.on_hover_text("Click to see details of span with maximum duration");
-                                                        }
-                                                    },
-                                                );
-                                            });
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[4]);
-                                                ui.with_layout(
-                                                    Layout::right_to_left(
-                                                        Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        ui.label(
-                                                            RichText::new(format!(
-                                                                "{:.3}",
-                                                                stats.duration_stats.mean() * MILLISECONDS_PER_SECOND
-                                                            ))
-                                                            .monospace(),
-                                                        );
-                                                    },
-                                                );
-                                            });
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[5]);
-                                                ui.with_layout(
-                                                    Layout::right_to_left(
-                                                        Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        ui.label(
-                                                            RichText::new(format!(
-                                                                "{:.3}",
-                                                                stats.duration_stats.median() * MILLISECONDS_PER_SECOND
-                                                            ))
-                                                            .monospace(),
-                                                        );
-                                                    },
-                                                );
-                                            });
-                                            ui.end_row();
+                                            draw_right_stat_cell(
+                                                ui_grid,
+                                                col_widths[4],
+                                                &format!(
+                                                    "{:.3}",
+                                                    stats.duration_stats.mean()
+                                                        * MILLISECONDS_PER_SECOND
+                                                ),
+                                                false,
+                                            );
+                                            draw_right_stat_cell(
+                                                ui_grid,
+                                                col_widths[5],
+                                                &format!(
+                                                    "{:.3}",
+                                                    stats.duration_stats.median()
+                                                        * MILLISECONDS_PER_SECOND
+                                                ),
+                                                false,
+                                            );
+
+                                            ui_grid.end_row();
                                         }
                                     }
 
                                     // Overall statistics row
                                     let overall = &result.overall_stats;
-                                    ui.scope(|ui| {
-                                        ui.set_min_width(col_widths[0]);
-                                        ui.strong(RichText::new(NodeIdentifier::AllNodes.to_string()).monospace());
-                                    });
-                                    ui.scope(|ui| {
-                                        ui.set_min_width(col_widths[1]);
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                ui.strong(
-                                                    RichText::new(format!(
-                                                        "{}",
-                                                        overall.duration_stats.count
-                                                    ))
-                                                    .monospace(),
-                                                );
-                                            },
-                                        );
-                                    });
-                                    ui.scope(|ui| {
-                                        ui.set_min_width(col_widths[2]);
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                let min_text = format!("{:.3}", overall.duration_stats.min * MILLISECONDS_PER_SECOND);
-                                                let min_response = ui.add(
-                                                    Label::new(
-                                                        RichText::new(min_text)
-                                                            .monospace()
-                                                            .color(Color32::from_rgb(50, 150, 200))
-                                                            .strong()
-                                                    )
-                                                    .sense(Sense::click())
-                                                );
+                                    draw_node_name_cell(
+                                        ui_grid,
+                                        col_widths[0],
+                                        &NodeIdentifier::AllNodes.to_string(),
+                                        true,
+                                    );
+                                    draw_right_stat_cell(
+                                        ui_grid,
+                                        col_widths[1],
+                                        &format!("{}", overall.duration_stats.count),
+                                        true,
+                                    );
 
-                                                if min_response.clicked() {
-                                                    if let Some(min_span) = self.find_min_span_for_node(&NodeIdentifier::AllNodes) {
-                                                        span_to_view = Some(min_span);
-                                                    }
-                                                }
+                                    let min_text_overall = format!(
+                                        "{:.3}",
+                                        overall.duration_stats.min * MILLISECONDS_PER_SECOND
+                                    );
+                                    self.draw_clickable_stat_cell(
+                                        ClickableStatCellDrawParams {
+                                            ui: ui_grid,
+                                            width: col_widths[2],
+                                            value_str: &min_text_overall,
+                                            is_strong: true,
+                                            node_identifier: NodeIdentifier::AllNodes,
+                                            stat_type: StatType::Min,
+                                        },
+                                        &mut span_to_view,
+                                    );
 
-                                                if min_response.hovered() {
-                                                    min_response.on_hover_text("Click to see details of span with minimum duration");
-                                                }
-                                            },
-                                        );
-                                    });
-                                    ui.scope(|ui| {
-                                        ui.set_min_width(col_widths[3]);
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                let max_text = format!("{:.3}", overall.duration_stats.max * 1000.0);
-                                                let max_response = ui.add(
-                                                    Label::new(
-                                                        RichText::new(max_text)
-                                                            .monospace()
-                                                            .color(Color32::from_rgb(50, 150, 200))
-                                                            .strong()
-                                                    )
-                                                    .sense(Sense::click())
-                                                );
+                                    let max_text_overall = format!(
+                                        "{:.3}",
+                                        overall.duration_stats.max * MILLISECONDS_PER_SECOND
+                                    );
+                                    self.draw_clickable_stat_cell(
+                                        ClickableStatCellDrawParams {
+                                            ui: ui_grid,
+                                            width: col_widths[3],
+                                            value_str: &max_text_overall,
+                                            is_strong: true,
+                                            node_identifier: NodeIdentifier::AllNodes,
+                                            stat_type: StatType::Max,
+                                        },
+                                        &mut span_to_view,
+                                    );
 
-                                                if max_response.clicked() {
-                                                    if let Some(max_span) = self.find_max_span_for_node(&NodeIdentifier::AllNodes) {
-                                                        span_to_view = Some(max_span);
-                                                    }
-                                                }
+                                    draw_right_stat_cell(
+                                        ui_grid,
+                                        col_widths[4],
+                                        &format!(
+                                            "{:.3}",
+                                            overall.duration_stats.mean() * MILLISECONDS_PER_SECOND
+                                        ),
+                                        true,
+                                    );
+                                    draw_right_stat_cell(
+                                        ui_grid,
+                                        col_widths[5],
+                                        &format!(
+                                            "{:.3}",
+                                            overall.duration_stats.median()
+                                                * MILLISECONDS_PER_SECOND
+                                        ),
+                                        true,
+                                    );
 
-                                                if max_response.hovered() {
-                                                    max_response.on_hover_text("Click to see details of span with maximum duration");
-                                                }
-                                            },
-                                        );
-                                    });
-                                    ui.scope(|ui| {
-                                        ui.set_min_width(col_widths[4]);
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "{:.3}",
-                                                        overall.duration_stats.mean() * 1000.0
-                                                    ))
-                                                    .monospace(),
-                                                );
-                                            },
-                                        );
-                                    });
-                                    ui.scope(|ui| {
-                                        ui.set_min_width(col_widths[5]);
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "{:.3}",
-                                                        overall.duration_stats.median() * 1000.0
-                                                    ))
-                                                    .monospace(),
-                                                );
-                                            },
-                                        );
-                                    });
-                                    ui.end_row();
+                                    ui_grid.end_row();
                                 });
                         } else if self.selected_span_name.is_some() {
                             ui.label("Click 'Analyze' to see statistics for the selected span.");
@@ -641,7 +633,7 @@ impl AnalyzeSpanModal {
         }
     }
 
-    // Show details of a specific span
+    /// Show details of a specific span.
     fn show_span_details(
         &self,
         ctx: &Context,
