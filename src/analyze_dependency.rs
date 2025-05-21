@@ -9,45 +9,80 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
-// Structure to represent a dependency link between spans
+/// Structure to represent a dependency link between spans.
 pub struct DependencyLink {
     pub source_spans: Vec<Rc<Span>>,
     pub target_span: Rc<Span>,
 }
 
-// Analysis result for a specific node
-pub struct NodeDependencyResult {
+/// Holds statistics and a list of identified dependency links where the target span resides on a specific node.
+pub struct NodeDependencyMetrics {
     pub link_delay_statistics: Statistics,
     pub links: Vec<DependencyLink>,
 }
 
-// Overall analysis result
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum SourceScope {
+    SameNode,
+    AllNodes,
+}
+
+impl Default for SourceScope {
+    fn default() -> Self {
+        SourceScope::SameNode
+    }
+}
+
+impl std::fmt::Display for SourceScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceScope::SameNode => write!(f, "self"),
+            SourceScope::AllNodes => write!(f, "all nodes"),
+        }
+    }
+}
+
 pub struct DependencyAnalysisResult {
     pub source_span_name: String,
     pub target_span_name: String,
     pub threshold: usize,
     pub metadata_field: String,
-    pub source_scope: String,
-    pub per_node_results: HashMap<String, NodeDependencyResult>,
+    pub source_scope: SourceScope,
+    pub per_node_results: HashMap<String, NodeDependencyMetrics>,
     pub analysis_duration_ms: u128,
 }
 
 #[derive(Default)]
 pub struct AnalyzeDependencyModal {
+    /// Whether the modal window is currently visible.
     pub show: bool,
+    /// Text entered by the user in the source span name search box.
     pub source_search_text: String,
+    /// Text entered by the user in the target span name search box.
     pub target_search_text: String,
-    pub source_span_name: Option<String>,
-    pub target_span_name: Option<String>,
-    pub threshold: usize,
-    pub threshold_edit_str: String,
-    pub metadata_field: String,
-    pub source_scope: String,
-    pub unique_span_names: Vec<String>,
+    /// The name of the source span currently selected by the user.
+    source_span_name: Option<String>,
+    /// The name of the target span currently selected by the user.
+    target_span_name: Option<String>,
+    /// The minimum number of preceding source spans required to form a valid dependency link.
+    threshold: usize,
+    /// String representation of the threshold for editing in the UI.
+    threshold_edit_str: String,
+    /// Optional metadata field name used to match source and target spans.
+    metadata_field: String,
+    /// Scope for selecting source spans: "self" (same node as target) or "all nodes".
+    source_scope: SourceScope,
+    /// A sorted list of unique span names found in the current trace data.
+    unique_span_names: Vec<String>,
+    /// Flag indicating if the span list for the modal has been processed from the current trace data.
     pub spans_processed: bool,
+    /// Stores the detailed results of the last dependency analysis performed.
     pub analysis_result: Option<DependencyAnalysisResult>,
-    pub error_message: Option<String>,
+    /// An optional message describing an error encountered during analysis.
+    error_message: Option<String>,
+    /// All unique spans (including children) collected from the current trace, used for analysis.
     all_spans_for_analysis: Vec<Rc<Span>>,
+    /// If set, indicates a specific node to focus on in the trace view after closing the modal.
     pub focus_node: Option<String>,
 }
 
@@ -63,7 +98,7 @@ impl AnalyzeDependencyModal {
             threshold: initial_threshold,
             threshold_edit_str: initial_threshold.to_string(),
             metadata_field: String::new(),
-            source_scope: "self".to_string(),
+            source_scope: SourceScope::default(),
             unique_span_names: Vec::new(),
             spans_processed: false,
             analysis_result: None,
@@ -183,7 +218,7 @@ impl AnalyzeDependencyModal {
 
         // Per-node dependency analysis
         let mut per_node_results = HashMap::new();
-        let node_names = if self.source_scope == "self" {
+        let node_names = if self.source_scope == SourceScope::SameNode {
             // Only analyze nodes that have both source and target spans
             source_spans_by_node
                 .keys()
@@ -203,7 +238,7 @@ impl AnalyzeDependencyModal {
         let mut global_used_source_span_ids_for_self_mode: HashSet<Vec<u8>> = HashSet::new();
 
         for node_name in node_names {
-            let current_source_node_spans = if self.source_scope == "self" {
+            let current_source_node_spans = if self.source_scope == SourceScope::SameNode {
                 // Only use spans from this node
                 source_spans_by_node
                     .get(&node_name)
@@ -261,7 +296,7 @@ impl AnalyzeDependencyModal {
                 for s_span in current_source_node_spans.iter() {
                     // Check if source span already used based on mode
                     let mut skip_source = false;
-                    if self.source_scope == "self" {
+                    if self.source_scope == SourceScope::SameNode {
                         if global_used_source_span_ids_for_self_mode.contains(&s_span.span_id) {
                             skip_source = true;
                         }
@@ -326,7 +361,7 @@ impl AnalyzeDependencyModal {
 
                             // Mark the *actually linked* source spans as used for the appropriate scope.
                             for linked_s_span in &selected_source_spans_group {
-                                if self.source_scope == "self" {
+                                if self.source_scope == SourceScope::SameNode {
                                     // In 'self' mode, linked spans are added to the global set.
                                     // Note: potential_sources are also added below, preserving original broader consumption.
                                     global_used_source_span_ids_for_self_mode
@@ -348,7 +383,7 @@ impl AnalyzeDependencyModal {
 
                 // For "self" mode: preserve original behavior where *all potential* sources for this target are marked globally used.
                 // This runs after link formation attempt for the current target_span.
-                if self.source_scope == "self" {
+                if self.source_scope == SourceScope::SameNode {
                     for s_potential_for_this_target in &potential_sources_for_this_target {
                         global_used_source_span_ids_for_self_mode
                             .insert(s_potential_for_this_target.span_id.clone());
@@ -361,7 +396,7 @@ impl AnalyzeDependencyModal {
                 // Ensure node result is added even if links are empty but stats were somehow processed (though unlikely with this logic)
                 per_node_results.insert(
                     node_name.clone(),
-                    NodeDependencyResult {
+                    NodeDependencyMetrics {
                         link_delay_statistics: statistics,
                         links: node_links,
                     },
@@ -543,11 +578,11 @@ impl AnalyzeDependencyModal {
                         ui.horizontal(|ui| {
                             ui.label("Source:");
                             let combo_box_response = ComboBox::new(ui.id().with("source_scope"), "")
-                                .selected_text(&self.source_scope)
+                                .selected_text(self.source_scope.to_string())
                                 .width(80.0)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.source_scope, "self".to_string(), "self");
-                                    ui.selectable_value(&mut self.source_scope, "all nodes".to_string(), "all nodes");
+                                    ui.selectable_value(&mut self.source_scope, SourceScope::SameNode, SourceScope::SameNode.to_string());
+                                    ui.selectable_value(&mut self.source_scope, SourceScope::AllNodes, SourceScope::AllNodes.to_string());
                                 });
 
                             // Attach hover text to the ComboBox response itself
@@ -892,7 +927,7 @@ impl AnalyzeDependencyModal {
             self.threshold = 1;
             self.threshold_edit_str = self.threshold.to_string();
             self.metadata_field = String::new();
-            self.source_scope = "self".to_string();
+            self.source_scope = SourceScope::default();
             self.error_message = None;
         }
 
@@ -910,7 +945,7 @@ impl AnalyzeDependencyModal {
                 self.threshold = 1;
                 self.threshold_edit_str = self.threshold.to_string();
                 self.metadata_field = String::new();
-                self.source_scope = "self".to_string();
+                self.source_scope = SourceScope::default();
                 self.error_message = None;
                 // analysis_result and focus_node are intentionally not cleared here
             }
