@@ -3,7 +3,7 @@ use eframe::egui::{self, Color32, ScrollArea, TextEdit};
 use std::collections::HashSet;
 use std::rc::Rc;
 
-// Helper function to collect all spans in a span tree with deduplication
+/// Helper function to collect all spans in a span tree with deduplication (the same span won't appear twice).
 pub fn collect_span_tree_with_deduplication(
     root_span: &Rc<Span>,
     collected_spans: &mut Vec<Rc<Span>>,
@@ -28,7 +28,7 @@ fn collect_descendant_spans_with_deduplication(
     }
 }
 
-// Helper function to collect spans with specific name
+/// Helper function to collect spans with specific name.
 pub fn collect_matching_spans(
     spans: &[Rc<Span>],
     target_name: &str,
@@ -41,7 +41,7 @@ pub fn collect_matching_spans(
     }
 }
 
-// Creates a search input field with a label and hint text
+/// Creates a search input field with a label and hint text.
 pub fn span_search_ui(
     ui: &mut egui::Ui,
     search_text: &mut String,
@@ -59,8 +59,9 @@ pub fn span_search_ui(
     });
 }
 
-// Creates a scrollable list of selectable span names with search filtering
-// Returns true if the user selected a different span name in this frame
+/// Creates a scrollable list of selectable span names with search filtering.
+///
+/// Returns true if the user selected a different span name in this frame.
 pub fn span_selection_list_ui(
     ui: &mut egui::Ui,
     unique_span_names: &[String],
@@ -100,7 +101,7 @@ pub fn span_selection_list_ui(
     selection_changed
 }
 
-// Calculate statistics for a collection of values
+/// Stores and calculates statistics for a collection of values.
 pub struct Statistics {
     pub count: usize,
     pub min: f64,

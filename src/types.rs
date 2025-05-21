@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
+pub const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+
 /// Seconds since epoch
 /// TODO: make nicer, f64 isn't great for this
 pub type TimePoint = f64;

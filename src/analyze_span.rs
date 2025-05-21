@@ -1,37 +1,37 @@
 use crate::analyze_utils;
 use crate::types::Span;
+use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{self, Button, Color32, Grid, Key, Layout, Modal, ScrollArea, Vec2};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 #[derive(Default)]
 pub struct AnalyzeSpanModal {
+    /// Whether the modal window is currently visible.
     pub show: bool,
+    /// Text entered by the user in the span name search box.
     pub search_text: String,
+    /// The name of the span currently selected by the user in the list.
     pub selected_span_name: Option<String>,
+    /// A sorted list of unique span names found in the current trace data.
     pub unique_span_names: Vec<String>,
-    pub analyzer: SpanAnalyzer,
+    /// Flag indicating if the span list for the modal has been processed from the current trace data.
     pub spans_processed: bool,
+    /// All unique spans (including children) collected from the current trace, used for analysis.
     all_spans_for_analysis: Vec<Rc<Span>>,
-    // Track the span to display details for
+    /// Stores the specific span whose details are to be shown in a separate popup, if any.
     span_details: Option<Rc<Span>>,
-}
-
-// Separate struct for handling span analysis to avoid borrow issues
-#[derive(Default)]
-pub struct SpanAnalyzer {
+    /// An optional message summarizing the outcome of the last analysis (e.g., errors or warnings).
     pub analysis_summary_message: Option<String>,
+    /// Stores the detailed results of the last span analysis performed.
     detailed_span_analysis: Option<SpanAnalysisResult>,
 }
 
-// Struct to hold duration statistics for spans
+/// Struct to hold duration statistics for spans.
+/// Also stores references to the spans with the min duration and max duration.
 struct SpanStatistics {
-    count: usize,
-    max_duration: f64,
-    min_duration: f64,
-    total_duration: f64,
-    duration_values: Vec<f64>,
-    // Store references to the actual min and max spans
+    duration_stats: analyze_utils::Statistics,
+
     min_span: Option<Rc<Span>>,
     max_span: Option<Rc<Span>>,
 }
@@ -39,11 +39,7 @@ struct SpanStatistics {
 impl SpanStatistics {
     fn new() -> Self {
         Self {
-            count: 0,
-            max_duration: f64::MIN,
-            min_duration: f64::MAX,
-            total_duration: 0.0,
-            duration_values: Vec::new(),
+            duration_stats: analyze_utils::Statistics::new(),
             min_span: None,
             max_span: None,
         }
@@ -51,44 +47,24 @@ impl SpanStatistics {
 
     fn add_span(&mut self, span: &Rc<Span>) {
         let duration = span.end_time - span.start_time;
-        self.count += 1;
+        self.duration_stats.add_value(duration);
 
         // Update max duration and store the span if it's the new max
-        if duration > self.max_duration {
-            self.max_duration = duration;
+        if self
+            .max_span
+            .as_ref()
+            .map_or(true, |s| duration > (s.end_time - s.start_time))
+        {
             self.max_span = Some(span.clone());
         }
 
         // Update min duration and store the span if it's the new min
-        if duration < self.min_duration {
-            self.min_duration = duration;
+        if self
+            .min_span
+            .as_ref()
+            .map_or(true, |s| duration < (s.end_time - s.start_time))
+        {
             self.min_span = Some(span.clone());
-        }
-
-        self.total_duration += duration;
-        self.duration_values.push(duration);
-    }
-
-    fn mean_duration(&self) -> f64 {
-        if self.count == 0 {
-            return 0.0;
-        }
-        self.total_duration / self.count as f64
-    }
-
-    fn median_duration(&self) -> f64 {
-        if self.duration_values.is_empty() {
-            return 0.0;
-        }
-
-        let mut sorted_durations = self.duration_values.clone();
-        sorted_durations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mid = sorted_durations.len() / 2;
-        if sorted_durations.len() % 2 == 0 {
-            (sorted_durations[mid - 1] + sorted_durations[mid]) / 2.0
-        } else {
-            sorted_durations[mid]
         }
     }
 
@@ -103,82 +79,16 @@ impl SpanStatistics {
     }
 }
 
-// Struct to hold analysis results for all nodes
+/// Struct to hold analysis results for all nodes.
 struct SpanAnalysisResult {
     span_name: String,
     per_node_stats: HashMap<String, SpanStatistics>,
     overall_stats: SpanStatistics,
 }
 
-impl SpanAnalyzer {
-    // Analyze spans without requiring spans to be passed in each time
-    pub fn analyze_spans(&mut self, stored_spans: &[Rc<Span>], target_span_name: &str) {
-        // Collect all spans with the target name from all nodes
-        let mut matching_spans = Vec::new();
-        let target_name = target_span_name.to_string();
-
-        // Collect matching spans
-        analyze_utils::collect_matching_spans(stored_spans, &target_name, &mut matching_spans);
-
-        if matching_spans.is_empty() {
-            self.analysis_summary_message =
-                Some(format!("No spans found with name '{}'", target_name));
-            return;
-        }
-
-        // Group spans by node
-        let mut per_node_stats: HashMap<String, SpanStatistics> = HashMap::new();
-        let mut overall_stats = SpanStatistics::new();
-
-        for span in matching_spans {
-            // Add to overall statistics
-            overall_stats.add_span(&span);
-
-            // Add to per-node statistics
-            let node_name = span.node.name.clone();
-            per_node_stats
-                .entry(node_name)
-                .or_insert_with(SpanStatistics::new)
-                .add_span(&span);
-        }
-
-        // Store the results
-        self.detailed_span_analysis = Some(SpanAnalysisResult {
-            span_name: target_name,
-            per_node_stats,
-            overall_stats,
-        });
-    }
-
-    // Find span with minimum duration for a node - now uses the stored references
-    pub fn find_min_span(&self, node_name: &str) -> Option<Rc<Span>> {
-        if let Some(result) = &self.detailed_span_analysis {
-            if node_name == "ALL NODES" {
-                return result.overall_stats.get_min_span();
-            } else if let Some(stats) = result.per_node_stats.get(node_name) {
-                return stats.get_min_span();
-            }
-        }
-        None
-    }
-
-    // Find span with maximum duration for a node - now uses the stored references
-    pub fn find_max_span(&self, node_name: &str) -> Option<Rc<Span>> {
-        if let Some(result) = &self.detailed_span_analysis {
-            if node_name == "ALL NODES" {
-                return result.overall_stats.get_max_span();
-            } else if let Some(stats) = result.per_node_stats.get(node_name) {
-                return stats.get_max_span();
-            }
-        }
-        None
-    }
-}
-
 impl AnalyzeSpanModal {
-    // Update span list and store spans internally
+    /// Update span list and store spans internally.
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
-        // Store all spans including children
         self.all_spans_for_analysis.clear();
 
         // Collect all spans including children
@@ -191,7 +101,6 @@ impl AnalyzeSpanModal {
 
         // Create a set of unique span names
         let mut unique_span_names: HashSet<String> = HashSet::new();
-
         for span in &self.all_spans_for_analysis {
             unique_span_names.insert(span.name.clone());
         }
@@ -199,6 +108,71 @@ impl AnalyzeSpanModal {
         // Convert to sorted vector
         self.unique_span_names = unique_span_names.into_iter().collect();
         self.unique_span_names.sort_by_key(|a| a.to_lowercase());
+    }
+
+    fn perform_span_analysis(&mut self, target_span_name: &str) {
+        let mut matching_spans = Vec::new();
+        let target_name = target_span_name.to_string();
+
+        // Collect matching spans
+        analyze_utils::collect_matching_spans(
+            &self.all_spans_for_analysis,
+            &target_name,
+            &mut matching_spans,
+        );
+
+        if matching_spans.is_empty() {
+            self.analysis_summary_message =
+                Some(format!("No spans found with name '{}'", target_name));
+            // Clear previous results
+            self.detailed_span_analysis = None;
+            return;
+        }
+
+        // Group spans by node
+        let mut per_node_stats: HashMap<String, SpanStatistics> = HashMap::new();
+        let mut overall_stats = SpanStatistics::new();
+
+        for span in matching_spans {
+            overall_stats.add_span(&span);
+            let node_name = span.node.name.clone();
+            per_node_stats
+                .entry(node_name)
+                .or_insert_with(SpanStatistics::new)
+                .add_span(&span);
+        }
+
+        // Store analysis results
+        self.detailed_span_analysis = Some(SpanAnalysisResult {
+            span_name: target_name,
+            per_node_stats,
+            overall_stats,
+        });
+        self.analysis_summary_message = None;
+    }
+
+    /// Returns the span with the minimum duration.
+    fn find_min_span_for_node(&self, node_name: &str) -> Option<Rc<Span>> {
+        if let Some(result) = &self.detailed_span_analysis {
+            if node_name == "ALL NODES" {
+                return result.overall_stats.get_min_span();
+            } else if let Some(stats) = result.per_node_stats.get(node_name) {
+                return stats.get_min_span();
+            }
+        }
+        None
+    }
+
+    /// Returns the span with the maximum duration.
+    fn find_max_span_for_node(&self, node_name: &str) -> Option<Rc<Span>> {
+        if let Some(result) = &self.detailed_span_analysis {
+            if node_name == "ALL NODES" {
+                return result.overall_stats.get_max_span();
+            } else if let Some(stats) = result.per_node_stats.get(node_name) {
+                return stats.get_max_span();
+            }
+        }
+        None
     }
 
     // Show the modal without requiring spans to be passed each time
@@ -255,10 +229,10 @@ impl AnalyzeSpanModal {
                             )
                             .clicked()
                         {
-                            if let Some(span_name) = &self.selected_span_name {
+                            if let Some(span_name_ref) = &self.selected_span_name {
+                                let span_name_cloned = span_name_ref.clone(); // Clone here
                                 // Run the actual analysis when the button is clicked
-                                // Use stored_spans instead of passing them from outside
-                                self.analyzer.analyze_spans(&self.all_spans_for_analysis, span_name);
+                                self.perform_span_analysis(&span_name_cloned); // Use the cloned value
                             }
                         }
                     });
@@ -281,7 +255,8 @@ impl AnalyzeSpanModal {
                 );
 
                 if selection_changed {
-                    self.analyzer.detailed_span_analysis = None;
+                    self.detailed_span_analysis = None;
+                    self.analysis_summary_message = None; // Also clear summary message
                 }
 
                 ui.separator();
@@ -289,12 +264,15 @@ impl AnalyzeSpanModal {
                 // Results area
                 ui.label("Analysis Results:");
 
-                if let Some(result) = &self.analyzer.detailed_span_analysis {
+                if let Some(result) = &self.detailed_span_analysis {
                     ui.label(format!("Analysis of span: '{}'", result.span_name));
+                }
+                if let Some(message) = &self.analysis_summary_message {
+                    ui.colored_label(Color32::YELLOW, message);
                 }
 
                 // Create the grid headers first outside the scroll area (to keep them visible)
-                if self.analyzer.detailed_span_analysis.is_some() {
+                if self.detailed_span_analysis.is_some() {
                     ui.add_space(10.0);
 
                     let available_width = ui.available_width();
@@ -390,7 +368,7 @@ impl AnalyzeSpanModal {
                     .max_height(results_height)
                     .id_salt("analysis_results_scroll_area")
                     .show_viewport(ui, |ui, _viewport| {
-                        if let Some(result) = &self.analyzer.detailed_span_analysis {
+                        if let Some(result) = &self.detailed_span_analysis {
                             // Retrieve the stored grid width and column percentages
                             let (grid_width, col_percentages) = ui.memory(|mem| {
                                 let width = mem.data.get_temp::<f32>(egui::Id::new("analyze_grid_width"))
@@ -442,7 +420,7 @@ impl AnalyzeSpanModal {
                                                         ui.label(
                                                             egui::RichText::new(format!(
                                                                 "{}",
-                                                                stats.count
+                                                                stats.duration_stats.count
                                                             ))
                                                             .monospace(),
                                                         );
@@ -456,7 +434,7 @@ impl AnalyzeSpanModal {
                                                         egui::Align::Center,
                                                     ),
                                                     |ui| {
-                                                        let min_text = format!("{:.3}", stats.min_duration * 1000.0);
+                                                        let min_text = format!("{:.3}", stats.duration_stats.min * MILLISECONDS_PER_SECOND);
                                                         let min_response = ui.add(
                                                             egui::Label::new(
                                                                 egui::RichText::new(min_text)
@@ -467,7 +445,7 @@ impl AnalyzeSpanModal {
                                                         );
 
                                                         if min_response.clicked() {
-                                                            if let Some(min_span) = self.analyzer.find_min_span(&node_name) {
+                                                            if let Some(min_span) = self.find_min_span_for_node(&node_name) {
                                                                 span_to_view = Some(min_span);
                                                             }
                                                         }
@@ -484,7 +462,7 @@ impl AnalyzeSpanModal {
                                                         egui::Align::Center,
                                                     ),
                                                     |ui| {
-                                                        let max_text = format!("{:.3}", stats.max_duration * 1000.0);
+                                                        let max_text = format!("{:.3}", stats.duration_stats.max * MILLISECONDS_PER_SECOND);
                                                         let max_response = ui.add(
                                                             egui::Label::new(
                                                                 egui::RichText::new(max_text)
@@ -495,7 +473,7 @@ impl AnalyzeSpanModal {
                                                         );
 
                                                         if max_response.clicked() {
-                                                            if let Some(max_span) = self.analyzer.find_max_span(&node_name) {
+                                                            if let Some(max_span) = self.find_max_span_for_node(&node_name) {
                                                                 span_to_view = Some(max_span);
                                                             }
                                                         }
@@ -516,7 +494,7 @@ impl AnalyzeSpanModal {
                                                         ui.label(
                                                             egui::RichText::new(format!(
                                                                 "{:.3}",
-                                                                stats.mean_duration() * 1000.0
+                                                                stats.duration_stats.mean() * MILLISECONDS_PER_SECOND
                                                             ))
                                                             .monospace(),
                                                         );
@@ -533,7 +511,7 @@ impl AnalyzeSpanModal {
                                                         ui.label(
                                                             egui::RichText::new(format!(
                                                                 "{:.3}",
-                                                                stats.median_duration() * 1000.0
+                                                                stats.duration_stats.median() * MILLISECONDS_PER_SECOND
                                                             ))
                                                             .monospace(),
                                                         );
@@ -558,7 +536,7 @@ impl AnalyzeSpanModal {
                                                 ui.strong(
                                                     egui::RichText::new(format!(
                                                         "{}",
-                                                        overall.count
+                                                        overall.duration_stats.count
                                                     ))
                                                     .monospace(),
                                                 );
@@ -570,7 +548,7 @@ impl AnalyzeSpanModal {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                let min_text = format!("{:.3}", overall.min_duration * 1000.0);
+                                                let min_text = format!("{:.3}", overall.duration_stats.min * MILLISECONDS_PER_SECOND);
                                                 let min_response = ui.add(
                                                     egui::Label::new(
                                                         egui::RichText::new(min_text)
@@ -582,7 +560,7 @@ impl AnalyzeSpanModal {
                                                 );
 
                                                 if min_response.clicked() {
-                                                    if let Some(min_span) = self.analyzer.find_min_span("ALL NODES") {
+                                                    if let Some(min_span) = self.find_min_span_for_node("ALL NODES") {
                                                         span_to_view = Some(min_span);
                                                     }
                                                 }
@@ -598,7 +576,7 @@ impl AnalyzeSpanModal {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                let max_text = format!("{:.3}", overall.max_duration * 1000.0);
+                                                let max_text = format!("{:.3}", overall.duration_stats.max * 1000.0);
                                                 let max_response = ui.add(
                                                     egui::Label::new(
                                                         egui::RichText::new(max_text)
@@ -610,7 +588,7 @@ impl AnalyzeSpanModal {
                                                 );
 
                                                 if max_response.clicked() {
-                                                    if let Some(max_span) = self.analyzer.find_max_span("ALL NODES") {
+                                                    if let Some(max_span) = self.find_max_span_for_node("ALL NODES") {
                                                         span_to_view = Some(max_span);
                                                     }
                                                 }
@@ -629,7 +607,7 @@ impl AnalyzeSpanModal {
                                                 ui.label(
                                                     egui::RichText::new(format!(
                                                         "{:.3}",
-                                                        overall.mean_duration() * 1000.0
+                                                        overall.duration_stats.mean() * 1000.0
                                                     ))
                                                     .monospace(),
                                                 );
@@ -644,7 +622,7 @@ impl AnalyzeSpanModal {
                                                 ui.label(
                                                     egui::RichText::new(format!(
                                                         "{:.3}",
-                                                        overall.median_duration() * 1000.0
+                                                        overall.duration_stats.median() * 1000.0
                                                     ))
                                                     .monospace(),
                                                 );
@@ -675,7 +653,8 @@ impl AnalyzeSpanModal {
             self.spans_processed = false;
             self.selected_span_name = None;
             self.search_text = String::new();
-            self.analyzer.detailed_span_analysis = None;
+            self.detailed_span_analysis = None;
+            self.analysis_summary_message = None;
             self.span_details = None;
         }
 

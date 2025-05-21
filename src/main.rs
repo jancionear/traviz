@@ -15,7 +15,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use task_timer::TaskTimer;
 use types::{
     time_point_to_utc_string, value_to_text, DisplayLength, Event, HeightLevel, Node, Span,
-    TimePoint,
+    TimePoint, MILLISECONDS_PER_SECOND,
 };
 
 mod analyze_dependency;
@@ -1216,7 +1216,7 @@ impl App {
                 ui.separator();
                 ui.label(format!(
                     "{:.3} ms",
-                    (span.end_time - span.start_time) * 1000.0
+                    (span.end_time - span.start_time) * MILLISECONDS_PER_SECOND
                 ));
                 ui.label(format!(
                     "{} - {}",
@@ -1275,7 +1275,7 @@ impl App {
                 ui.label("");
                 ui.label(format!(
                     "{:.3} ms",
-                    (span.end_time - span.start_time) * 1000.0
+                    (span.end_time - span.start_time) * MILLISECONDS_PER_SECOND
                 ));
                 ui.label(format!(
                     "{} - {}",
@@ -1694,7 +1694,8 @@ impl App {
                                         time_params.selected_end_time,
                                     );
                                     let from_pos = Pos2::new(source_x_pos, source_y_pos);
-                                    let distance_ms = (t.start_time - s_source.end_time) * 1000.0;
+                                    let distance_ms = (t.start_time - s_source.end_time)
+                                        * MILLISECONDS_PER_SECOND;
 
                                     if distance_ms >= 0.0 {
                                         let arrow_key = ArrowKey {
@@ -1831,7 +1832,7 @@ impl App {
                         ui.end_row();
 
                         ui.strong("Link Duration:");
-                        ui.label(format!("{:.3} ms", info.duration * 1000.0));
+                        ui.label(format!("{:.3} ms", info.duration * MILLISECONDS_PER_SECOND));
                         ui.end_row();
                     });
 

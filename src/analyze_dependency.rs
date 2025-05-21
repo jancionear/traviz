@@ -1,5 +1,6 @@
 use crate::analyze_utils::{self, Statistics};
 use crate::types::Span;
+use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
     self, Button, Color32, ComboBox, Grid, Key, Layout, Modal, ScrollArea, TextEdit, Vec2,
 };
@@ -777,7 +778,7 @@ impl AnalyzeDependencyModal {
                                                         egui::Layout::right_to_left(egui::Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.min * 1000.0))
+                                                                egui::RichText::new(format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND))
                                                                     .monospace()
                                                                     .color(Color32::from_rgb(50, 150, 200)),
                                                             );
@@ -791,7 +792,7 @@ impl AnalyzeDependencyModal {
                                                         egui::Layout::right_to_left(egui::Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.max * 1000.0))
+                                                                egui::RichText::new(format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND))
                                                                     .monospace()
                                                                     .color(Color32::from_rgb(50, 150, 200)),
                                                             );
@@ -805,7 +806,7 @@ impl AnalyzeDependencyModal {
                                                         egui::Layout::right_to_left(egui::Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.mean() * 1000.0))
+                                                                egui::RichText::new(format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND))
                                                                     .monospace(),
                                                             );
                                                         },
@@ -818,7 +819,7 @@ impl AnalyzeDependencyModal {
                                                         egui::Layout::right_to_left(egui::Align::Center),
                                                         |ui| {
                                                             ui.label(
-                                                                egui::RichText::new(format!("{:.3}", stats.median() * 1000.0)) // Corrected: median is also in ms
+                                                                egui::RichText::new(format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND)) // Corrected: median is also in ms
                                                                     .monospace(),
                                                             );
                                                         },
