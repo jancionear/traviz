@@ -1348,8 +1348,6 @@ impl App {
 
         // Only process spans once when the modal is first opened or if data hasn't been processed
         if !modal.spans_processed {
-            println!("Setting up analyze span modal using pre-loaded spans...");
-
             if !self.all_spans_for_analysis.is_empty() {
                 // Pass all spans to the modal for storage and analysis
                 modal.show_modal(ctx, &self.all_spans_for_analysis, max_width, max_height);
@@ -1515,8 +1513,6 @@ impl App {
 
         // Only process spans once when the modal is first opened or if data hasn't been processed
         if !self.analyze_dependency_modal.spans_processed {
-            println!("Setting up analyze dependency modal using pre-loaded spans...");
-
             if !self.all_spans_for_analysis.is_empty() {
                 // Pass all spans to the modal for storage and analysis
                 self.analyze_dependency_modal.show_modal(

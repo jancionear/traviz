@@ -152,3 +152,34 @@ impl Statistics {
         }
     }
 }
+
+/// Processes a slice of spans to collect a deduplicated list of all spans (including children)
+/// and a sorted list of unique span names.
+///
+/// # Arguments
+/// * `spans` - A slice of root spans to process.
+///
+/// # Returns
+/// A tuple containing:
+///  - `Vec<Rc<Span>>`: All collected spans, including children, deduplicated.
+///  - `Vec<String>`: A sorted vector of unique span names.
+pub fn process_spans_for_analysis(spans: &[Rc<Span>]) -> (Vec<Rc<Span>>, Vec<String>) {
+    let mut all_spans_for_analysis = Vec::new();
+
+    // Collect all spans including children
+    for span in spans {
+        collect_span_tree_with_deduplication(span, &mut all_spans_for_analysis);
+    }
+
+    // Create a set of unique span names
+    let mut unique_span_names_set: HashSet<String> = HashSet::new();
+    for span in &all_spans_for_analysis {
+        unique_span_names_set.insert(span.name.clone());
+    }
+
+    // Convert to sorted vector
+    let mut unique_span_names_vec: Vec<String> = unique_span_names_set.into_iter().collect();
+    unique_span_names_vec.sort_by_key(|a| a.to_lowercase());
+
+    (all_spans_for_analysis, unique_span_names_vec)
+}

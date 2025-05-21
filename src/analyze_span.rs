@@ -4,7 +4,7 @@ use eframe::egui::{
     Align, Align2, Button, Color32, Context, Grid, Id, Key, Label, Layout, Modal, Order, RichText,
     ScrollArea, Sense, Ui, Vec2, Window,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Default)]
@@ -183,27 +183,10 @@ impl AnalyzeSpanModal {
         });
     }
 
-    /// Update span list and store spans internally.
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
-        self.all_spans_for_analysis.clear();
-
-        // Collect all spans including children
-        for span in spans {
-            analyze_utils::collect_span_tree_with_deduplication(
-                span,
-                &mut self.all_spans_for_analysis,
-            );
-        }
-
-        // Create a set of unique span names
-        let mut unique_span_names: HashSet<String> = HashSet::new();
-        for span in &self.all_spans_for_analysis {
-            unique_span_names.insert(span.name.clone());
-        }
-
-        // Convert to sorted vector
-        self.unique_span_names = unique_span_names.into_iter().collect();
-        self.unique_span_names.sort_by_key(|a| a.to_lowercase());
+        let (all_spans, unique_names) = analyze_utils::process_spans_for_analysis(spans);
+        self.all_spans_for_analysis = all_spans;
+        self.unique_span_names = unique_names;
     }
 
     fn perform_span_analysis(&mut self, target_span_name: &str) {

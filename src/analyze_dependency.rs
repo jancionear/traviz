@@ -2,7 +2,7 @@ use crate::analyze_utils::{self, Statistics};
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
-    self, Align, Button, Color32, ComboBox, Grid, Id, Key, Layout, Modal, RichText, ScrollArea,
+    self, Align, Button, Color32, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea,
     TextEdit, Vec2,
 };
 use std::collections::{HashMap, HashSet};
@@ -21,16 +21,11 @@ pub struct NodeDependencyMetrics {
     pub links: Vec<DependencyLink>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum SourceScope {
+    #[default]
     SameNode,
     AllNodes,
-}
-
-impl Default for SourceScope {
-    fn default() -> Self {
-        SourceScope::SameNode
-    }
 }
 
 impl std::fmt::Display for SourceScope {
@@ -108,32 +103,12 @@ impl AnalyzeDependencyModal {
         }
     }
 
-    // Update span list and store spans internally
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
-        // Store all spans including children
-        self.all_spans_for_analysis.clear();
-
-        // Collect all spans including children
-        for span in spans {
-            analyze_utils::collect_span_tree_with_deduplication(
-                span,
-                &mut self.all_spans_for_analysis,
-            );
-        }
-
-        // Create a set of unique span names
-        let mut unique_span_names: HashSet<String> = HashSet::new();
-
-        for span in &self.all_spans_for_analysis {
-            unique_span_names.insert(span.name.clone());
-        }
-
-        // Convert to sorted vector
-        self.unique_span_names = unique_span_names.into_iter().collect();
-        self.unique_span_names.sort_by_key(|a| a.to_lowercase());
+        let (all_spans, unique_names) = analyze_utils::process_spans_for_analysis(spans);
+        self.all_spans_for_analysis = all_spans;
+        self.unique_span_names = unique_names;
     }
 
-    // Analyze dependencies between spans
     fn analyze_dependencies(&mut self) {
         // Validate source and target span names
         let source_name = match &self.source_span_name {
@@ -143,7 +118,6 @@ impl AnalyzeDependencyModal {
                 return;
             }
         };
-
         let target_name = match &self.target_span_name {
             Some(name) => name.clone(),
             None => {
@@ -234,7 +208,7 @@ impl AnalyzeDependencyModal {
             all_nodes.into_iter().collect()
         };
 
-        // This set is for 'self' mode: if a source span is a potential candidate for any target, it's marked used globally.
+        // This set is for 'self' mode: if a source span is a potential candidate for any target, it's marked used globally
         let mut global_used_source_span_ids_for_self_mode: HashSet<Vec<u8>> = HashSet::new();
 
         for node_name in node_names {
@@ -276,20 +250,23 @@ impl AnalyzeDependencyModal {
             let mut node_links = Vec::new();
             let mut statistics = Statistics::new();
             let mut used_target_spans: HashSet<Vec<u8>> = HashSet::new();
-            // For "all nodes" mode: tracks source spans that have successfully linked to a target on *this specific target_node*. Reset for each target_node.
-            let mut source_spans_linked_on_this_target_node_in_all_nodes_mode: HashSet<Vec<u8>> =
-                HashSet::new();
+            // For "all nodes" mode:
+            // tracks source spans that have successfully linked to a target on *this specific target_node*.
+            // Reset for each target_node.
+            let mut used_source_ids_for_current_node_all_scope: HashSet<Vec<u8>> = HashSet::new();
 
             for target_span in current_target_node_spans.iter() {
                 if used_target_spans.contains(&target_span.span_id) {
-                    continue; // This target has already been linked by a source group.
+                    // This target has already been linked by a source group
+                    continue;
                 }
 
                 // Check metadata for target_span if specified
                 if !self.metadata_field.is_empty()
                     && !target_span.attributes.contains_key(&self.metadata_field)
                 {
-                    continue; // Target itself must have the metadata field to be a candidate
+                    // Target itself must have the metadata field to be a candidate
+                    continue;
                 }
 
                 let mut potential_sources_for_this_target: Vec<Rc<Span>> = Vec::new();
@@ -302,9 +279,7 @@ impl AnalyzeDependencyModal {
                         }
                     } else {
                         // "all nodes" mode
-                        if source_spans_linked_on_this_target_node_in_all_nodes_mode
-                            .contains(&s_span.span_id)
-                        {
+                        if used_source_ids_for_current_node_all_scope.contains(&s_span.span_id) {
                             skip_source = true;
                         }
                     }
@@ -331,27 +306,23 @@ impl AnalyzeDependencyModal {
                     }
                 }
 
-                // potential_sources_for_this_target are already sorted by start_time.
-
                 if potential_sources_for_this_target.len() >= self.threshold && self.threshold > 0 {
-                    let num_to_take = self.threshold; // Or some other logic, e.g. potential_sources_for_this_target.len() to take all
+                    let num_to_take = self.threshold;
                     let selected_source_spans_group: Vec<Rc<Span>> =
                         potential_sources_for_this_target
                             .iter()
-                            // .rev() // If you want the latest ones before the target
                             .take(num_to_take)
                             .cloned()
                             .collect();
 
                     if !selected_source_spans_group.is_empty() {
-                        // Should always be true if num_to_take > 0 and len >= threshold
+                        // Should always be Some() if num_to_take > 0 and len >= threshold
                         let last_source_in_group = selected_source_spans_group.last().unwrap();
 
                         if last_source_in_group.end_time < target_span.start_time {
-                            // Final check
                             let distance = target_span.start_time - last_source_in_group.end_time;
 
-                            statistics.add_value(distance); // Use existing statistics method
+                            statistics.add_value(distance);
                             node_links.push(DependencyLink {
                                 source_spans: selected_source_spans_group.clone(),
                                 target_span: target_span.clone(),
@@ -359,7 +330,7 @@ impl AnalyzeDependencyModal {
 
                             used_target_spans.insert(target_span.span_id.clone());
 
-                            // Mark the *actually linked* source spans as used for the appropriate scope.
+                            // Mark the *actually linked* source spans as used for the appropriate scope
                             for linked_s_span in &selected_source_spans_group {
                                 if self.source_scope == SourceScope::SameNode {
                                     // In 'self' mode, linked spans are added to the global set.
@@ -369,19 +340,15 @@ impl AnalyzeDependencyModal {
                                 } else {
                                     // "all nodes" mode
                                     // In 'all nodes' mode, mark this source as used for this specific target node.
-                                    source_spans_linked_on_this_target_node_in_all_nodes_mode
+                                    used_source_ids_for_current_node_all_scope
                                         .insert(linked_s_span.span_id.clone());
                                 }
                             }
-                        } else {
-                            // This case (last source in group not ending before target) should ideally not happen
-                            // if potential_sources_for_this_target are correctly filtered.
-                            // Consider logging if it occurs.
                         }
                     }
                 }
 
-                // For "self" mode: preserve original behavior where *all potential* sources for this target are marked globally used.
+                // For "self" mode: *all potential* sources for this target are marked globally used.
                 // This runs after link formation attempt for the current target_span.
                 if self.source_scope == SourceScope::SameNode {
                     for s_potential_for_this_target in &potential_sources_for_this_target {
@@ -393,7 +360,6 @@ impl AnalyzeDependencyModal {
 
             // Add result for this node if any links were formed
             if !node_links.is_empty() || statistics.count > 0 {
-                // Ensure node result is added even if links are empty but stats were somehow processed (though unlikely with this logic)
                 per_node_results.insert(
                     node_name.clone(),
                     NodeDependencyMetrics {
@@ -930,25 +896,5 @@ impl AnalyzeDependencyModal {
             self.source_scope = SourceScope::default();
             self.error_message = None;
         }
-
-        // Check for ESC key to close the modal
-        ctx.input(|i| {
-            if i.key_pressed(Key::Escape) && self.show {
-                // Only act if modal was open
-                self.show = false;
-                // When closing with ESC, also reset state like the "Close" button does
-                self.spans_processed = false;
-                self.source_span_name = None;
-                self.target_span_name = None;
-                self.source_search_text = String::new();
-                self.target_search_text = String::new();
-                self.threshold = 1;
-                self.threshold_edit_str = self.threshold.to_string();
-                self.metadata_field = String::new();
-                self.source_scope = SourceScope::default();
-                self.error_message = None;
-                // analysis_result and focus_node are intentionally not cleared here
-            }
-        });
     }
 }
