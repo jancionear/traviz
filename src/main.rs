@@ -1300,8 +1300,8 @@ impl App {
                 if let Some(node_result) = analysis.per_node_results.get(&focus_node_name) {
                     println!("Found node result with {} links", node_result.links.len());
 
-                    // Find all displayed spans with matching span IDs from the links
                     let mut spans_to_highlight = Vec::new();
+                    let mut highlighted_span_pointers: HashSet<*const Span> = HashSet::new();
 
                     // First build a list of all span IDs we need to highlight
                     let mut span_ids_to_find = Vec::new();
@@ -1341,26 +1341,19 @@ impl App {
                     );
                     // Then search for all spans in the display tree
                     for id_pair in span_ids_to_find.iter() {
-                        let mut candidates = Vec::new();
-                        find_spans_with_id(
-                            &self.spans_to_display,
-                            &id_pair.0,
-                            &id_pair.1,
-                            &mut candidates,
-                        );
-                        if !candidates.is_empty() {
-                            for candidate in candidates.iter() {
-                                if !spans_to_highlight.iter().any(|s| Rc::ptr_eq(s, candidate)) {
-                                    spans_to_highlight.push(candidate.clone());
-                                }
+                        if let Some(found_span) =
+                            find_spans_with_id(&self.spans_to_display, &id_pair.0, &id_pair.1)
+                        {
+                            // Avoid adding the same span twice
+                            let span_ptr = Rc::as_ptr(&found_span);
+                            if highlighted_span_pointers.insert(span_ptr) {
+                                spans_to_highlight.push(found_span);
                             }
                         }
                     }
 
-                    // Add them to highlights
-                    for span_rc in spans_to_highlight {
-                        self.highlighted_spans.push(span_rc);
-                    }
+                    // Assign the collected unique spans
+                    self.highlighted_spans = spans_to_highlight;
 
                     // After we have identified the spans to highlight, we need to make sure
                     // they get proper layout - let's set their don't_collapse property
@@ -2147,26 +2140,24 @@ fn draw_arrow(
     ui.interact(interactive_rect, interact_id, Sense::click())
 }
 
-// Function to find spans with matching ID in a tree of spans
-fn find_spans_with_id(
-    spans: &[Rc<Span>],
-    span_id: &[u8],
-    node_name: &str,
-    results: &mut Vec<Rc<Span>>,
-) {
+/// Function to find spans with matching ID in a tree of spans
+///
+/// Returns the first matching span found, or None if no match
+fn find_spans_with_id(spans: &[Rc<Span>], span_id: &[u8], node_name: &str) -> Option<Rc<Span>> {
     for span in spans {
-        // Check if this span matches - using a direct byte comparison for span_id
-        let span_matches = span.span_id.len() == span_id.len()
-            && span.span_id.iter().zip(span_id.iter()).all(|(a, b)| a == b)
-            && span.node.name == node_name;
-
-        if span_matches {
-            results.push(span.clone());
+        // Check if this span matches
+        if span.span_id == span_id && span.node.name == node_name {
+            return Some(span.clone());
         }
 
-        // Also check children
+        // If not a direct match, search in children
         if !span.children.borrow().is_empty() {
-            find_spans_with_id(&span.children.borrow(), span_id, node_name, results);
+            if let Some(found_in_children) =
+                find_spans_with_id(&span.children.borrow(), span_id, node_name)
+            {
+                return Some(found_in_children);
+            }
         }
     }
+    None
 }
