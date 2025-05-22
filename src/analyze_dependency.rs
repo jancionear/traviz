@@ -55,9 +55,9 @@ pub struct AnalyzeDependencyModal {
     /// Whether the modal window is currently visible.
     pub show: bool,
     /// Text entered by the user in the source span name search box.
-    pub source_search_text: String,
+    source_search_text: String,
     /// Text entered by the user in the target span name search box.
-    pub target_search_text: String,
+    target_search_text: String,
     /// The name of the source span currently selected by the user.
     source_span_name: Option<String>,
     /// The name of the target span currently selected by the user.
@@ -112,6 +112,14 @@ impl AnalyzeDependencyModal {
         self.target_search_text = String::new();
         self.update_span_list(spans_for_analysis);
         self.spans_processed = true;
+    }
+
+    pub fn reset_processed_flag(&mut self) {
+        self.spans_processed = false;
+    }
+
+    pub fn clear_focus(&mut self) {
+        self.focus_node = None;
     }
 
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {

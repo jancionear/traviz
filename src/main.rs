@@ -111,7 +111,6 @@ struct App {
     timeline: Timeline,
     raw_data: Vec<ExportTraceServiceRequest>,
     spans_to_display: Vec<Rc<Span>>,
-    all_spans_for_analysis: Vec<Rc<Span>>,
 
     timeline_bar1_time: TimePoint,
     timeline_bar2_time: TimePoint,
@@ -122,14 +121,15 @@ struct App {
 
     error_notification: Option<String>,
 
+    // Analyze 'features'
+    all_spans_for_analysis: Vec<Rc<Span>>,
     analyze_span_modal: AnalyzeSpanModal,
     analyze_dependency_modal: AnalyzeDependencyModal,
 
-    // For dependency visualization
+    // Spans highlighting
     highlighted_spans: Vec<Rc<Span>>,
-    show_dependency_highlighting: bool,
-    dependency_focus_target_node: Option<String>,
-    // New fields for arrow interactivity
+
+    // Dependency arrow interactivity
     clicked_arrow_info: Option<ArrowInfo>,
     hovered_arrow_key: Option<ArrowKey>,
 }
@@ -220,8 +220,7 @@ impl Default for App {
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
-            show_dependency_highlighting: false,
-            dependency_focus_target_node: None,
+            // dependency_focus_target_node: None, // Removed: App no longer stores this
             clicked_arrow_info: None,
             hovered_arrow_key: None,
         };
@@ -362,8 +361,7 @@ impl App {
             }
 
             // Clear Highlights button, only enabled when there are highlighted spans
-            let has_highlights =
-                self.show_dependency_highlighting && !self.highlighted_spans.is_empty();
+            let has_highlights = !self.highlighted_spans.is_empty();
             ui.with_layout(
                 egui::Layout::right_to_left(eframe::emath::Align::RIGHT),
                 |ui| {
@@ -380,9 +378,8 @@ impl App {
                             "Clearing {} highlighted spans",
                             self.highlighted_spans.len()
                         );
-                        self.show_dependency_highlighting = false;
                         self.highlighted_spans.clear();
-                        self.dependency_focus_target_node = None;
+                        self.analyze_dependency_modal.clear_focus();
                     }
                 },
             );
@@ -396,102 +393,37 @@ impl App {
 
         self.raw_data = parse_trace_file(&file_bytes)?;
 
-        // Clear old data before loading new
+        // Clear old data before loading new traces
         self.all_spans_for_analysis.clear();
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
-        self.show_dependency_highlighting = false;
         // Reset modal processed flags so they pick up new data
-        self.analyze_span_modal.spans_processed = false;
-        self.analyze_dependency_modal.spans_processed = false;
+        self.analyze_span_modal.reset_processed_flag();
+        self.analyze_dependency_modal.reset_processed_flag();
 
         // Extract all spans for analysis purposes immediately after loading raw_data
-        match everything_mode(&self.raw_data) {
-            Ok(all_spans) => {
-                self.all_spans_for_analysis = all_spans;
-                println!(
-                    "Stored {} parent spans from everything_mode for analysis after file load.",
-                    self.all_spans_for_analysis.len()
-                );
-            }
-            Err(e) => {
-                self.all_spans_for_analysis.clear();
-                let error_msg = format!(
-                    "Failed to extract all spans for analysis during file load: {}",
-                    e
-                );
-                self.show_error_notification(&error_msg);
-                // Proceed, but analysis features might be impaired or disabled by checks later.
-            }
-        }
+        self.all_spans_for_analysis = everything_mode(&self.raw_data)?;
+        println!(
+            "Stored {} parent spans from everything_mode for analysis after file load.",
+            self.all_spans_for_analysis.len()
+        );
 
         // Store current display mode
         let current_mode = self.display_mode;
 
-        // Populate self.spans_to_display based on current_display_mode
-        if current_mode == DisplayMode::Everything {
-            // Optimization: If current mode is Everything, reuse the already computed all_spans_for_analysis.
-            if !self.all_spans_for_analysis.is_empty() {
+        match current_mode {
+            DisplayMode::Everything => {
+                // Optimization: If current mode is Everything, reuse the already computed all_spans_for_analysis.
                 self.spans_to_display = self.all_spans_for_analysis.clone();
-                set_min_max_time(&self.spans_to_display); // apply_mode normally does this.
-                println!("Applied DisplayMode::Everything for display by cloning all_spans_for_analysis.");
-            } else {
-                // Edge case: everything_mode failed to populate all_spans_for_analysis earlier.
-                // Try to call apply_mode(everything_mode) as a last resort.
-                println!("Warning: DisplayMode::Everything selected, but all_spans_for_analysis is empty. Attempting full apply_mode.");
-                if let Err(e) = self.apply_mode(everything_mode) {
-                    self.show_error_notification(&format!(
-                        "Failed to apply DisplayMode::Everything: {}",
-                        e
-                    ));
-                    self.spans_to_display.clear();
-                }
-                // If successful, self.display_mode is already Everything.
+                set_min_max_time(&self.spans_to_display);
             }
-        } else {
-            // For other display modes, call their specific processing functions via apply_mode.
-            let specific_mode_result = match current_mode {
-                DisplayMode::Doomslug => self.apply_mode(doomslug_mode),
-                DisplayMode::Chain => self.apply_mode(chain_mode),
-                DisplayMode::ChainShard0 => self.apply_mode(chain_shard0_mode),
-                DisplayMode::Everything => unreachable!(), // Handled by the if block above.
-            };
-
-            if let Err(e) = specific_mode_result {
-                // The specific mode failed. Fall back to DisplayMode::Everything.
-                println!(
-                    "Error applying mode {:?}: {}. Falling back to DisplayMode::Everything.",
-                    current_mode, e
-                );
-                self.display_mode = DisplayMode::Everything; // Update the mode state
-
-                if !self.all_spans_for_analysis.is_empty() {
-                    self.spans_to_display = self.all_spans_for_analysis.clone();
-                    set_min_max_time(&self.spans_to_display);
-                    println!("Fell back to DisplayMode::Everything for display by cloning all_spans_for_analysis.");
-                } else {
-                    // Edge case: specific mode failed AND all_spans_for_analysis is also empty.
-                    // Try apply_mode(everything_mode) as a final attempt.
-                    println!("Fallback Warning: all_spans_for_analysis is empty. Attempting full apply_mode for Everything.");
-                    if let Err(fallback_e) = self.apply_mode(everything_mode) {
-                        self.show_error_notification(&format!(
-                            "Fallback to DisplayMode::Everything also failed: {}",
-                            fallback_e
-                        ));
-                        self.spans_to_display.clear();
-                    }
-                }
-            }
-            // If specific_mode_result was Ok, spans_to_display is populated and set_min_max_time was called by apply_mode.
+            DisplayMode::Doomslug => self.apply_mode(doomslug_mode)?,
+            DisplayMode::Chain => self.apply_mode(chain_mode)?,
+            DisplayMode::ChainShard0 => self.apply_mode(chain_shard0_mode)?,
         }
 
-        // Initialize timeline based on the spans that will actually be displayed,
-        // or all_spans_for_analysis if display spans are empty, or a default range.
-        let (min_time, max_time) = get_min_max_time(&self.spans_to_display)
-            .or_else(|| get_min_max_time(&self.all_spans_for_analysis))
-            .unwrap_or((0.0, 1.0)); // Default if no spans at all (e.g. empty file or load error)
-
+        let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
         self.set_timeline_end_bars_to_selected();
 
@@ -708,14 +640,11 @@ impl App {
         while cur_pos < area.max.x {
             let cur_time = screen_to_time(cur_pos, area.min.x, area.max.x, start_time, end_time);
             let time_str = time_point_to_utc_string(cur_time);
-
-            // Draw a vertical line at the current time point
             ui.painter().rect_filled(
                 Rect::from_min_size(Pos2::new(cur_pos, area.min.y), Vec2::new(2.0, 30.0)),
                 0.0,
                 color,
             );
-
             let text_rect = ui.painter().text(
                 Pos2::new(cur_pos + 4.0, area.min.y),
                 Align2::LEFT_TOP,
@@ -968,7 +897,7 @@ impl App {
                     }
 
                     // Second pass - draw dependency arrows if needed
-                    if self.show_dependency_highlighting && self.highlighted_spans.len() >= 2 {
+                    if self.highlighted_spans.len() >= 2 {
                         let time_params = TimeToScreenParams {
                             selected_start_time: self.timeline.selected_start,
                             selected_end_time: self.timeline.selected_end,
@@ -1115,11 +1044,10 @@ impl App {
         level: u64,
     ) {
         // Check if this span is highlighted
-        let is_highlighted = self.show_dependency_highlighting
-            && self
-                .highlighted_spans
-                .iter()
-                .any(|s| s.span_id == span.span_id && s.node.name == span.node.name);
+        let is_highlighted = self
+            .highlighted_spans
+            .iter()
+            .any(|s| s.span_id == span.span_id && s.node.name == span.node.name);
 
         // Only draw if this span is visible
         let visible_rect = ui.clip_rect();
@@ -1368,133 +1296,130 @@ impl App {
         let mut error_message = None;
 
         // Handle focus_node if modal just closed
-        if !self.analyze_dependency_modal.show && self.analyze_dependency_modal.focus_node.is_some()
-        {
-            let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
-            self.dependency_focus_target_node = Some(focus_node_name.clone()); // Set here
+        if !self.analyze_dependency_modal.show {
+            if let Some(focus_node_name_ref) = self.analyze_dependency_modal.focus_node.as_ref() {
+                let focus_node_name = focus_node_name_ref.clone();
+                // Clear previous highlights
+                self.highlighted_spans.clear();
 
-            // Clear previous highlights
-            self.highlighted_spans.clear();
+                // Get the analysis result
+                if let Some(analysis) = &self.analyze_dependency_modal.analysis_result {
+                    if let Some(node_result) = analysis.per_node_results.get(&focus_node_name) {
+                        println!("Found node result with {} links", node_result.links.len());
 
-            // Get the analysis result
-            if let Some(analysis) = &self.analyze_dependency_modal.analysis_result {
-                if let Some(node_result) = analysis.per_node_results.get(&focus_node_name) {
-                    println!("Found node result with {} links", node_result.links.len());
+                        // Find all displayed spans with matching span IDs from the links
+                        let mut spans_to_highlight = Vec::new();
 
-                    // Find all displayed spans with matching span IDs from the links
-                    let mut spans_to_highlight = Vec::new();
+                        // First build a list of all span IDs we need to highlight
+                        let mut span_ids_to_find = Vec::new();
+                        for (i, link) in node_result.links.iter().enumerate() {
+                            // Print all source spans in the group
+                            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
+                                println!(
+                                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
+                                    i,
+                                    s_idx + 1,
+                                    link.source_spans.len(),
+                                    source_s.name,
+                                    source_s.node.name,
+                                    hex::encode(&source_s.span_id)
+                                );
+                                span_ids_to_find
+                                    .push((source_s.span_id.clone(), source_s.node.name.clone()));
+                            }
 
-                    // First build a list of all span IDs we need to highlight
-                    let mut span_ids_to_find = Vec::new();
-                    for (i, link) in node_result.links.iter().enumerate() {
-                        // Print all source spans in the group
-                        for (s_idx, source_s) in link.source_spans.iter().enumerate() {
+                            // Print the target span
                             println!(
-                                "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
+                                "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
                                 i,
-                                s_idx + 1,
-                                link.source_spans.len(),
-                                source_s.name,
-                                source_s.node.name,
-                                hex::encode(&source_s.span_id)
+                                link.target_span.name,
+                                link.target_span.node.name,
+                                hex::encode(&link.target_span.span_id)
                             );
-                            span_ids_to_find
-                                .push((source_s.span_id.clone(), source_s.node.name.clone()));
+                            span_ids_to_find.push((
+                                link.target_span.span_id.clone(),
+                                link.target_span.node.name.clone(),
+                            ));
                         }
 
-                        // Print the target span
                         println!(
-                            "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
-                            i,
-                            link.target_span.name,
-                            link.target_span.node.name,
-                            hex::encode(&link.target_span.span_id)
+                            "Looking for {} span IDs to highlight",
+                            span_ids_to_find.len()
                         );
-                        span_ids_to_find.push((
-                            link.target_span.span_id.clone(),
-                            link.target_span.node.name.clone(),
-                        ));
-                    }
-
-                    println!(
-                        "Looking for {} span IDs to highlight",
-                        span_ids_to_find.len()
-                    );
-                    // Then search for all spans in the display tree
-                    for id_pair in span_ids_to_find.iter() {
-                        let mut candidates = Vec::new();
-                        find_spans_with_id(
-                            &self.spans_to_display,
-                            &id_pair.0,
-                            &id_pair.1,
-                            &mut candidates,
-                        );
-                        if !candidates.is_empty() {
-                            for candidate in candidates.iter() {
-                                if !spans_to_highlight.iter().any(|s| Rc::ptr_eq(s, candidate)) {
-                                    spans_to_highlight.push(candidate.clone());
+                        // Then search for all spans in the display tree
+                        for id_pair in span_ids_to_find.iter() {
+                            let mut candidates = Vec::new();
+                            find_spans_with_id(
+                                &self.spans_to_display,
+                                &id_pair.0,
+                                &id_pair.1,
+                                &mut candidates,
+                            );
+                            if !candidates.is_empty() {
+                                for candidate in candidates.iter() {
+                                    if !spans_to_highlight.iter().any(|s| Rc::ptr_eq(s, candidate))
+                                    {
+                                        spans_to_highlight.push(candidate.clone());
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Add them to highlights
-                    for span in spans_to_highlight {
-                        self.highlighted_spans.push(span);
-                    }
-
-                    // After we have identified the spans to highlight, we need to make sure
-                    // they get proper layout - let's set their don't_collapse property
-                    // We do this in a separate pass to get proper highlighting
-                    set_display_children_with_highlights(
-                        &self.spans_to_display,
-                        &self.highlighted_spans,
-                    );
-
-                    // Enable highlighting
-                    self.show_dependency_highlighting = true;
-
-                    // Adjust timeline to show these spans if needed
-                    if !self.highlighted_spans.is_empty() {
-                        let mut min_time = f64::MAX;
-                        let mut max_time = f64::MIN;
-
-                        for span in &self.highlighted_spans {
-                            min_time = min_time.min(span.start_time);
-                            max_time = max_time.max(span.end_time);
+                        // Add them to highlights
+                        for span in spans_to_highlight {
+                            self.highlighted_spans.push(span);
                         }
 
-                        // Add padding around the time range
-                        let padding = (max_time - min_time) * 0.2;
-                        min_time -= padding;
-                        max_time += padding;
+                        // After we have identified the spans to highlight, we need to make sure
+                        // they get proper layout - let's set their don't_collapse property
+                        // We do this in a separate pass to get proper highlighting
+                        set_display_children_with_highlights(
+                            &self.spans_to_display,
+                            &self.highlighted_spans,
+                        );
 
-                        // Limit the range to 5 seconds maximum
-                        let desired_max_time = min_time + 5.0;
-                        if max_time > desired_max_time {
-                            max_time = desired_max_time;
-                        }
+                        // Adjust timeline to show these spans if needed
+                        if !self.highlighted_spans.is_empty() {
+                            let mut min_time = f64::MAX;
+                            let mut max_time = f64::MIN;
 
-                        // Update timeline if needed
-                        if min_time < self.timeline.selected_start
-                            || max_time > self.timeline.selected_end
-                        {
-                            self.timeline.selected_start = min_time;
-                            self.timeline.selected_end = max_time;
-                            self.set_timeline_end_bars_to_selected();
+                            for span in &self.highlighted_spans {
+                                min_time = min_time.min(span.start_time);
+                                max_time = max_time.max(span.end_time);
+                            }
+
+                            // Add padding around the time range
+                            let padding = (max_time - min_time) * 0.2;
+                            min_time -= padding;
+                            max_time += padding;
+
+                            // Limit the range to 5 seconds maximum
+                            let desired_max_time = min_time + 5.0;
+                            if max_time > desired_max_time {
+                                max_time = desired_max_time;
+                            }
+
+                            // Update timeline if needed
+                            if min_time < self.timeline.selected_start
+                                || max_time > self.timeline.selected_end
+                            {
+                                self.timeline.selected_start = min_time;
+                                self.timeline.selected_end = max_time;
+                                self.set_timeline_end_bars_to_selected();
+                            }
+                        } else {
+                            println!("No spans were highlighted!");
                         }
                     } else {
-                        println!("No spans were highlighted!");
+                        println!("Node result not found for: {}", focus_node_name);
                     }
                 } else {
-                    println!("Node result not found for: {}", focus_node_name);
+                    println!("No analysis result available!");
                 }
-            } else {
-                println!("No analysis result available!");
-            }
 
-            // Request repaint for the next frame
-            ctx.request_repaint();
+                // Request repaint for the next frame
+                ctx.request_repaint();
+            }
         }
 
         // Regular modal functionality
@@ -1647,8 +1572,9 @@ impl App {
         let mut current_frame_hovered_key: Option<ArrowKey> = None;
 
         if let Some(analysis) = &self.analyze_dependency_modal.analysis_result {
-            // Use the explicitly stored focused target node name
-            if let Some(ref focused_target_node_name) = self.dependency_focus_target_node {
+            if let Some(focused_target_node_name) =
+                self.analyze_dependency_modal.focus_node.as_ref()
+            {
                 if let Some(node_result) = analysis.per_node_results.get(focused_target_node_name) {
                     for link in node_result.links.iter() {
                         if link.source_spans.is_empty() {

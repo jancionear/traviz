@@ -16,11 +16,11 @@ pub struct AnalyzeSpanModal {
     /// Whether the modal window is currently visible.
     pub show: bool,
     /// Text entered by the user in the span name search box.
-    pub search_text: String,
+    search_text: String,
     /// The name of the span currently selected by the user in the list.
-    pub selected_span_name: Option<String>,
+    selected_span_name: Option<String>,
     /// A sorted list of unique span names found in the current trace data.
-    pub unique_span_names: Vec<String>,
+    unique_span_names: Vec<String>,
     /// Flag indicating if the span list for the modal has been processed from the current trace data.
     pub spans_processed: bool,
     /// All unique spans (including children) collected from the current trace, used for analysis.
@@ -28,7 +28,7 @@ pub struct AnalyzeSpanModal {
     /// Stores the specific span whose details are to be shown in a separate popup, if any.
     span_details: Option<Rc<Span>>,
     /// An optional message summarizing the outcome of the last analysis (e.g., errors or warnings).
-    pub analysis_summary_message: Option<String>,
+    analysis_summary_message: Option<String>,
     /// Stores the detailed results of the last span analysis performed.
     detailed_span_analysis: Option<SpanAnalysisResult>,
 }
@@ -147,6 +147,10 @@ impl AnalyzeSpanModal {
         self.search_text = String::new();
         self.update_span_list(spans_for_analysis);
         self.spans_processed = true;
+    }
+
+    pub fn reset_processed_flag(&mut self) {
+        self.spans_processed = false;
     }
 
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
