@@ -352,26 +352,18 @@ impl App {
             let has_spans = !self.spans_to_display.is_empty();
             let analyze_button = ui.add_enabled(has_spans, Button::new("Analyze Span"));
             if analyze_button.clicked() {
-                self.analyze_span_modal.show = true;
-                self.analyze_span_modal.search_text = String::new();
-                self.analyze_span_modal
-                    .update_span_list(&self.spans_to_display);
+                self.analyze_span_modal.open(&self.spans_to_display);
             }
 
             // Analyze Dependency button, disabled if no spans are loaded
             let analyze_dep_button = ui.add_enabled(has_spans, Button::new("Analyze Dependency"));
             if analyze_dep_button.clicked() {
-                self.analyze_dependency_modal.show = true;
-                self.analyze_dependency_modal.source_search_text = String::new();
-                self.analyze_dependency_modal.target_search_text = String::new();
-                self.analyze_dependency_modal
-                    .update_span_list(&self.spans_to_display);
+                self.analyze_dependency_modal.open(&self.spans_to_display);
             }
 
             // Clear Highlights button, only enabled when there are highlighted spans
             let has_highlights =
                 self.show_dependency_highlighting && !self.highlighted_spans.is_empty();
-
             ui.with_layout(
                 egui::Layout::right_to_left(eframe::emath::Align::RIGHT),
                 |ui| {
@@ -390,7 +382,7 @@ impl App {
                         );
                         self.show_dependency_highlighting = false;
                         self.highlighted_spans.clear();
-                        self.dependency_focus_target_node = None; // Cleared here
+                        self.dependency_focus_target_node = None;
                     }
                 },
             );
@@ -1732,14 +1724,13 @@ impl App {
                                             });
                                         }
                                     }
-                                } // else { REMOVED: println! for Source span not found }
+                                }
                             }
-                        } // else { REMOVED: println! for Target span not found }
+                        }
                     }
-                    // REMOVED: println! for Finished drawing links
-                } // else { REMOVED: println! for No analysis result found for node }
-            } // else { REMOVED: println! for No dependency_focus_target_node set }
-        } // else { REMOVED: println! for No analysis result available in modal }
+                }
+            }
+        }
 
         if self.hovered_arrow_key != current_frame_hovered_key {
             self.hovered_arrow_key = current_frame_hovered_key;

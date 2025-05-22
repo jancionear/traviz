@@ -106,6 +106,14 @@ impl AnalyzeDependencyModal {
         }
     }
 
+    pub fn open(&mut self, spans_for_analysis: &[Rc<Span>]) {
+        self.show = true;
+        self.source_search_text = String::new();
+        self.target_search_text = String::new();
+        self.update_span_list(spans_for_analysis);
+        self.spans_processed = true;
+    }
+
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
         let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;
