@@ -209,13 +209,13 @@ impl Default for App {
             },
             raw_data: vec![],
             spans_to_display: vec![],
-            all_spans_for_analysis: vec![],
             timeline_bar1_time: 0.0,
             timeline_bar2_time: 0.0,
             clicked_span: None,
             include_children_events: true,
             display_mode: DisplayMode::Everything,
             search: Search::default(),
+            all_spans_for_analysis: vec![],
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
@@ -268,7 +268,7 @@ impl eframe::App for App {
                     Pos2::new(0.0, middle_bar_area.max.y),
                     Vec2::new(window_width, window_height - middle_bar_area.max.y),
                 );
-                self.draw_spans(spans_area, ui, ctx);
+                self.draw_spans(spans_area, ui);
 
                 self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
 
@@ -730,7 +730,7 @@ impl App {
         });
     }
 
-    fn draw_spans(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
+    fn draw_spans(&mut self, area: Rect, ui: &mut Ui) {
         let mut node_spans: BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)> = BTreeMap::new();
         for span in &self.spans_to_display {
             node_spans
@@ -916,7 +916,7 @@ impl App {
                                 + self.layout.node_name_width,
                             visual_end_x: under_time_points_area.max.x,
                         };
-                        self.draw_dependency_links(ui, &span_positions, &time_params, ctx);
+                        self.draw_dependency_links(ui, &span_positions, &time_params);
                     }
 
                     ui.input(|i| {
@@ -1427,105 +1427,126 @@ impl App {
         ui: &mut Ui,
         span_positions: &HashMap<Vec<u8>, (f32, f32, f32)>,
         time_params: &TimeToScreenParams,
-        ctx: &egui::Context,
     ) {
         if self.highlighted_spans.is_empty() {
             return;
         }
+        self.hovered_arrow_key = None; // Reset per frame
+
+        let analysis = match &self.analyze_dependency_modal.analysis_result {
+            Some(res) => res,
+            None => return,
+        };
+        let focused_target_node_name = match self.dependency_focus_target_node.as_ref() {
+            Some(name) => name,
+            None => return,
+        };
+        let node_result = match analysis.per_node_results.get(focused_target_node_name) {
+            Some(res) => res,
+            None => return,
+        };
 
         let arrow_color = Color32::from_rgb(50, 150, 220);
         let base_arrow_stroke = Stroke::new(2.0, arrow_color);
-        let mut current_frame_hovered_key: Option<ArrowKey> = None;
 
-        if let Some(analysis) = &self.analyze_dependency_modal.analysis_result {
-            // Use self.dependency_focus_target_node
-            if let Some(focused_target_node_name) = self.dependency_focus_target_node.as_ref() {
-                if let Some(node_result) = analysis.per_node_results.get(focused_target_node_name) {
-                    for link in node_result.links.iter() {
-                        if link.source_spans.is_empty() {
-                            continue;
-                        }
+        for link in node_result.links.iter() {
+            if link.source_spans.is_empty() {
+                continue;
+            }
 
-                        let t = &link.target_span; // t is Rc<Span>
+            let target_span = &link.target_span;
 
-                        if span_positions.get(&t.span_id).is_some() {
-                            let target_y_pos = span_positions.get(&t.span_id).unwrap().0;
-                            let target_x_pos = time_to_screen(
-                                t.start_time,
-                                time_params.visual_start_x,
-                                time_params.visual_end_x,
-                                time_params.selected_start_time,
-                                time_params.selected_end_time,
-                            );
-                            let to_pos = Pos2::new(target_x_pos, target_y_pos);
+            // Ensure target span position is available and deconstruct its components
+            let (
+                target_y_center_on_screen,
+                _target_rect_start_x_on_screen, // This is span.display_start.get()
+                _target_rect_end_x_on_screen, // This is span.display_start.get() + span.display_length.get()
+            ) = match span_positions.get(&target_span.span_id) {
+                Some(&(y_center, rect_start_x, rect_end_x)) => (y_center, rect_start_x, rect_end_x),
+                None => continue, // Target span not found in positions, skip this link
+            };
 
-                            for s_source in &link.source_spans {
-                                // s_source is &Rc<Span>
-                                if span_positions.get(&s_source.span_id).is_some() {
-                                    let source_y_pos =
-                                        span_positions.get(&s_source.span_id).unwrap().0;
-                                    let source_x_pos = time_to_screen(
-                                        s_source.end_time,
-                                        time_params.visual_start_x,
-                                        time_params.visual_end_x,
-                                        time_params.selected_start_time,
-                                        time_params.selected_end_time,
-                                    );
-                                    let from_pos = Pos2::new(source_x_pos, source_y_pos);
-                                    let distance_ms = (t.start_time - s_source.end_time)
-                                        * MILLISECONDS_PER_SECOND;
+            // Calculate the x-coordinate for the arrow tip based on the target span's start time
+            let target_x_for_arrow_tip = time_to_screen(
+                target_span.start_time,
+                time_params.visual_start_x,
+                time_params.visual_end_x,
+                time_params.selected_start_time,
+                time_params.selected_end_time,
+            );
+            // The arrow points to the vertical center of the target span
+            let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
 
-                                    if distance_ms >= 0.0 {
-                                        let arrow_key = ArrowKey {
-                                            source_span_id: s_source.span_id.clone(),
-                                            source_node_name: s_source.node.name.clone(),
-                                            target_span_id: t.span_id.clone(),
-                                            target_node_name: t.node.name.clone(),
-                                        };
-
-                                        let is_hovered =
-                                            self.hovered_arrow_key.as_ref() == Some(&arrow_key);
-
-                                        // Ensure source ends before target starts
-                                        let response = draw_arrow(
-                                            ui,
-                                            from_pos,
-                                            to_pos, // Common to_pos for the target
-                                            base_arrow_stroke,
-                                            format!("{:.2} ms", distance_ms),
-                                            is_hovered,
-                                            &arrow_key, // Pass arrow_key for ID
-                                        );
-
-                                        if response.hovered() {
-                                            current_frame_hovered_key = Some(arrow_key.clone());
-                                        }
-
-                                        if response.clicked() {
-                                            self.clicked_arrow_info = Some(ArrowInfo {
-                                                source_span_name: s_source.name.clone(),
-                                                source_node_name: s_source.node.name.clone(),
-                                                source_start_time: s_source.start_time,
-                                                source_end_time: s_source.end_time,
-                                                target_span_name: t.name.clone(),
-                                                target_node_name: t.node.name.clone(),
-                                                target_start_time: t.start_time,
-                                                target_end_time: t.end_time,
-                                                duration: t.start_time - s_source.end_time, // Duration in seconds
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            for source_span in &link.source_spans {
+                // source_span is &Rc<Span>
+                // Ensure source span position is available and deconstruct its components
+                let (
+                    source_y_center_on_screen,
+                    _source_rect_start_x_on_screen,
+                    _source_rect_end_x_on_screen,
+                ) = match span_positions.get(&source_span.span_id) {
+                    Some(&(y_center, rect_start_x, rect_end_x)) => {
+                        (y_center, rect_start_x, rect_end_x)
                     }
+                    None => continue, // Source span not found, skip this source
+                };
+
+                // Calculate the x-coordinate for the arrow origin based on the source span's end time
+                let source_x_for_arrow_origin = time_to_screen(
+                    source_span.end_time,
+                    time_params.visual_start_x,
+                    time_params.visual_end_x,
+                    time_params.selected_start_time,
+                    time_params.selected_end_time,
+                );
+                // The arrow originates from the vertical center of the source span
+                let from_pos = Pos2::new(source_x_for_arrow_origin, source_y_center_on_screen);
+
+                let distance_ms =
+                    (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
+
+                if distance_ms < 0.0 {
+                    // Ensure source ends before target starts
+                    continue;
+                }
+
+                let arrow_key = ArrowKey {
+                    source_span_id: source_span.span_id.clone(),
+                    source_node_name: source_span.node.name.clone(),
+                    target_span_id: target_span.span_id.clone(),
+                    target_node_name: target_span.node.name.clone(),
+                };
+
+                let is_hovered = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+
+                let response = draw_arrow(
+                    ui,
+                    from_pos,
+                    to_pos, // Common to_pos for the target
+                    base_arrow_stroke,
+                    format!("{:.2} ms", distance_ms),
+                    is_hovered,
+                    &arrow_key, // Pass arrow_key for ID
+                );
+
+                if response.hovered() {
+                    self.hovered_arrow_key = Some(arrow_key.clone());
+                }
+
+                if response.clicked() {
+                    self.clicked_arrow_info = Some(ArrowInfo {
+                        source_span_name: source_span.name.clone(),
+                        source_node_name: source_span.node.name.clone(),
+                        source_start_time: source_span.start_time,
+                        source_end_time: source_span.end_time,
+                        target_span_name: target_span.name.clone(),
+                        target_node_name: target_span.node.name.clone(),
+                        target_start_time: target_span.start_time,
+                        target_end_time: target_span.end_time,
+                        duration: target_span.start_time - source_span.end_time,
+                    });
                 }
             }
-        }
-
-        if self.hovered_arrow_key != current_frame_hovered_key {
-            self.hovered_arrow_key = current_frame_hovered_key;
-            ctx.request_repaint();
         }
     }
 
