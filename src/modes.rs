@@ -1,6 +1,6 @@
-//! This module contains different modes for displaying the trace data.
+//! This is the module that defines Display modes available in Traviz.
 //! Each "Mode" is a function which takes the raw trace data and prepares the spans that should be displayed.
-//! They can filter, modify, or re-arrange the spans as needed for each mode.
+//! They can filter, modify, transform, re-arrange the spans as needed for each mode.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -10,227 +10,126 @@ use anyhow::Result;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
+use crate::structured_modes::{self, StructuredMode};
 use crate::task_timer::TaskTimer;
 use crate::types::{
-    stringify_span, time_point_from_unix_nano, value_to_text, DisplayLength, Event, Node, Scope,
-    Span, SpanDisplayConfig,
+    time_point_from_unix_nano, value_to_text, DisplayLength, Event, Node, Scope, Span,
+    SpanDisplayConfig,
 };
 
-pub fn everything_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
-    let spans = extract_spans(trace_data)?;
-    // Shorten the name to make arranging more efficient in everything mode.
-    // This is a bit of a hack, but that's what we have for now.
-    let spans = map_spans(spans.as_slice(), &|mut s: Span| -> Span {
-        if s.name == "validate_chunk_endorsement" {
-            s.name = "VCE".to_string();
-        }
-        s.attributes.insert(
-            "full-name".to_string(),
-            Some(Value::StringValue("validate_chunk_endorsement".to_string())),
-        );
-        s
-    });
-    Ok(spans)
+pub type DisplayModeTransform = Box<dyn Fn(&[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>>>;
+
+pub struct DisplayMode {
+    pub name: String,
+    /// Function which takes raw data and outputs spans that should be displayed.
+    pub transformation: DisplayModeTransform,
 }
 
-pub fn doomslug_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
+/// Get all of the built-in display modes.
+pub fn get_all_modes() -> Vec<DisplayMode> {
+    // Include all structured modes in the display modes.
+    // For now those are all of the modes, but in the future we may add more.
+    let structured_modes: Vec<DisplayMode> = structured_modes::get_all_structured_modes()
+        .into_iter()
+        .map(|mode| DisplayMode {
+            name: mode.name.clone(),
+            transformation: Box::new(move |trace_data| {
+                structured_mode_transformation(trace_data, &mode)
+            }),
+        })
+        .collect();
+    structured_modes
+}
+
+/// Perform the transformation to the spans based on the structured mode.
+/// - for each span hierarchy, find the first (highest) span that should be visible and make it a
+///   top level span, discard the ones above it.
+/// - collapse spans that are not visible.
+/// - modify each span as needed - replace name, add height to name, set display length, etc.
+pub fn structured_mode_transformation(
+    trace_data: &[ExportTraceServiceRequest],
+    structured_mode: &StructuredMode,
+) -> Result<Vec<Rc<Span>>> {
     let all_spans = extract_spans(trace_data)?;
     let mut new_spans = Vec::new();
-    get_doomslug_spans(&all_spans, &mut new_spans);
-    Ok(map_spans(&new_spans, &|mut s: Span| -> Span {
-        s.display_options.display_length = DisplayLength::Text;
 
-        if s.name.contains("set_tip") {
-            if let Some(val) = s.attributes.get("block_height") {
-                s.name = format!("{}({})", s.name, value_to_text(val));
-            }
-        }
-
-        if s.name.contains("on_approval_message") {
-            if let Some(val) = s.attributes.get("msg") {
-                let t = value_to_text(val);
-
-                if t.starts_with("Endorsement") {
-                    if let Some(target_height) = s.attributes.get("target_height") {
-                        s.name = format!(
-                            "on_approval(Endorse(target_height={}))",
-                            value_to_text(target_height)
-                        );
-                    }
-                };
-            }
-        }
-
-        s
-    }))
-}
-
-fn is_doomslug_span(span: &Span) -> bool {
-    let stringified = stringify_span(&Rc::new(span.clone()), false);
-    stringified.contains("doomslug")
-        || stringified.contains("Doomslug")
-        || span.name.contains("produce_block")
-}
-
-fn get_doomslug_spans(spans: &[Rc<Span>], res: &mut Vec<Rc<Span>>) {
-    for span in spans {
-        if is_doomslug_span(span) {
-            let mut doomslug_children = Vec::new();
-            get_doomslug_spans(&span.children.borrow(), &mut doomslug_children);
-            let mut new_span = (**span).clone();
-            new_span.children = RefCell::new(doomslug_children);
-            res.push(Rc::new(new_span));
-        } else {
-            get_doomslug_spans(&span.children.borrow(), res);
-        }
-    }
-}
-
-pub fn chain_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
-    chain_mode_one_shard(trace_data, None)
-}
-
-pub fn chain_shard0_mode(trace_data: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>> {
-    chain_mode_one_shard(trace_data, Some("0".to_string()))
-}
-
-// Chain mode, optionally filtered down to one shard
-pub fn chain_mode_one_shard(
-    trace_data: &[ExportTraceServiceRequest],
-    one_shard: Option<String>,
-) -> Result<Vec<Rc<Span>>> {
-    let important_chain_spans = [
-        "preprocess_optimistic_block",
-        "process_optimistic_block",
-        "postprocess_ready_block",
-        "postprocess_optimistic_block",
-        "preprocess_block",
-        "apply_new_chunk",
-        "apply_old_chunk",
-        "produce_chunk_internal",
-        "produce_block_on",
-        "receive_optimistic_block",
-        "validate_chunk_state_witness",
-        "send_chunk_state_witness",
-        "produce_optimistic_block_on_head",
-        "validate_chunk_endorsement",
-        "on_approval_message",
-    ];
-
-    let all_spans = extract_spans(trace_data)?;
-
-    let is_important = |span: &Span| {
-        if !important_chain_spans.contains(&span.name.as_str()) {
-            return false;
-        }
-
-        if let Some(filter_shard) = &one_shard {
-            if let Some(val) = span.attributes.get("shard_id") {
-                if &value_to_text(val) != filter_shard {
-                    return false;
-                }
-            }
-        }
-
-        true
-    };
-
-    let res = retain_important(all_spans, &is_important);
-    let res = add_height_shard_id_to_name(res);
-
-    Ok(res)
-}
-
-pub fn retain_important(
-    spans: Vec<Rc<Span>>,
-    is_important: &dyn Fn(&Span) -> bool,
-) -> Vec<Rc<Span>> {
-    let mut res = Vec::new();
-    for span in spans {
-        retain_important_rek(&span, is_important, &mut res);
+    for span in all_spans {
+        structured_mode_transformation_rek(structured_mode, &span, &mut new_spans, false);
     }
 
-    for span in &res {
-        collapse_unimportant(span, is_important);
-    }
-
-    res
+    Ok(new_spans)
 }
 
-fn retain_important_rek(
+fn structured_mode_transformation_rek(
+    mode: &StructuredMode,
     span: &Rc<Span>,
-    is_important: &dyn Fn(&Span) -> bool,
-    res: &mut Vec<Rc<Span>>,
-) {
-    if is_important(span) {
-        res.push(span.clone());
-    } else {
+    visible_top_level_spans: &mut Vec<Rc<Span>>,
+    under_visible_top_level_span: bool,
+) -> Option<Rc<Span>> {
+    let decision = mode.get_decision_for_span(span);
+
+    if !decision.visible && !under_visible_top_level_span {
         for child in span.children.borrow().iter() {
-            retain_important_rek(child, is_important, res);
+            structured_mode_transformation_rek(mode, child, visible_top_level_spans, false);
         }
-    }
-}
-
-fn collapse_unimportant(span: &Span, is_important: &dyn Fn(&Span) -> bool) -> bool {
-    let mut found_important = false;
-
-    if is_important(span) {
-        found_important = true;
-        span.dont_collapse_this_span.set(true);
-        span.collapse_children.set(true);
+        return None;
     }
 
-    for child in span.children.borrow().iter() {
-        if collapse_unimportant(child, is_important) {
-            found_important = true;
-        }
+    let taken_children = std::mem::take(&mut *span.children.borrow_mut());
+
+    let mut modified_span: Span = (**span).clone();
+    if decision.visible {
+        modified_span.dont_collapse_this_span.set(true);
+        modified_span.collapse_children.set(true);
     }
-
-    found_important
-}
-
-pub fn add_height_shard_id_to_name(spans: Vec<Rc<Span>>) -> Vec<Rc<Span>> {
-    map_spans(&spans, &|mut s: Span| {
-        if let Some(val) = s.attributes.get("height") {
-            s.name = format!("{} H={}", s.name, value_to_text(val));
-        }
-        if let Some(val) = s.attributes.get("block_height") {
-            s.name = format!("{} H={}", s.name, value_to_text(val));
-        }
-        if let Some(val) = s.attributes.get("height_created") {
-            s.name = format!("{} HC={}", s.name, value_to_text(val));
-        }
-        if let Some(val) = s.attributes.get("next_height") {
-            s.name = format!("{} NH={}", s.name, value_to_text(val));
-        }
-        if let Some(val) = s.attributes.get("shard_id") {
-            s.name = format!("{} s={}", s.name, value_to_text(val));
-        }
-        s.display_options.display_length = DisplayLength::Text;
-        s
-    })
-}
-
-#[must_use]
-pub fn map_spans(spans: &[Rc<Span>], f: &dyn Fn(Span) -> Span) -> Vec<Rc<Span>> {
-    spans
-        .iter()
-        .map(|span| Rc::new(map_span((**span).clone(), f)))
-        .collect()
-}
-
-#[must_use]
-pub fn map_span(span: Span, f: &dyn Fn(Span) -> Span) -> Span {
-    let mut new_span = f(span);
+    if decision.replace_name.is_some() {
+        modified_span.name = decision.replace_name.unwrap();
+    }
+    if decision.add_height_to_name {
+        add_height_to_name(&mut modified_span);
+    }
+    if decision.add_shard_id_to_name {
+        add_shard_id_to_name(&mut modified_span);
+    }
+    modified_span.display_options.display_length = decision.display_length;
 
     let mut new_children = Vec::new();
-    for child in new_span.children.borrow().iter() {
-        new_children.push(Rc::new(map_span((**child).clone(), f)));
+    for child in taken_children.iter() {
+        if let Some(new_child) =
+            structured_mode_transformation_rek(mode, child, visible_top_level_spans, true)
+        {
+            new_children.push(new_child);
+        }
     }
+    modified_span.children = RefCell::new(new_children);
 
-    new_span.children = RefCell::new(new_children);
+    if !under_visible_top_level_span {
+        visible_top_level_spans.push(Rc::new(modified_span));
+        None
+    } else {
+        Some(Rc::new(modified_span))
+    }
+}
 
-    new_span
+pub fn add_height_to_name(s: &mut Span) {
+    if let Some(val) = s.attributes.get("height") {
+        s.name = format!("{} H={}", s.name, value_to_text(val));
+    }
+    if let Some(val) = s.attributes.get("block_height") {
+        s.name = format!("{} H={}", s.name, value_to_text(val));
+    }
+    if let Some(val) = s.attributes.get("height_created") {
+        s.name = format!("{} HC={}", s.name, value_to_text(val));
+    }
+    if let Some(val) = s.attributes.get("next_height") {
+        s.name = format!("{} NH={}", s.name, value_to_text(val));
+    }
+}
+
+pub fn add_shard_id_to_name(s: &mut Span) {
+    if let Some(val) = s.attributes.get("shard_id") {
+        s.name = format!("{} s={}", s.name, value_to_text(val));
+    }
 }
 
 // Parse the raw OTel data into a tree of spans/
