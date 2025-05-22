@@ -575,7 +575,7 @@ impl AnalyzeSpanModal {
             });
         });
 
-        // Apply changes if modal got closed
+        // Reset fields if modal got closed
         if modal_closed {
             self.show = false;
             self.spans_processed = false;

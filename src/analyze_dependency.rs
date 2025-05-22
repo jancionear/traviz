@@ -418,33 +418,32 @@ impl AnalyzeDependencyModal {
                 ui.heading("Analyze Dependency");
                 ui.add_space(10.0);
 
-                // Use a Grid for Source and Target span selection and lists
-                egui::Grid::new("source_target_grid")
+                Grid::new("source_target_grid")
                     .num_columns(2)
-                    .spacing([20.0, 10.0]) // Spacing between columns and rows
+                    .spacing([20.0, 10.0])
                     .striped(true)
                     .show(ui, |ui| {
                         // --- Row 1: Search Boxes ---
                         // Source span search
                         ui.vertical(|ui| {
-                            ui.set_width(max_width * 0.45); // Maintain overall width proportion
+                            ui.set_width(max_width * 0.45);
                             span_search_ui(
                                 ui,
                                 &mut self.source_search_text,
                                 "Source Span:",
                                 "Search source span",
-                                ui.available_width() // Use available width within the cell
+                                ui.available_width()
                             );
                         });
                         // Target span search
                         ui.vertical(|ui| {
-                            ui.set_width(max_width * 0.45); // Maintain overall width proportion
+                            ui.set_width(max_width * 0.45);
                             span_search_ui(
                                 ui,
                                 &mut self.target_search_text,
                                 "Target Span:",
                                 "Search target span",
-                                ui.available_width() // Use available width within the cell
+                                ui.available_width()
                             );
                         });
                         ui.end_row();
@@ -484,14 +483,13 @@ impl AnalyzeDependencyModal {
 
                 // Configuration row
                 ui.horizontal(|ui| {
-                    // Threshold input (integer, min 1)
+                    // Threshold input
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             ui.label("Threshold:");
                             let response = ui.add(
                                 TextEdit::singleline(&mut self.threshold_edit_str)
                                     .desired_width(50.0)
-                                    .text_color(Color32::LIGHT_GRAY)
                             );
 
                             let mut commit_valid_input = false;
@@ -501,8 +499,9 @@ impl AnalyzeDependencyModal {
 
                             if commit_valid_input {
                                 if let Ok(value) = self.threshold_edit_str.parse::<usize>() {
-                                    self.threshold = value.max(1); // Ensure minimum of 1
-                                } // If parse fails, self.threshold remains, and string will be reset below
+                                    // Ensure minimum of 1
+                                    self.threshold = value.max(1);
+                                }
                                 // Always reset edit string from the (potentially updated) numeric value after commit attempt
                                 self.threshold_edit_str = self.threshold.to_string();
                             } else if response.changed() {
@@ -528,7 +527,6 @@ impl AnalyzeDependencyModal {
                                 TextEdit::singleline(&mut self.metadata_field)
                                     .desired_width(120.0)
                                     .hint_text("field name")
-                                    .text_color(Color32::LIGHT_GRAY)
                             );
 
                             if response.hovered() {
@@ -550,11 +548,12 @@ impl AnalyzeDependencyModal {
                                 .selected_text(self.source_scope.to_string())
                                 .width(80.0)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.source_scope, SourceScope::SameNode, SourceScope::SameNode.to_string());
-                                    ui.selectable_value(&mut self.source_scope, SourceScope::AllNodes, SourceScope::AllNodes.to_string());
+                                    ui.selectable_value(&mut self.source_scope,
+                                        SourceScope::SameNode, SourceScope::SameNode.to_string());
+                                    ui.selectable_value(&mut self.source_scope,
+                                        SourceScope::AllNodes, SourceScope::AllNodes.to_string());
                                 });
 
-                            // Attach hover text to the ComboBox response itself
                             combo_box_response.response.on_hover_text("'self' only considers sources from the same node as target. 'all nodes' considers sources from any node.");
                         });
                     });
@@ -605,14 +604,14 @@ impl AnalyzeDependencyModal {
                     });
                 }
 
-                // Create the grid headers first outside the scroll area (to keep them visible)
+                // Create the grid headers outside the scroll area (to keep them visible)
                 if self.analysis_result.is_some() {
                     ui.add_space(10.0);
 
                     let available_width = ui.available_width();
 
                     // Define percentage-based column widths that sum exactly to 100%
-                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15]; // Sums to 1.0
+                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15];
 
                     let grid_width = available_width;
 
@@ -624,7 +623,7 @@ impl AnalyzeDependencyModal {
                         .num_columns(6)
                         .spacing([10.0, 6.0])
                         .striped(true)
-                        .min_col_width(0.0) // Let the explicit width settings handle sizing
+                        .min_col_width(0.0)
                         .show(ui, |ui_grid| {
                             draw_left_aligned_text_cell(ui_grid, col_widths[0], "Node", true);
                             draw_right_aligned_text_cell(ui_grid, col_widths[1], "Count", true, None);
@@ -645,14 +644,12 @@ impl AnalyzeDependencyModal {
                     });
                 }
 
-                // Results height
+                // Grid contents in a scrollable area
                 let results_height = if self.analysis_result.is_some() {
                     (max_height - 400.0).max(200.0)
                 } else {
                     100.0
                 };
-
-                // Grid contents in a scrollable area
                 ScrollArea::vertical()
                     .max_height(results_height)
                     .id_salt("dependency_results_scroll_area")
@@ -670,12 +667,11 @@ impl AnalyzeDependencyModal {
                             // Calculate column widths using the same grid width and percentages
                             let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
 
-                            // Use Grid for tabular data (without headers)
                             Grid::new("dependency_analysis_grid")
                                 .num_columns(6)
                                 .spacing([10.0, 6.0])
                                 .striped(true)
-                                .min_col_width(0.0) // Let the explicit width settings handle sizing
+                                .min_col_width(0.0)
                                 .show(ui, |ui| {
                                     // Get nodes and sort them alphabetically
                                     let mut node_names: Vec<String> =
@@ -750,10 +746,10 @@ impl AnalyzeDependencyModal {
                                                 );
                                             } else {
                                                 // No links for this node, display "-" for all stat columns (Count, Min, Max, Mean, Median)
-                                                for col_idx in 1..=5 { // Iterate for the 5 stat columns
+                                                for width in col_widths.iter().skip(1) {
                                                     draw_right_aligned_text_cell(
                                                         ui,
-                                                        col_widths[col_idx],
+                                                        *width,
                                                         "-",
                                                         false,
                                                         None
@@ -767,8 +763,8 @@ impl AnalyzeDependencyModal {
                                     // If no results found
                                     if result.per_node_results.is_empty() {
                                         draw_left_aligned_text_cell(ui, col_widths[0], "No matching dependencies found", false);
-                                        for col_idx in 1..=5 { // Iterate for the 5 stat columns
-                                             draw_right_aligned_text_cell(ui, col_widths[col_idx], "", false, None);
+                                        for width in col_widths.iter().skip(1) {
+                                             draw_right_aligned_text_cell(ui, *width, "", false, None);
                                         }
                                         ui.end_row();
                                     }
@@ -789,7 +785,7 @@ impl AnalyzeDependencyModal {
             });
         });
 
-        // Apply changes if modal closed
+        // Reset fields if modal got closed
         if modal_closed {
             self.show = false;
             self.spans_processed = false;

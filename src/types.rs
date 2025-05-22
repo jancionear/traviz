@@ -185,6 +185,7 @@ pub fn stringify_attributes(attributes: &BTreeMap<String, Option<Value>>) -> Str
     s
 }
 
+/// Identifies a node (by its name) or the entire set of nodes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NodeIdentifier {
     Node(String),

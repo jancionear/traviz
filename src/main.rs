@@ -25,15 +25,9 @@ mod modes;
 mod task_timer;
 mod types;
 
+use analyze_dependency::AnalyzeDependencyModal;
+use analyze_span::AnalyzeSpanModal;
 use modes::{chain_mode, chain_shard0_mode, doomslug_mode, everything_mode};
-
-// Struct to pass parameters for time_to_screen conversion
-struct TimeToScreenParams {
-    selected_start_time: TimePoint,
-    selected_end_time: TimePoint,
-    visual_start_x: f32,
-    visual_end_x: f32,
-}
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -68,6 +62,19 @@ impl Timeline {
     }
 }
 
+/// Holds parameters for converting a `TimePoint` to a horizontal (X-axis) screen coordinate.
+///
+/// This struct encapsulates the current timeline view's mapping:
+/// - `selected_start_time` and `selected_end_time`: Define the time range currently visible or selected.
+/// - `visual_start_x` and `visual_end_x`: Define the corresponding pixel coordinates on the screen
+///   where this time range begins and ends.
+struct TimeToScreenParams {
+    selected_start_time: TimePoint,
+    selected_end_time: TimePoint,
+    visual_start_x: f32,
+    visual_end_x: f32,
+}
+
 fn screen_to_time(
     screen_x: f32,
     start_x: f32,
@@ -99,17 +106,12 @@ fn screen_change_to_time_change(
     after - before
 }
 
-// Struct to hold error notification state
-struct ErrorNotification {
-    message: String,
-}
-
 struct App {
     layout: Layout,
     timeline: Timeline,
     raw_data: Vec<ExportTraceServiceRequest>,
     spans_to_display: Vec<Rc<Span>>,
-    all_spans_for_analysis: Vec<Rc<Span>>, // All spans, result of everything_mode
+    all_spans_for_analysis: Vec<Rc<Span>>,
 
     timeline_bar1_time: TimePoint,
     timeline_bar2_time: TimePoint,
@@ -117,14 +119,16 @@ struct App {
     include_children_events: bool,
     display_mode: DisplayMode,
     search: Search,
-    analyze_span_modal: analyze_span::AnalyzeSpanModal,
-    analyze_dependency_modal: analyze_dependency::AnalyzeDependencyModal,
-    error_notification: Option<ErrorNotification>,
+
+    error_notification: Option<String>,
+
+    analyze_span_modal: AnalyzeSpanModal,
+    analyze_dependency_modal: AnalyzeDependencyModal,
 
     // For dependency visualization
     highlighted_spans: Vec<Rc<Span>>,
     show_dependency_highlighting: bool,
-    dependency_focus_target_node: Option<String>, // Added for specific target node focus
+    dependency_focus_target_node: Option<String>,
     // New fields for arrow interactivity
     clicked_arrow_info: Option<ArrowInfo>,
     hovered_arrow_key: Option<ArrowKey>,
@@ -160,7 +164,6 @@ impl DisplayMode {
     }
 }
 
-// Define new structs for arrow interactivity
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ArrowKey {
     source_span_id: Vec<u8>,
@@ -174,12 +177,13 @@ struct ArrowInfo {
     source_span_name: String,
     source_node_name: String,
     source_start_time: TimePoint,
-    source_end_time: TimePoint, // This is effectively the link's start time
+    source_end_time: TimePoint,
     target_span_name: String,
     target_node_name: String,
-    target_start_time: TimePoint, // This is effectively the link's end time
+    target_start_time: TimePoint,
     target_end_time: TimePoint,
-    duration: TimePoint, // Duration of the link (target_start_time - source_end_time)
+    // Duration of the link (target_start_time - source_end_time)
+    duration: TimePoint,
 }
 
 impl Default for App {
@@ -212,15 +216,12 @@ impl Default for App {
             include_children_events: true,
             display_mode: DisplayMode::Everything,
             search: Search::default(),
-            analyze_span_modal: analyze_span::AnalyzeSpanModal::default(),
-            analyze_dependency_modal: analyze_dependency::AnalyzeDependencyModal::new(),
             error_notification: None,
-
-            // For dependency visualization
+            analyze_span_modal: AnalyzeSpanModal::default(),
+            analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
             show_dependency_highlighting: false,
-            dependency_focus_target_node: None, // Initialized
-            // Initialize new fields
+            dependency_focus_target_node: None,
             clicked_arrow_info: None,
             hovered_arrow_key: None,
         };
@@ -347,7 +348,7 @@ impl App {
                 }
             }
 
-            // Add Analyze Span button, disabled if no spans are loaded
+            // Analyze Span button, disabled if no spans are loaded
             let has_spans = !self.spans_to_display.is_empty();
             let analyze_button = ui.add_enabled(has_spans, Button::new("Analyze Span"));
             if analyze_button.clicked() {
@@ -357,7 +358,7 @@ impl App {
                     .update_span_list(&self.spans_to_display);
             }
 
-            // Add Analyze Dependency button, disabled if no spans are loaded
+            // Analyze Dependency button, disabled if no spans are loaded
             let analyze_dep_button = ui.add_enabled(has_spans, Button::new("Analyze Dependency"));
             if analyze_dep_button.clicked() {
                 self.analyze_dependency_modal.show = true;
@@ -367,7 +368,7 @@ impl App {
                     .update_span_list(&self.spans_to_display);
             }
 
-            // Always show Clear Highlights button, but only enabled when there are highlighted spans
+            // Clear Highlights button, only enabled when there are highlighted spans
             let has_highlights =
                 self.show_dependency_highlighting && !self.highlighted_spans.is_empty();
 
@@ -1543,9 +1544,7 @@ impl App {
 
     // Show an error notification
     fn show_error_notification(&mut self, message: &str) {
-        self.error_notification = Some(ErrorNotification {
-            message: message.to_string(),
-        });
+        self.error_notification = Some(message.to_string());
         println!("Error notification shown: {}", message);
     }
 
@@ -1557,7 +1556,7 @@ impl App {
         }
 
         // Get the message from the notification
-        let message = self.error_notification.as_ref().unwrap().message.clone();
+        let message = self.error_notification.as_ref().unwrap().clone();
 
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(Color32::from_black_alpha(120)))
