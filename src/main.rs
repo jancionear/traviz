@@ -832,6 +832,16 @@ impl App {
                     // Create a mapping from span_id to (node_name, y-position) for dependency arrows
                     let mut span_positions = HashMap::new();
 
+                    let highlighted_span_ids_set: HashSet<(Vec<u8>, String)> =
+                        if !self.highlighted_spans.is_empty() {
+                            self.highlighted_spans
+                                .iter()
+                                .map(|s| (s.span_id.clone(), s.node.name.clone()))
+                                .collect()
+                        } else {
+                            HashSet::new()
+                        };
+
                     for (node_name, (_node, spans)) in &node_spans {
                         let spans_in_range: Vec<Rc<Span>> = spans
                             .iter()
@@ -852,7 +862,7 @@ impl App {
                         );
                         Self::set_display_params_with_highlights(
                             &spans_in_range,
-                            &self.highlighted_spans,
+                            &highlighted_span_ids_set,
                             self.timeline.selected_start,
                             self.timeline.selected_end,
                             under_time_points_area.min.x + self.layout.node_name_width,
@@ -861,7 +871,7 @@ impl App {
                         );
                         let bbox = arrange_spans(&spans_in_range, true);
 
-                        if !self.highlighted_spans.is_empty() {
+                        if !highlighted_span_ids_set.is_empty() {
                             self.collect_span_positions(
                                 &spans_in_range,
                                 cur_height,
@@ -872,7 +882,14 @@ impl App {
                         }
 
                         ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
-                        self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height, 0);
+                        self.draw_arranged_spans(
+                            &spans_in_range,
+                            ui,
+                            cur_height,
+                            span_height,
+                            0,
+                            &highlighted_span_ids_set,
+                        );
 
                         let next_height = cur_height
                             + bbox.height as f32 * (span_height + self.layout.span_margin);
@@ -899,7 +916,7 @@ impl App {
                     }
 
                     // Draw dependency arrows if needed
-                    if !self.highlighted_spans.is_empty() {
+                    if !highlighted_span_ids_set.is_empty() {
                         let time_params = TimeToScreenParams {
                             selected_start_time: self.timeline.selected_start,
                             selected_end_time: self.timeline.selected_end,
@@ -961,7 +978,7 @@ impl App {
 
     fn set_display_params_with_highlights(
         spans: &[Rc<Span>],
-        highlighted_spans: &[Rc<Span>],
+        highlighted_span_ids: &HashSet<(Vec<u8>, String)>,
         start_time: TimePoint,
         end_time: TimePoint,
         start_pos: f32,
@@ -969,49 +986,37 @@ impl App {
         ui: &Ui,
     ) {
         for span in spans {
-            // Determine if this span is highlighted
-            let is_highlighted = highlighted_spans
-                .iter()
-                .any(|s| s.span_id == span.span_id && s.node.name == span.node.name);
+            let is_highlighted =
+                highlighted_span_ids.contains(&(span.span_id.clone(), span.node.name.clone()));
 
             let start_x = time_to_screen(span.start_time, start_pos, end_pos, start_time, end_time);
             let time_display_len =
                 time_to_screen(span.end_time, start_pos, end_pos, start_time, end_time) - start_x;
 
-            // For highlighted spans, always use text display length
-            let display_len = if is_highlighted {
-                // Always use text length for highlighted spans
-                let text_len = ui.fonts(|fs| {
-                    fs.layout_no_wrap(span.name.to_string(), FontId::default(), Color32::BLACK)
-                        .rect
-                        .width()
-                });
-                text_len.max(time_display_len)
+            let display_mode = if is_highlighted {
+                DisplayLength::Text
             } else {
-                match span.display_options.display_length {
-                    DisplayLength::Time => time_display_len,
-                    DisplayLength::Text => {
-                        let text_len = ui.fonts(|fs| {
-                            fs.layout_no_wrap(
-                                span.name.to_string(),
-                                FontId::default(),
-                                Color32::BLACK,
-                            )
-                            .rect
-                            .width()
-                        });
-                        text_len.max(time_display_len)
-                    }
-                }
+                span.display_options.display_length
             };
 
+            let display_len = match display_mode {
+                DisplayLength::Time => time_display_len,
+                DisplayLength::Text => {
+                    let text_len = ui.fonts(|fs| {
+                        fs.layout_no_wrap(span.name.to_string(), FontId::default(), Color32::BLACK)
+                            .rect
+                            .width()
+                    });
+                    text_len.max(time_display_len)
+                }
+            };
             span.display_start.set(start_x);
             span.display_length.set(display_len);
             span.time_display_length.set(time_display_len);
 
             Self::set_display_params_with_highlights(
                 span.display_children.borrow().as_slice(),
-                highlighted_spans,
+                highlighted_span_ids,
                 start_time,
                 end_time,
                 start_pos,
@@ -1028,11 +1033,19 @@ impl App {
         start_height: f32,
         span_height: f32,
         level: u64,
+        highlighted_span_ids: &HashSet<(Vec<u8>, String)>,
     ) {
         for span in spans {
             let next_start_height = start_height
                 + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
-            self.draw_arranged_span(span, ui, next_start_height, span_height, level);
+            self.draw_arranged_span(
+                span,
+                ui,
+                next_start_height,
+                span_height,
+                level,
+                highlighted_span_ids,
+            );
         }
     }
 
@@ -1043,13 +1056,10 @@ impl App {
         start_height: f32,
         span_height: f32,
         level: u64,
+        highlighted_span_ids: &HashSet<(Vec<u8>, String)>,
     ) {
-        // Check if this span is highlighted
-        let is_highlighted = !self.highlighted_spans.is_empty()
-            && self // Revert condition
-                .highlighted_spans
-                .iter()
-                .any(|s| s.span_id == span.span_id && s.node.name == span.node.name);
+        let is_highlighted =
+            highlighted_span_ids.contains(&(span.span_id.clone(), span.node.name.clone()));
 
         // Only draw if this span is visible
         let visible_rect = ui.clip_rect();
@@ -1058,7 +1068,7 @@ impl App {
             let start_x = span.display_start.get();
             let end_x = start_x + span.display_length.get();
 
-            let mut display_name = if end_x - start_x > self.layout.span_name_threshold {
+            let name = if end_x - start_x > self.layout.span_name_threshold {
                 span.name.as_str()
             } else {
                 ""
@@ -1090,9 +1100,10 @@ impl App {
                 Pos2::new(start_x, start_height),
                 Pos2::new(end_x, start_height + span_height),
             );
-            ui.painter().rect_filled(display_rect, 0.0, base_color);
-            ui.painter().rect_filled(time_rect, 0.0, time_color);
+            ui.painter().rect_filled(display_rect, 0, base_color);
+            ui.painter().rect_filled(time_rect, 0, time_color);
 
+            // Highlighted spans also have a nice border around them
             if is_highlighted {
                 let border_stroke = Stroke::new(2.5, Color32::from_rgb(0, 110, 230));
                 let points = vec![
@@ -1103,9 +1114,6 @@ impl App {
                 ];
                 let border_shape = PathShape::closed_line(points, border_stroke);
                 ui.painter().add(border_shape);
-
-                // Force display of the name for highlighted spans
-                display_name = span.name.as_str();
             }
 
             if level == 0 {
@@ -1121,7 +1129,7 @@ impl App {
 
             let span_button = ui.put(
                 display_rect,
-                Button::new(display_name)
+                Button::new(name)
                     .truncate()
                     .fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
             );
@@ -1172,6 +1180,7 @@ impl App {
             start_height + span_height + self.layout.span_margin,
             span_height,
             level + 1,
+            highlighted_span_ids,
         );
     }
 
