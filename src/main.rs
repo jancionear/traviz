@@ -1275,115 +1275,125 @@ impl App {
         max_width: f32,
         max_height: f32,
     ) {
-        // Handle focus_node if user closed the modal by selecting to highlight some spans
-        if !self.analyze_dependency_modal.show && self.analyze_dependency_modal.focus_node.is_some()
-        {
-            let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
-            self.dependency_focus_target_node = Some(focus_node_name.clone());
+        if self.analyze_dependency_modal.show {
+            let modal = &mut self.analyze_dependency_modal;
+            modal.show_modal(ctx, max_width, max_height);
+            return;
+        }
+        // Modal is not set to be shown. Check if it was just closed by a selection.
+        if self.analyze_dependency_modal.focus_node.is_none() {
+            // If modal.show is false and focus_node is None, we do nothing further.
+            return;
+        }
 
-            // Clear previous highlights
-            self.highlighted_spans.clear();
+        // Get focus_node_name by taking it from the modal and store it in App
+        let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
+        self.dependency_focus_target_node = Some(focus_node_name.clone());
 
-            // Get the analysis result
-            if let Some(analysis) = &self.analyze_dependency_modal.analysis_result {
-                if let Some(node_result) = analysis.per_node_results.get(&focus_node_name) {
-                    println!("Found node result with {} links", node_result.links.len());
+        // Clear previous highlights
+        self.highlighted_spans.clear();
 
-                    let mut spans_to_highlight = Vec::new();
-                    let mut highlighted_span_pointers: HashSet<*const Span> = HashSet::new();
-
-                    // Iterate through links and directly collect unique spans
-                    for (i, link) in node_result.links.iter().enumerate() {
-                        // Process source spans
-                        for (s_idx, source_s) in link.source_spans.iter().enumerate() {
-                            println!(
-                                "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
-                                i,
-                                s_idx + 1,
-                                link.source_spans.len(),
-                                source_s.name,
-                                source_s.node.name,
-                                hex::encode(&source_s.span_id)
-                            );
-                            let span_ptr = Rc::as_ptr(source_s);
-                            if highlighted_span_pointers.insert(span_ptr) {
-                                spans_to_highlight.push(source_s.clone());
-                            }
-                        }
-
-                        // Process target span
-                        let target_s = &link.target_span;
-                        println!(
-                            "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
-                            i,
-                            target_s.name,
-                            target_s.node.name,
-                            hex::encode(&target_s.span_id)
-                        );
-                        let span_ptr = Rc::as_ptr(target_s);
-                        if highlighted_span_pointers.insert(span_ptr) {
-                            spans_to_highlight.push(target_s.clone());
-                        }
-                    }
-
-                    // Assign the collected unique spans
-                    self.highlighted_spans = spans_to_highlight;
-
-                    // Adjust timeline to show these spans if needed
-                    if !self.highlighted_spans.is_empty() {
-                        let mut min_time = f64::MAX;
-                        let mut max_time = f64::MIN;
-
-                        for span in &self.highlighted_spans {
-                            min_time = min_time.min(span.start_time);
-                            max_time = max_time.max(span.end_time);
-                        }
-
-                        // Limit the range to 4 seconds maximum
-                        let desired_max_time = min_time + 4.0;
-                        if max_time > desired_max_time {
-                            max_time = desired_max_time;
-                        }
-
-                        // Add padding around the time range
-                        let padding = (max_time - min_time) * 0.2;
-                        min_time -= padding;
-                        max_time += padding;
-
-                        // Update timeline if needed
-                        if min_time < self.timeline.selected_start
-                            || max_time > self.timeline.selected_end
-                        {
-                            self.timeline.selected_start = min_time;
-                            self.timeline.selected_end = max_time;
-                            self.set_timeline_end_bars_to_selected();
-                        }
-                    } else {
-                        println!("No spans were highlighted!");
-                    }
-                } else {
-                    println!("Node result not found for: {}", focus_node_name);
-                }
-            } else {
+        // Get the analysis result
+        let analysis = match &self.analyze_dependency_modal.analysis_result {
+            Some(res) => res,
+            None => {
                 println!("No analysis result available!");
+                return;
+            }
+        };
+
+        let node_result = match analysis.per_node_results.get(&focus_node_name) {
+            Some(res) => res,
+            None => {
+                println!("Node result not found for: {}", focus_node_name);
+                return;
+            }
+        };
+
+        println!("Found node result with {} links", node_result.links.len());
+
+        let mut spans_to_highlight = Vec::new();
+        let mut highlighted_span_pointers: HashSet<*const Span> = HashSet::new();
+
+        // Iterate through links and directly collect unique spans
+        for (i, link) in node_result.links.iter().enumerate() {
+            // Process source spans
+            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
+                println!(
+                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
+                    i,
+                    s_idx + 1,
+                    link.source_spans.len(),
+                    source_s.name,
+                    source_s.node.name,
+                    hex::encode(&source_s.span_id)
+                );
+                let span_ptr = Rc::as_ptr(source_s);
+                if highlighted_span_pointers.insert(span_ptr) {
+                    spans_to_highlight.push(source_s.clone());
+                }
+            }
+
+            // Process target span
+            let target_s = &link.target_span;
+            println!(
+                "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
+                i,
+                target_s.name,
+                target_s.node.name,
+                hex::encode(&target_s.span_id)
+            );
+            let span_ptr = Rc::as_ptr(target_s);
+            if highlighted_span_pointers.insert(span_ptr) {
+                spans_to_highlight.push(target_s.clone());
             }
         }
 
-        if !self.analyze_dependency_modal.show {
+        // Assign the collected unique spans
+        self.highlighted_spans = spans_to_highlight;
+
+        // Adjust timeline to show these spans if needed
+        if self.highlighted_spans.is_empty() {
+            println!("No spans were highlighted!");
             return;
         }
-        let modal = &mut self.analyze_dependency_modal;
-        modal.show_modal(ctx, max_width, max_height);
+
+        let mut min_time = f64::MAX;
+        let mut max_time = f64::MIN;
+
+        for span in &self.highlighted_spans {
+            min_time = min_time.min(span.start_time);
+            max_time = max_time.max(span.end_time);
+        }
+
+        // Limit the range to 4 seconds maximum
+        let desired_max_time = min_time + 4.0;
+        if max_time > desired_max_time {
+            max_time = desired_max_time;
+        }
+
+        // Add padding around the time range
+        let padding = (max_time - min_time) * 0.2;
+        min_time -= padding;
+        max_time += padding;
+
+        // Update timeline if needed
+        if min_time < self.timeline.selected_start || max_time > self.timeline.selected_end {
+            self.timeline.selected_start = min_time;
+            self.timeline.selected_end = max_time;
+            self.set_timeline_end_bars_to_selected();
+        }
     }
 
     // Collect positions of all spans in a node, including children
     fn collect_span_positions(
         &self,
         spans: &[Rc<Span>],
-        start_height_param: f32, // Renamed for clarity in debug prints
+        start_height_param: f32,
         span_height: f32,
         node_name: &str,
-        positions: &mut HashMap<(Vec<u8>, String), (f32, f32, f32)>, // (span_id, node_name) -> (y, start_x, end_x)
+        // (span_id, node_name) -> (y, start_x, end_x)
+        positions: &mut HashMap<(Vec<u8>, String), (f32, f32, f32)>,
     ) {
         for span in spans {
             // Calculate this span's position
@@ -1412,7 +1422,7 @@ impl App {
 
                 self.collect_span_positions(
                     &children,
-                    children_area_start_y, // Pass the correct baseline for these children
+                    children_area_start_y,
                     span_height,
                     node_name,
                     positions,
@@ -1932,11 +1942,6 @@ fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint
     result
 }
 
-#[test]
-fn test_time_dots() {
-    println!("{:?}", get_time_dots(0.001234, 0.00235));
-}
-
 // Update the draw_arrow function to make it more visible and properly positioned
 fn draw_arrow(
     ui: &mut Ui,
@@ -2031,4 +2036,9 @@ fn draw_arrow(
     let interactive_rect = hoverable_line_rect;
 
     ui.interact(interactive_rect, interact_id, Sense::click())
+}
+
+#[test]
+fn test_time_dots() {
+    println!("{:?}", get_time_dots(0.001234, 0.00235));
 }
