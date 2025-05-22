@@ -119,8 +119,6 @@ struct App {
     display_mode: DisplayMode,
     search: Search,
 
-    error_notification: Option<String>,
-
     // Analyze 'features'
     all_spans_for_analysis: Vec<Rc<Span>>,
     analyze_span_modal: AnalyzeSpanModal,
@@ -217,7 +215,6 @@ impl Default for App {
             include_children_events: true,
             display_mode: DisplayMode::Everything,
             search: Search::default(),
-            error_notification: None,
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
@@ -282,9 +279,6 @@ impl eframe::App for App {
                     window_height - 200.0,
                 );
                 self.draw_clicked_arrow_popup(ctx, window_width - 150.0, window_height - 150.0);
-
-                // Draw error notifications on top of everything
-                self.draw_error_notification(ctx);
 
                 // If Ctrl+Q clicked, quit the app
                 if ctx.input(|i| i.key_down(Key::Q) && i.modifiers.ctrl) {
@@ -1303,10 +1297,9 @@ impl App {
                     let mut spans_to_highlight = Vec::new();
                     let mut highlighted_span_pointers: HashSet<*const Span> = HashSet::new();
 
-                    // First build a list of all span IDs we need to highlight
-                    let mut span_ids_to_find = Vec::new();
+                    // Iterate through links and directly collect unique spans
                     for (i, link) in node_result.links.iter().enumerate() {
-                        // Print all source spans in the group
+                        // Process source spans
                         for (s_idx, source_s) in link.source_spans.iter().enumerate() {
                             println!(
                                 "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
@@ -1317,47 +1310,30 @@ impl App {
                                 source_s.node.name,
                                 hex::encode(&source_s.span_id)
                             );
-                            span_ids_to_find
-                                .push((source_s.span_id.clone(), source_s.node.name.clone()));
+                            let span_ptr = Rc::as_ptr(source_s);
+                            if highlighted_span_pointers.insert(span_ptr) {
+                                spans_to_highlight.push(source_s.clone());
+                            }
                         }
 
-                        // Print the target span
+                        // Process target span
+                        let target_s = &link.target_span;
                         println!(
                             "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
                             i,
-                            link.target_span.name,
-                            link.target_span.node.name,
-                            hex::encode(&link.target_span.span_id)
+                            target_s.name,
+                            target_s.node.name,
+                            hex::encode(&target_s.span_id)
                         );
-                        span_ids_to_find.push((
-                            link.target_span.span_id.clone(),
-                            link.target_span.node.name.clone(),
-                        ));
-                    }
-
-                    println!(
-                        "Looking for {} span IDs to highlight",
-                        span_ids_to_find.len()
-                    );
-                    // Then search for all spans in the display tree
-                    for id_pair in span_ids_to_find.iter() {
-                        if let Some(found_span) =
-                            find_spans_with_id(&self.spans_to_display, &id_pair.0, &id_pair.1)
-                        {
-                            // Avoid adding the same span twice
-                            let span_ptr = Rc::as_ptr(&found_span);
-                            if highlighted_span_pointers.insert(span_ptr) {
-                                spans_to_highlight.push(found_span);
-                            }
+                        let span_ptr = Rc::as_ptr(target_s);
+                        if highlighted_span_pointers.insert(span_ptr) {
+                            spans_to_highlight.push(target_s.clone());
                         }
                     }
 
                     // Assign the collected unique spans
                     self.highlighted_spans = spans_to_highlight;
 
-                    // After we have identified the spans to highlight, we need to make sure
-                    // they get proper layout - let's set their don't_collapse property
-                    // We do this in a separate pass to get proper highlighting
                     set_display_children_with_highlights(
                         &self.spans_to_display,
                         &self.highlighted_spans,
@@ -1373,16 +1349,16 @@ impl App {
                             max_time = max_time.max(span.end_time);
                         }
 
+                        // Limit the range to 4 seconds maximum
+                        let desired_max_time = min_time + 4.0;
+                        if max_time > desired_max_time {
+                            max_time = desired_max_time;
+                        }
+
                         // Add padding around the time range
                         let padding = (max_time - min_time) * 0.2;
                         min_time -= padding;
                         max_time += padding;
-
-                        // Limit the range to 5 seconds maximum
-                        let desired_max_time = min_time + 5.0;
-                        if max_time > desired_max_time {
-                            max_time = desired_max_time;
-                        }
 
                         // Update timeline if needed
                         if min_time < self.timeline.selected_start
@@ -1428,58 +1404,7 @@ impl App {
 
         // Handle any error message after the modal processing
         if let Some(msg) = error_message {
-            self.show_error_notification(&msg);
-        }
-    }
-
-    // Show an error notification
-    fn show_error_notification(&mut self, message: &str) {
-        self.error_notification = Some(message.to_string());
-        println!("Error notification shown: {}", message);
-    }
-
-    // Draw the error notification if one is active
-    fn draw_error_notification(&mut self, ctx: &egui::Context) {
-        // Check if we have an error notification to show
-        if self.error_notification.is_none() {
-            return;
-        }
-
-        // Get the message from the notification
-        let message = self.error_notification.as_ref().unwrap().clone();
-
-        egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(Color32::from_black_alpha(120)))
-            .show(ctx, |_ui| {});
-
-        let mut open = true;
-        let mut should_close = false;
-
-        // Draw the error popup as a modal window
-        egui::Window::new("Error")
-            .id(egui::Id::new("error_window"))
-            .fixed_size([300.0, 150.0])
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.add_space(10.0);
-                    ui.colored_label(Color32::RED, message);
-                    ui.add_space(20.0);
-
-                    if ui.button("Close").clicked() {
-                        // Indicate we should close the window
-                        should_close = true;
-                    }
-                });
-            });
-
-        // Handle window being closed (either via Close button or X button)
-        if !open || should_close {
-            self.error_notification = None;
-            ctx.request_repaint();
+            println!("Error occurred: {}", msg); // Replaced with a simple println
         }
     }
 
@@ -2138,26 +2063,4 @@ fn draw_arrow(
     let interactive_rect = hoverable_line_rect;
 
     ui.interact(interactive_rect, interact_id, Sense::click())
-}
-
-/// Function to find spans with matching ID in a tree of spans
-///
-/// Returns the first matching span found, or None if no match
-fn find_spans_with_id(spans: &[Rc<Span>], span_id: &[u8], node_name: &str) -> Option<Rc<Span>> {
-    for span in spans {
-        // Check if this span matches
-        if span.span_id == span_id && span.node.name == node_name {
-            return Some(span.clone());
-        }
-
-        // If not a direct match, search in children
-        if !span.children.borrow().is_empty() {
-            if let Some(found_in_children) =
-                find_spans_with_id(&span.children.borrow(), span_id, node_name)
-            {
-                return Some(found_in_children);
-            }
-        }
-    }
-    None
 }
