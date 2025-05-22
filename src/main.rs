@@ -268,7 +268,7 @@ impl eframe::App for App {
                     Pos2::new(0.0, middle_bar_area.max.y),
                     Vec2::new(window_width, window_height - middle_bar_area.max.y),
                 );
-                self.draw_spans(spans_area, ui);
+                self.draw_spans(spans_area, ui, ctx);
 
                 self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
 
@@ -730,7 +730,7 @@ impl App {
         });
     }
 
-    fn draw_spans(&mut self, area: Rect, ui: &mut Ui) {
+    fn draw_spans(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
         let mut node_spans: BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)> = BTreeMap::new();
         for span in &self.spans_to_display {
             node_spans
@@ -823,7 +823,7 @@ impl App {
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
                     // Create a mapping from span_id to (node_name, y-position) for dependency arrows
-                    let mut span_positions: HashMap<Vec<u8>, (f32, f32, f32)> = HashMap::new();
+                    let mut span_positions: HashMap<Vec<u8>, f32> = HashMap::new();
 
                     let highlighted_span_ids_set: HashSet<Vec<u8>> =
                         if !self.highlighted_spans.is_empty() {
@@ -916,7 +916,7 @@ impl App {
                                 + self.layout.node_name_width,
                             visual_end_x: under_time_points_area.max.x,
                         };
-                        self.draw_dependency_links(ui, &span_positions, &time_params);
+                        self.draw_dependency_links(ui, &span_positions, &time_params, ctx);
                     }
 
                     ui.input(|i| {
@@ -1387,8 +1387,8 @@ impl App {
         spans: &[Rc<Span>],
         start_height_param: f32,
         span_height: f32,
-        // (SpanId) -> (y, start_x, end_x)
-        positions: &mut HashMap<Vec<u8>, (f32, f32, f32)>,
+        // (SpanId) -> (y_center_on_screen)
+        positions: &mut HashMap<Vec<u8>, f32>,
     ) {
         for span in spans {
             // Calculate this span's position
@@ -1396,10 +1396,7 @@ impl App {
                 + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin)
                 + span_height / 2.0;
 
-            let start_x = span.display_start.get();
-            let end_x = start_x + span.display_length.get();
-
-            positions.insert(span.span_id.clone(), (y_pos, start_x, end_x));
+            positions.insert(span.span_id.clone(), y_pos);
 
             // Process children recursively
             let children = span.display_children.borrow();
@@ -1425,13 +1422,14 @@ impl App {
     fn draw_dependency_links(
         &mut self,
         ui: &mut Ui,
-        span_positions: &HashMap<Vec<u8>, (f32, f32, f32)>,
+        span_positions: &HashMap<Vec<u8>, f32>,
         time_params: &TimeToScreenParams,
+        ctx: &egui::Context,
     ) {
         if self.highlighted_spans.is_empty() {
             return;
         }
-        self.hovered_arrow_key = None; // Reset per frame
+        let mut new_hovered_arrow_key = None;
 
         let analysis = match &self.analyze_dependency_modal.analysis_result {
             Some(res) => res,
@@ -1456,13 +1454,9 @@ impl App {
 
             let target_span = &link.target_span;
 
-            // Ensure target span position is available and deconstruct its components
-            let (
-                target_y_center_on_screen,
-                _target_rect_start_x_on_screen, // This is span.display_start.get()
-                _target_rect_end_x_on_screen, // This is span.display_start.get() + span.display_length.get()
-            ) = match span_positions.get(&target_span.span_id) {
-                Some(&(y_center, rect_start_x, rect_end_x)) => (y_center, rect_start_x, rect_end_x),
+            // Ensure target span y_center_on_screen is available
+            let target_y_center_on_screen = match span_positions.get(&target_span.span_id) {
+                Some(&y_center) => y_center,
                 None => continue, // Target span not found in positions, skip this link
             };
 
@@ -1478,16 +1472,9 @@ impl App {
             let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
 
             for source_span in &link.source_spans {
-                // source_span is &Rc<Span>
-                // Ensure source span position is available and deconstruct its components
-                let (
-                    source_y_center_on_screen,
-                    _source_rect_start_x_on_screen,
-                    _source_rect_end_x_on_screen,
-                ) = match span_positions.get(&source_span.span_id) {
-                    Some(&(y_center, rect_start_x, rect_end_x)) => {
-                        (y_center, rect_start_x, rect_end_x)
-                    }
+                // Ensure source span y_center_on_screen is available
+                let source_y_center_on_screen = match span_positions.get(&source_span.span_id) {
+                    Some(&y_center) => y_center,
                     None => continue, // Source span not found, skip this source
                 };
 
@@ -1517,20 +1504,23 @@ impl App {
                     target_node_name: target_span.node.name.clone(),
                 };
 
-                let is_hovered = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+                // Draw the arrow based on the hover state from the PREVIOUS frame
+                // (or the most recent state if multiple repaints happened quickly)
+                let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
 
                 let response = draw_arrow(
                     ui,
                     from_pos,
-                    to_pos, // Common to_pos for the target
+                    to_pos,
                     base_arrow_stroke,
                     format!("{:.2} ms", distance_ms),
-                    is_hovered,
-                    &arrow_key, // Pass arrow_key for ID
+                    should_draw_highlighted,
+                    &arrow_key,
                 );
 
                 if response.hovered() {
-                    self.hovered_arrow_key = Some(arrow_key.clone());
+                    // This arrow is being hovered in the current frame's input processing pass
+                    new_hovered_arrow_key = Some(arrow_key.clone());
                 }
 
                 if response.clicked() {
@@ -1548,6 +1538,13 @@ impl App {
                 }
             }
         }
+
+        // After checking all arrows, update the persistent hover state
+        // and request repaint if it changed.
+        if self.hovered_arrow_key != new_hovered_arrow_key {
+            self.hovered_arrow_key = new_hovered_arrow_key;
+            ctx.request_repaint();
+        }
     }
 
     fn draw_clicked_arrow_popup(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
@@ -1555,7 +1552,7 @@ impl App {
             return;
         }
 
-        let mut open = true; // To control the window state
+        let mut open = true;
         let info = self.clicked_arrow_info.as_ref().unwrap().clone();
 
         egui::Window::new("Dependency Link Information")
@@ -1568,7 +1565,6 @@ impl App {
                 ui.set_max_width(max_width * 0.8);
                 ui.set_max_height(max_height * 0.6);
 
-                // Content of the popup, previously inside Modal's closure
                 ui.vertical_centered(|ui| {
                     ui.heading("Dependency Link Information"); // Already centered by vertical_centered
                 });
@@ -1643,7 +1639,7 @@ impl App {
             });
 
         if !open {
-            self.clicked_arrow_info = None; // If window is closed by 'x' or open=false
+            self.clicked_arrow_info = None;
         }
 
         // Esc closes the popup
@@ -1953,7 +1949,6 @@ fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint
     result
 }
 
-// Update the draw_arrow function to make it more visible and properly positioned
 fn draw_arrow(
     ui: &mut Ui,
     from: Pos2,
@@ -1961,7 +1956,7 @@ fn draw_arrow(
     base_stroke: Stroke,
     label: String,
     is_hovered: bool,
-    arrow_key: &ArrowKey, // For unique ID
+    arrow_key: &ArrowKey,
 ) -> egui::Response {
     // Calculate the vector and its length
     let vec = to - from;
@@ -2006,10 +2001,8 @@ fn draw_arrow(
     ui.painter()
         .line_segment([to, arrow_point - normal * arrow_size * 0.5], line_stroke);
 
-    // Draw the distance label with a better offset and background
     // Position the label at a fixed offset perpendicular to the line
     let label_offset = normal * 15.0;
-
     let label_pos = from + vec * 0.5 + label_offset;
     let font_id = FontId::proportional(12.0);
     let text_color = Color32::from_rgb(240, 240, 240);
