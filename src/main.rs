@@ -1,5 +1,6 @@
 use core::f32;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::Hash;
 use std::io::Read;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -822,13 +823,13 @@ impl App {
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
                     // Create a mapping from span_id to (node_name, y-position) for dependency arrows
-                    let mut span_positions = HashMap::new();
+                    let mut span_positions: HashMap<Vec<u8>, (f32, f32, f32)> = HashMap::new();
 
-                    let highlighted_span_ids_set: HashSet<(Vec<u8>, String)> =
+                    let highlighted_span_ids_set: HashSet<Vec<u8>> =
                         if !self.highlighted_spans.is_empty() {
                             self.highlighted_spans
                                 .iter()
-                                .map(|s| (s.span_id.clone(), s.node.name.clone()))
+                                .map(|s| s.span_id.clone())
                                 .collect()
                         } else {
                             HashSet::new()
@@ -868,7 +869,6 @@ impl App {
                                 &spans_in_range,
                                 cur_height,
                                 span_height,
-                                node_name,
                                 &mut span_positions,
                             );
                         }
@@ -970,7 +970,7 @@ impl App {
 
     fn set_display_params_with_highlights(
         spans: &[Rc<Span>],
-        highlighted_span_ids: &HashSet<(Vec<u8>, String)>,
+        highlighted_span_ids: &HashSet<Vec<u8>>,
         start_time: TimePoint,
         end_time: TimePoint,
         start_pos: f32,
@@ -978,8 +978,7 @@ impl App {
         ui: &Ui,
     ) {
         for span in spans {
-            let is_highlighted =
-                highlighted_span_ids.contains(&(span.span_id.clone(), span.node.name.clone()));
+            let is_highlighted = highlighted_span_ids.contains(&span.span_id);
 
             let start_x = time_to_screen(span.start_time, start_pos, end_pos, start_time, end_time);
             let time_display_len =
@@ -1025,7 +1024,7 @@ impl App {
         start_height: f32,
         span_height: f32,
         level: u64,
-        highlighted_span_ids: &HashSet<(Vec<u8>, String)>,
+        highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
         for span in spans {
             let next_start_height = start_height
@@ -1048,10 +1047,9 @@ impl App {
         start_height: f32,
         span_height: f32,
         level: u64,
-        highlighted_span_ids: &HashSet<(Vec<u8>, String)>,
+        highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
-        let is_highlighted =
-            highlighted_span_ids.contains(&(span.span_id.clone(), span.node.name.clone()));
+        let is_highlighted = highlighted_span_ids.contains(&span.span_id);
 
         // Only draw if this span is visible
         let visible_rect = ui.clip_rect();
@@ -1313,7 +1311,7 @@ impl App {
         println!("Found node result with {} links", node_result.links.len());
 
         let mut spans_to_highlight = Vec::new();
-        let mut highlighted_span_pointers: HashSet<*const Span> = HashSet::new();
+        let mut unique_span_ids_to_highlight: HashSet<Vec<u8>> = HashSet::new();
 
         // Iterate through links and directly collect unique spans
         for (i, link) in node_result.links.iter().enumerate() {
@@ -1328,8 +1326,7 @@ impl App {
                     source_s.node.name,
                     hex::encode(&source_s.span_id)
                 );
-                let span_ptr = Rc::as_ptr(source_s);
-                if highlighted_span_pointers.insert(span_ptr) {
+                if unique_span_ids_to_highlight.insert(source_s.span_id.clone()) {
                     spans_to_highlight.push(source_s.clone());
                 }
             }
@@ -1343,8 +1340,7 @@ impl App {
                 target_s.node.name,
                 hex::encode(&target_s.span_id)
             );
-            let span_ptr = Rc::as_ptr(target_s);
-            if highlighted_span_pointers.insert(span_ptr) {
+            if unique_span_ids_to_highlight.insert(target_s.span_id.clone()) {
                 spans_to_highlight.push(target_s.clone());
             }
         }
@@ -1391,9 +1387,8 @@ impl App {
         spans: &[Rc<Span>],
         start_height_param: f32,
         span_height: f32,
-        node_name: &str,
-        // (span_id, node_name) -> (y, start_x, end_x)
-        positions: &mut HashMap<(Vec<u8>, String), (f32, f32, f32)>,
+        // (SpanId) -> (y, start_x, end_x)
+        positions: &mut HashMap<Vec<u8>, (f32, f32, f32)>,
     ) {
         for span in spans {
             // Calculate this span's position
@@ -1404,11 +1399,7 @@ impl App {
             let start_x = span.display_start.get();
             let end_x = start_x + span.display_length.get();
 
-            // Store in the map
-            positions.insert(
-                (span.span_id.clone(), node_name.to_string()),
-                (y_pos, start_x, end_x),
-            );
+            positions.insert(span.span_id.clone(), (y_pos, start_x, end_x));
 
             // Process children recursively
             let children = span.display_children.borrow();
@@ -1424,18 +1415,17 @@ impl App {
                     &children,
                     children_area_start_y,
                     span_height,
-                    node_name,
                     positions,
                 );
             }
         }
     }
 
-    // Draw arrows between related spans
+    /// Draws arrows between related spans.
     fn draw_dependency_links(
         &mut self,
         ui: &mut Ui,
-        span_positions: &HashMap<(Vec<u8>, String), (f32, f32, f32)>,
+        span_positions: &HashMap<Vec<u8>, (f32, f32, f32)>,
         time_params: &TimeToScreenParams,
         ctx: &egui::Context,
     ) {
@@ -1456,11 +1446,10 @@ impl App {
                             continue;
                         }
 
-                        let t = &link.target_span;
-                        let t_key = (t.span_id.clone(), t.node.name.clone());
+                        let t = &link.target_span; // t is Rc<Span>
 
-                        if let Some(&(_t_y, _, _)) = span_positions.get(&t_key) {
-                            let target_y_pos = span_positions.get(&t_key).unwrap().0;
+                        if span_positions.get(&t.span_id).is_some() {
+                            let target_y_pos = span_positions.get(&t.span_id).unwrap().0;
                             let target_x_pos = time_to_screen(
                                 t.start_time,
                                 time_params.visual_start_x,
@@ -1471,9 +1460,10 @@ impl App {
                             let to_pos = Pos2::new(target_x_pos, target_y_pos);
 
                             for s_source in &link.source_spans {
-                                let s_key = (s_source.span_id.clone(), s_source.node.name.clone());
-                                if let Some(&(_s_y, _, _)) = span_positions.get(&s_key) {
-                                    let source_y_pos = span_positions.get(&s_key).unwrap().0;
+                                // s_source is &Rc<Span>
+                                if span_positions.get(&s_source.span_id).is_some() {
+                                    let source_y_pos =
+                                        span_positions.get(&s_source.span_id).unwrap().0;
                                     let source_x_pos = time_to_screen(
                                         s_source.end_time,
                                         time_params.visual_start_x,
