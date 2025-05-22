@@ -1508,7 +1508,7 @@ impl App {
                 // (or the most recent state if multiple repaints happened quickly)
                 let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
 
-                let response = draw_arrow(
+                let arrow_interaction_result = draw_arrow(
                     ui,
                     from_pos,
                     to_pos,
@@ -1518,12 +1518,12 @@ impl App {
                     &arrow_key,
                 );
 
-                if response.hovered() {
+                if arrow_interaction_result.is_precisely_hovered {
                     // This arrow is being hovered in the current frame's input processing pass
                     new_hovered_arrow_key = Some(arrow_key.clone());
                 }
 
-                if response.clicked() {
+                if arrow_interaction_result.response.clicked() {
                     self.clicked_arrow_info = Some(ArrowInfo {
                         source_span_name: source_span.name.clone(),
                         source_node_name: source_span.node.name.clone(),
@@ -1594,7 +1594,6 @@ impl App {
                         ui.end_row();
 
                         ui.separator();
-                        ui.separator();
                         ui.end_row();
 
                         ui.strong("Target Node:");
@@ -1613,7 +1612,6 @@ impl App {
                         ));
                         ui.end_row();
 
-                        ui.separator();
                         ui.separator();
                         ui.end_row();
 
@@ -1949,6 +1947,7 @@ fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint
     result
 }
 
+/// Draws an arrow between two spans.
 fn draw_arrow(
     ui: &mut Ui,
     from: Pos2,
@@ -1957,24 +1956,17 @@ fn draw_arrow(
     label: String,
     is_hovered: bool,
     arrow_key: &ArrowKey,
-) -> egui::Response {
+) -> ArrowInteractionOutput {
     // Calculate the vector and its length
     let vec = to - from;
     let length = vec.length();
 
-    // Skip drawing if positions are the same or very close
+    // If the arrow is too short, allocate a minimal response for its space and don't draw anything
     if length < 0.001 {
-        println!("ARROW: Skipping arrow with too short length: {}", length);
-        // Provide a dummy ID for the interact call if arrow is too short
-        // Pos2 is not Hash, use its bit representations for ID
-        let dummy_id = ui.id().with((
-            "skipped_arrow",
-            from.x.to_bits(),
-            from.y.to_bits(),
-            to.x.to_bits(),
-            to.y.to_bits(),
-        ));
-        return ui.interact(Rect::from_min_max(from, to), dummy_id, Sense::hover());
+        return ArrowInteractionOutput {
+            response: ui.allocate_rect(Rect::from_min_max(from, to), Sense::hover()),
+            is_precisely_hovered: false,
+        };
     }
 
     // Normalize the vector for direction
@@ -1985,7 +1977,7 @@ fn draw_arrow(
 
     // Draw the main line
     let line_stroke = if is_hovered {
-        Stroke::new(base_stroke.width + 1.5, Color32::WHITE) // Highlight: thicker and white
+        Stroke::new(base_stroke.width + 1.5, Color32::from_rgb(220, 240, 255))
     } else {
         base_stroke
     };
@@ -2026,20 +2018,69 @@ fn draw_arrow(
     ui.painter()
         .text(label_pos, Align2::CENTER_CENTER, label, font_id, text_color);
 
-    // Make the label's rect interactive for hover and click
     // Use a unique ID derived from the arrow_key to avoid conflicts
     let interact_id = ui.id().with(arrow_key);
 
     // Define the interactive area for the line itself
-    let hover_padding = base_stroke.width + 4.0; // Padding around the line
+    let hover_padding = base_stroke.width + 4.0;
     let line_bounding_box = Rect::from_min_max(from.min(to), from.max(to));
     let hoverable_line_rect = line_bounding_box.expand(hover_padding);
 
-    // The existing text_rect is for the label (used for background drawing).
-    // The final interactive area is now just the hoverable line rect.
     let interactive_rect = hoverable_line_rect;
 
-    ui.interact(interactive_rect, interact_id, Sense::click())
+    let egui_response = ui.interact(interactive_rect, interact_id, Sense::click());
+
+    let mut is_precisely_hovered = false;
+    if egui_response.hovered() {
+        if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+            // Use the actual stroke width being drawn for precision check
+            let current_stroke_width = if is_hovered {
+                base_stroke.width + 1.5
+            } else {
+                base_stroke.width
+            };
+            // Check distance to the line segment (from -> to)
+            // Add a small buffer to the stroke width for easier hovering
+            let hover_threshold = current_stroke_width / 2.0 + 2.0;
+            if distance_sq_to_segment(mouse_pos, from, to) < hover_threshold * hover_threshold {
+                is_precisely_hovered = true;
+            }
+        }
+    }
+
+    ArrowInteractionOutput {
+        response: egui_response,
+        is_precisely_hovered,
+    }
+}
+
+/// Describes the interaction result for a drawn arrow, including precise hover detection.
+struct ArrowInteractionOutput {
+    /// The raw Egui response from interacting with the arrow's bounding box.
+    response: egui::Response,
+    /// True if the mouse pointer is close to the actual arrow line segment.
+    is_precisely_hovered: bool,
+}
+
+/// Calculates the square of the shortest distance from point `p` to the line segment `a`-`b`.
+fn distance_sq_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let l2 = a.distance_sq(b); // Squared length of the segment
+    if l2 == 0.0 {
+        return p.distance_sq(a); // a and b are the same point
+    }
+    // Consider the line extending the segment, parameterized as a + t * (b - a).
+    // Project point p onto this line.
+    // t = [(p - a) . (b - a)] / |b - a|^2
+    let t = ((p - a).dot(b - a)) / l2;
+    if t < 0.0 {
+        p.distance_sq(a) // Beyond the 'a' end of the segment
+    } else if t > 1.0 {
+        p.distance_sq(b) // Beyond the 'b' end of the segment
+    } else {
+        // Projection falls on the segment
+        let projection = a + (b - a) * t;
+        p.distance_sq(projection)
+    }
 }
 
 #[test]
