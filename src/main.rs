@@ -404,9 +404,8 @@ impl App {
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
-        self.show_dependency_highlighting = false; // Revert
-        self.dependency_focus_target_node = None; // Add this
-                                                  // Reset modal processed flags so they pick up new data
+        self.show_dependency_highlighting = false;
+        self.dependency_focus_target_node = None;
         self.analyze_span_modal.reset_processed_flag();
         self.analyze_dependency_modal.reset_processed_flag();
 
@@ -838,7 +837,6 @@ impl App {
                     // Create a mapping from span_id to (node_name, y-position) for dependency arrows
                     let mut span_positions = HashMap::new();
 
-                    // First pass - arrange all spans and collect positions
                     for (node_name, (_node, spans)) in &node_spans {
                         let spans_in_range: Vec<Rc<Span>> = spans
                             .iter()
@@ -868,14 +866,15 @@ impl App {
                         );
                         let bbox = arrange_spans(&spans_in_range, true);
 
-                        // Collect positions of all spans for later dependency arrow drawing
-                        self.collect_span_positions(
-                            &spans_in_range,
-                            cur_height,
-                            span_height,
-                            node_name,
-                            &mut span_positions,
-                        );
+                        if self.show_dependency_highlighting && self.highlighted_spans.len() >= 2 {
+                            self.collect_span_positions(
+                                &spans_in_range,
+                                cur_height,
+                                span_height,
+                                node_name,
+                                &mut span_positions,
+                            );
+                        }
 
                         ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
                         self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height, 0);
@@ -904,7 +903,7 @@ impl App {
                         cur_height = next_height;
                     }
 
-                    // Second pass - draw dependency arrows if needed
+                    // Draw dependency arrows if needed
                     if self.show_dependency_highlighting && self.highlighted_spans.len() >= 2 {
                         let time_params = TimeToScreenParams {
                             selected_start_time: self.timeline.selected_start,
@@ -965,7 +964,6 @@ impl App {
         self.timeline_bar2_time += shift;
     }
 
-    // Add a new version that takes highlighted spans into account
     fn set_display_params_with_highlights(
         spans: &[Rc<Span>],
         highlighted_spans: &[Rc<Span>],
