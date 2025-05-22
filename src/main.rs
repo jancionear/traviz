@@ -183,7 +183,7 @@ struct ArrowInfo {
     target_node_name: String,
     target_start_time: TimePoint,
     target_end_time: TimePoint,
-    // Duration of the link (target_start_time - source_end_time)
+    /// Duration of the link (target_start_time - source_end_time)
     duration: TimePoint,
 }
 
@@ -352,13 +352,14 @@ impl App {
             let has_spans = !self.spans_to_display.is_empty();
             let analyze_button = ui.add_enabled(has_spans, Button::new("Analyze Span"));
             if analyze_button.clicked() {
-                self.analyze_span_modal.open(&self.spans_to_display);
+                self.analyze_span_modal.open(&self.all_spans_for_analysis);
             }
 
             // Analyze Dependency button, disabled if no spans are loaded
             let analyze_dep_button = ui.add_enabled(has_spans, Button::new("Analyze Dependency"));
             if analyze_dep_button.clicked() {
-                self.analyze_dependency_modal.open(&self.spans_to_display);
+                self.analyze_dependency_modal
+                    .open(&self.all_spans_for_analysis);
             }
 
             // Clear Highlights button, only enabled when there are highlighted spans
@@ -411,10 +412,7 @@ impl App {
             self.all_spans_for_analysis.len()
         );
 
-        // Store current display mode
-        let current_mode = self.display_mode;
-
-        match current_mode {
+        match self.display_mode {
             DisplayMode::Everything => {
                 // Optimization: If current mode is Everything, reuse the already computed all_spans_for_analysis.
                 self.spans_to_display = self.all_spans_for_analysis.clone();
@@ -1271,31 +1269,12 @@ impl App {
 
     fn draw_analyze_span_modal(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
         if !self.analyze_span_modal.show {
-            // Reset the processed flag when closing the modal
-            self.analyze_span_modal.spans_processed = false;
             return;
         }
 
         let modal = &mut self.analyze_span_modal;
 
-        // Only process spans once when the modal is first opened or if data hasn't been processed
-        if !modal.spans_processed {
-            if !self.all_spans_for_analysis.is_empty() {
-                // Pass all spans to the modal for storage and analysis
-                modal.show_modal(ctx, &self.all_spans_for_analysis, max_width, max_height);
-                modal.spans_processed = true; // Mark as processed for this dataset
-            } else {
-                // This case implies either no file was loaded, or loading failed to produce spans.
-                modal.show = false; // Close the modal
-                self.show_error_notification(
-                    "No trace data (all_spans_for_analysis) available for span analysis. Load a file first.",
-                );
-            }
-        } else {
-            // On subsequent calls (if modal remains open and show_modal is called again, e.g. by egui),
-            // pass empty spans array since they're already stored in the modal.
-            modal.show_modal(ctx, &[], max_width, max_height);
-        }
+        modal.show_modal(ctx, max_width, max_height);
     }
 
     fn draw_analyze_dependency_modal(
@@ -1433,37 +1412,29 @@ impl App {
 
         // Regular modal functionality
         if !self.analyze_dependency_modal.show {
-            // Reset the processed flag when closing the modal
-            self.analyze_dependency_modal.spans_processed = false;
             return;
         }
 
+        let modal = &mut self.analyze_dependency_modal;
+
         // Only process spans once when the modal is first opened or if data hasn't been processed
-        if !self.analyze_dependency_modal.spans_processed {
+        if !modal.spans_processed {
             if !self.all_spans_for_analysis.is_empty() {
                 // Pass all spans to the modal for storage and analysis
-                self.analyze_dependency_modal.show_modal(
-                    ctx,
-                    &self.all_spans_for_analysis, // Use the stored spans
-                    max_width,
-                    max_height,
-                );
-                self.analyze_dependency_modal.spans_processed = true; // Mark as processed
+                modal.show_modal(ctx, max_width, max_height);
+                modal.spans_processed = true;
             } else {
-                error_message = Some( // variable name `error_message` was already in use in this function
+                error_message = Some(
                     "No trace data (all_spans_for_analysis) available for dependency analysis. Load a file first.".to_string()
                 );
-                self.analyze_dependency_modal.show = false; // Close the modal
+                modal.show = false;
             }
         } else {
-            // On subsequent calls, pass empty spans array since they're already stored
-            self.analyze_dependency_modal
-                .show_modal(ctx, &[], max_width, max_height);
+            modal.show_modal(ctx, max_width, max_height);
         }
 
         // Handle any error message after the modal processing
         if let Some(msg) = error_message {
-            // variable name `error_message` was already in use in this function
             self.show_error_notification(&msg);
         }
     }

@@ -22,7 +22,7 @@ pub struct AnalyzeSpanModal {
     /// A sorted list of unique span names found in the current trace data.
     unique_span_names: Vec<String>,
     /// Flag indicating if the span list for the modal has been processed from the current trace data.
-    pub spans_processed: bool,
+    spans_processed: bool,
     /// All unique spans (including children) collected from the current trace, used for analysis.
     all_spans_for_analysis: Vec<Rc<Span>>,
     /// Stores the specific span whose details are to be shown in a separate popup, if any.
@@ -37,7 +37,6 @@ pub struct AnalyzeSpanModal {
 /// Also stores references to the spans with the min duration and max duration.
 struct SpanStatistics {
     duration_stats: Statistics,
-
     min_span: Option<Rc<Span>>,
     max_span: Option<Rc<Span>>,
 }
@@ -226,21 +225,9 @@ impl AnalyzeSpanModal {
             })
     }
 
-    pub fn show_modal(
-        &mut self,
-        ctx: &Context,
-        spans: &[Rc<Span>],
-        max_width: f32,
-        max_height: f32,
-    ) {
+    pub fn show_modal(&mut self, ctx: &Context, max_width: f32, max_height: f32) {
         if !self.show {
             return;
-        }
-
-        // Only update the span list if we have new spans and they're not empty
-        if !self.spans_processed && !spans.is_empty() {
-            self.update_span_list(spans);
-            self.spans_processed = true;
         }
 
         // Track if we need to view a span's details after modal closes
@@ -589,7 +576,6 @@ impl AnalyzeSpanModal {
         // Reset fields if modal got closed
         if modal_closed {
             self.show = false;
-            self.spans_processed = false;
             self.selected_span_name = None;
             self.search_text = String::new();
             self.detailed_span_analysis = None;

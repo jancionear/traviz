@@ -407,21 +407,9 @@ impl AnalyzeDependencyModal {
     }
 
     // Show the modal
-    pub fn show_modal(
-        &mut self,
-        ctx: &egui::Context,
-        spans: &[Rc<Span>],
-        max_width: f32,
-        max_height: f32,
-    ) {
+    pub fn show_modal(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
         if !self.show {
             return;
-        }
-
-        // Only update the span list if we have new spans and they're not empty
-        if !self.spans_processed && !spans.is_empty() {
-            self.update_span_list(spans);
-            self.spans_processed = true;
         }
 
         let mut modal_closed = false;
