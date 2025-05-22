@@ -128,7 +128,6 @@ struct App {
 
     // Spans highlighting
     highlighted_spans: Vec<Rc<Span>>,
-    show_dependency_highlighting: bool,
     dependency_focus_target_node: Option<String>,
 
     // Dependency arrow interactivity
@@ -222,7 +221,6 @@ impl Default for App {
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
-            show_dependency_highlighting: false,
             dependency_focus_target_node: None,
             clicked_arrow_info: None,
             hovered_arrow_key: None,
@@ -364,8 +362,7 @@ impl App {
             }
 
             // Clear Highlights button, only enabled when there are highlighted spans
-            let has_highlights =
-                self.show_dependency_highlighting && !self.highlighted_spans.is_empty();
+            let has_highlights = !self.highlighted_spans.is_empty();
             ui.with_layout(
                 egui::Layout::right_to_left(eframe::emath::Align::RIGHT),
                 |ui| {
@@ -382,7 +379,6 @@ impl App {
                             "Clearing {} highlighted spans",
                             self.highlighted_spans.len()
                         );
-                        self.show_dependency_highlighting = false;
                         self.highlighted_spans.clear();
                         self.analyze_dependency_modal.clear_focus();
                         self.dependency_focus_target_node = None;
@@ -404,7 +400,6 @@ impl App {
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
-        self.show_dependency_highlighting = false;
         self.dependency_focus_target_node = None;
         self.analyze_span_modal.reset_processed_flag();
         self.analyze_dependency_modal.reset_processed_flag();
@@ -866,7 +861,7 @@ impl App {
                         );
                         let bbox = arrange_spans(&spans_in_range, true);
 
-                        if self.show_dependency_highlighting && self.highlighted_spans.len() >= 2 {
+                        if !self.highlighted_spans.is_empty() {
                             self.collect_span_positions(
                                 &spans_in_range,
                                 cur_height,
@@ -904,7 +899,7 @@ impl App {
                     }
 
                     // Draw dependency arrows if needed
-                    if self.show_dependency_highlighting && self.highlighted_spans.len() >= 2 {
+                    if !self.highlighted_spans.is_empty() {
                         let time_params = TimeToScreenParams {
                             selected_start_time: self.timeline.selected_start,
                             selected_end_time: self.timeline.selected_end,
@@ -1050,7 +1045,7 @@ impl App {
         level: u64,
     ) {
         // Check if this span is highlighted
-        let is_highlighted = self.show_dependency_highlighting
+        let is_highlighted = !self.highlighted_spans.is_empty()
             && self // Revert condition
                 .highlighted_spans
                 .iter()
@@ -1425,8 +1420,6 @@ impl App {
             } else {
                 println!("No analysis result available!");
             }
-            // Enable highlighting
-            self.show_dependency_highlighting = true;
         }
 
         // Regular modal functionality
