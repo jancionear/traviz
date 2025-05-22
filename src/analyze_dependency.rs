@@ -122,6 +122,15 @@ impl AnalyzeDependencyModal {
         self.focus_node = None;
     }
 
+    pub fn get_links_for_node(&self, node_name: &str) -> Option<&Vec<DependencyLink>> {
+        self.analysis_result.as_ref().and_then(|result| {
+            result
+                .per_node_results
+                .get(node_name)
+                .map(|metrics| &metrics.links)
+        })
+    }
+
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
         let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;

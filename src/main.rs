@@ -127,7 +127,6 @@ struct App {
 
     // Spans highlighting
     highlighted_spans: Vec<Rc<Span>>,
-    dependency_focus_target_node: Option<String>,
 
     // Dependency arrow interactivity
     clicked_arrow_info: Option<ArrowInfo>,
@@ -219,7 +218,6 @@ impl Default for App {
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
-            dependency_focus_target_node: None,
             clicked_arrow_info: None,
             hovered_arrow_key: None,
         };
@@ -377,7 +375,6 @@ impl App {
                         );
                         self.highlighted_spans.clear();
                         self.analyze_dependency_modal.clear_focus();
-                        self.dependency_focus_target_node = None;
                     }
                 },
             );
@@ -396,7 +393,6 @@ impl App {
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
-        self.dependency_focus_target_node = None;
         self.analyze_span_modal.reset_processed_flag();
         self.analyze_dependency_modal.reset_processed_flag();
 
@@ -1285,9 +1281,7 @@ impl App {
             return;
         }
 
-        // Get focus_node_name by taking it from the modal and store it in App
         let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
-        self.dependency_focus_target_node = Some(focus_node_name.clone());
 
         // Clear previous highlights
         self.highlighted_spans.clear();
@@ -1433,23 +1427,24 @@ impl App {
         }
         let mut new_hovered_arrow_key = None;
 
-        let analysis = match &self.analyze_dependency_modal.analysis_result {
-            Some(res) => res,
+        // Determine the focused node from the highlighted spans
+        let focused_target_node_name = match self.highlighted_spans.first() {
+            Some(span) => span.node.name.clone(),
             None => return,
         };
-        let focused_target_node_name = match self.dependency_focus_target_node.as_ref() {
-            Some(name) => name,
-            None => return,
-        };
-        let node_result = match analysis.per_node_results.get(focused_target_node_name) {
-            Some(res) => res,
+
+        let links_to_draw = match self
+            .analyze_dependency_modal
+            .get_links_for_node(&focused_target_node_name)
+        {
+            Some(links) => links,
             None => return,
         };
 
         let arrow_color = Color32::from_rgb(50, 150, 220);
         let base_arrow_stroke = Stroke::new(2.0, arrow_color);
 
-        for link in node_result.links.iter() {
+        for link in links_to_draw.iter() {
             if link.source_spans.is_empty() {
                 continue;
             }
@@ -1510,7 +1505,7 @@ impl App {
                 // (or the most recent state if multiple repaints happened quickly)
                 let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
 
-                let arrow_interaction_result = draw_arrow(
+                let arrow_interaction_result = draw_dependency_arrow(
                     ui,
                     from_pos,
                     to_pos,
@@ -1949,7 +1944,7 @@ fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint
     result
 }
 
-fn draw_arrow(
+fn draw_dependency_arrow(
     ui: &mut Ui,
     from: Pos2,
     to: Pos2,
