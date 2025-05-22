@@ -870,6 +870,7 @@ impl App {
                                 cur_height,
                                 span_height,
                                 &mut span_positions,
+                                &highlighted_span_ids_set,
                             );
                         }
 
@@ -1381,27 +1382,27 @@ impl App {
         }
     }
 
-    // Collect positions of all spans in a node, including children
+    // Collect positions of spans in a node, including children
     fn collect_span_positions(
         &self,
         spans: &[Rc<Span>],
         start_height_param: f32,
         span_height: f32,
-        // (SpanId) -> (y_center_on_screen)
         positions: &mut HashMap<Vec<u8>, f32>,
+        highlighted_ids_to_store: &HashSet<Vec<u8>>,
     ) {
         for span in spans {
-            // Calculate this span's position
             let y_pos = start_height_param
                 + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin)
                 + span_height / 2.0;
 
-            positions.insert(span.span_id.clone(), y_pos);
+            // Only store position if this span's ID is in the highlighted set
+            if highlighted_ids_to_store.contains(&span.span_id) {
+                positions.insert(span.span_id.clone(), y_pos);
+            }
 
-            // Process children recursively
             let children = span.display_children.borrow();
             if !children.is_empty() {
-                // Determine the correct start_height for children of *this* specific span
                 let this_span_visual_top_y = start_height_param
                     + span.parent_height_offset.get() as f32
                         * (span_height + self.layout.span_margin);
@@ -1413,6 +1414,7 @@ impl App {
                     children_area_start_y,
                     span_height,
                     positions,
+                    highlighted_ids_to_store,
                 );
             }
         }
@@ -1947,7 +1949,6 @@ fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint
     result
 }
 
-/// Draws an arrow between two spans.
 fn draw_arrow(
     ui: &mut Ui,
     from: Pos2,
