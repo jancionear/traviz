@@ -69,6 +69,26 @@ pub enum MatchCondition {
     Contains(String),
 }
 
+impl SpanSelector {
+    pub fn matches(&self, span: &Span) -> bool {
+        if !self.name_condition.matches(&span.name) {
+            return false;
+        }
+
+        for (attr_name, attr_condition) in &self.attribute_conditions {
+            if let Some(attr_value) = span.attributes.get(attr_name) {
+                if !attr_condition.matches(&value_to_text(attr_value)) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
 impl MatchCondition {
     pub fn matches(&self, value: &str) -> bool {
         match self {
@@ -102,22 +122,10 @@ impl StructuredMode {
             return hide_decision;
         }
 
-        'rule_loop: for rule in &self.span_rules {
-            if !rule.selector.name_condition.matches(&span.name) {
-                continue;
+        for rule in &self.span_rules {
+            if rule.selector.matches(span) {
+                return rule.decision.clone();
             }
-
-            for (attr_name, attr_condition) in &rule.selector.attribute_conditions {
-                if let Some(attr_value) = span.attributes.get(attr_name) {
-                    if !attr_condition.matches(&value_to_text(attr_value)) {
-                        continue 'rule_loop;
-                    }
-                } else {
-                    continue 'rule_loop;
-                }
-            }
-
-            return rule.decision.clone();
         }
 
         hide_decision
