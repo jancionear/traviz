@@ -162,6 +162,16 @@ impl Default for App {
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
         res.search.search_term = "NOT IMPLEMENTED".to_string();
+
+        if let Some(first_arg) = std::env::args().nth(1) {
+            println!("Trying to open file: {}", first_arg);
+            if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
+                println!("Error loading file: {}", err);
+            } else {
+                println!("File loaded successfully.");
+            }
+        }
+
         res
     }
 }
