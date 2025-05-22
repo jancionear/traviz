@@ -1265,9 +1265,7 @@ impl App {
         if !self.analyze_span_modal.show {
             return;
         }
-
         let modal = &mut self.analyze_span_modal;
-
         modal.show_modal(ctx, max_width, max_height);
     }
 
@@ -1277,12 +1275,9 @@ impl App {
         max_width: f32,
         max_height: f32,
     ) {
-        let mut error_message = None;
-
-        // Handle focus_node if modal just closed
+        // Handle focus_node if user closed the modal by selecting to highlight some spans
         if !self.analyze_dependency_modal.show && self.analyze_dependency_modal.focus_node.is_some()
         {
-            // Get focus_node_name by taking it from the modal and store it in App
             let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
             self.dependency_focus_target_node = Some(focus_node_name.clone());
 
@@ -1334,11 +1329,6 @@ impl App {
                     // Assign the collected unique spans
                     self.highlighted_spans = spans_to_highlight;
 
-                    set_display_children_with_highlights(
-                        &self.spans_to_display,
-                        &self.highlighted_spans,
-                    );
-
                     // Adjust timeline to show these spans if needed
                     if !self.highlighted_spans.is_empty() {
                         let mut min_time = f64::MAX;
@@ -1379,33 +1369,11 @@ impl App {
             }
         }
 
-        // Regular modal functionality
         if !self.analyze_dependency_modal.show {
             return;
         }
-
         let modal = &mut self.analyze_dependency_modal;
-
-        // Only process spans once when the modal is first opened or if data hasn't been processed
-        if !modal.spans_processed {
-            if !self.all_spans_for_analysis.is_empty() {
-                // Pass all spans to the modal for storage and analysis
-                modal.show_modal(ctx, max_width, max_height);
-                modal.spans_processed = true;
-            } else {
-                error_message = Some(
-                    "No trace data (all_spans_for_analysis) available for dependency analysis. Load a file first.".to_string()
-                );
-                modal.show = false;
-            }
-        } else {
-            modal.show_modal(ctx, max_width, max_height);
-        }
-
-        // Handle any error message after the modal processing
-        if let Some(msg) = error_message {
-            println!("Error occurred: {}", msg); // Replaced with a simple println
-        }
+        modal.show_modal(ctx, max_width, max_height);
     }
 
     // Collect positions of all spans in a node, including children
