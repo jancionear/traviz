@@ -1,9 +1,12 @@
-use crate::analyze_utils::{self, Statistics};
+use crate::analyze_utils::{
+    calculate_table_column_widths, collect_matching_spans, draw_left_aligned_text_cell,
+    draw_right_aligned_text_cell, process_spans_for_analysis, span_search_ui,
+    span_selection_list_ui, Statistics,
+};
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
-    self, Align, Button, Color32, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea,
-    TextEdit, Vec2,
+    self, Button, Color32, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
 };
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -104,7 +107,7 @@ impl AnalyzeDependencyModal {
     }
 
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
-        let (all_spans, unique_names) = analyze_utils::process_spans_for_analysis(spans);
+        let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;
         self.unique_span_names = unique_names;
     }
@@ -139,12 +142,12 @@ impl AnalyzeDependencyModal {
         let mut source_spans = Vec::new();
         let mut target_spans = Vec::new();
 
-        analyze_utils::collect_matching_spans(
+        collect_matching_spans(
             &self.all_spans_for_analysis,
             &source_name,
             &mut source_spans,
         );
-        analyze_utils::collect_matching_spans(
+        collect_matching_spans(
             &self.all_spans_for_analysis,
             &target_name,
             &mut target_spans,
@@ -419,13 +422,13 @@ impl AnalyzeDependencyModal {
                 egui::Grid::new("source_target_grid")
                     .num_columns(2)
                     .spacing([20.0, 10.0]) // Spacing between columns and rows
-                    .striped(false)
+                    .striped(true)
                     .show(ui, |ui| {
                         // --- Row 1: Search Boxes ---
                         // Source span search
                         ui.vertical(|ui| {
                             ui.set_width(max_width * 0.45); // Maintain overall width proportion
-                            analyze_utils::span_search_ui(
+                            span_search_ui(
                                 ui,
                                 &mut self.source_search_text,
                                 "Source Span:",
@@ -436,7 +439,7 @@ impl AnalyzeDependencyModal {
                         // Target span search
                         ui.vertical(|ui| {
                             ui.set_width(max_width * 0.45); // Maintain overall width proportion
-                            analyze_utils::span_search_ui(
+                            span_search_ui(
                                 ui,
                                 &mut self.target_search_text,
                                 "Target Span:",
@@ -451,7 +454,7 @@ impl AnalyzeDependencyModal {
                         // Source span list
                         ui.vertical(|ui| {
                             ui.set_width(max_width * 0.45);
-                            analyze_utils::span_selection_list_ui(
+                            span_selection_list_ui(
                                 ui,
                                 &self.unique_span_names,
                                 &self.source_search_text,
@@ -463,7 +466,7 @@ impl AnalyzeDependencyModal {
                         // Target span list
                         ui.vertical(|ui| {
                             ui.set_width(max_width * 0.45);
-                            analyze_utils::span_selection_list_ui(
+                            span_selection_list_ui(
                                 ui,
                                 &self.unique_span_names,
                                 &self.target_search_text,
@@ -614,14 +617,7 @@ impl AnalyzeDependencyModal {
                     let grid_width = available_width;
 
                     // Calculate pixel widths for columns based on percentages
-                    let col_widths = [
-                        (grid_width * col_percentages[0]).max(140.0), // Node
-                        (grid_width * col_percentages[1]).max(60.0),  // Count
-                        (grid_width * col_percentages[2]).max(80.0),  // Min
-                        (grid_width * col_percentages[3]).max(80.0),  // Max
-                        (grid_width * col_percentages[4]).max(80.0),  // Mean
-                        (grid_width * col_percentages[5]).max(80.0),  // Median
-                    ];
+                    let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
 
                     // Header row - outside scrollable area to make it sticky
                     Grid::new("dependency_analysis_header_grid")
@@ -629,58 +625,14 @@ impl AnalyzeDependencyModal {
                         .spacing([10.0, 6.0])
                         .striped(true)
                         .min_col_width(0.0) // Let the explicit width settings handle sizing
-                        .show(ui, |ui| {
-                            // Create header cells with consistent width and borders
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[0]);
-                                ui.strong(RichText::new("Node").monospace());
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[1]);
-                                ui.with_layout(
-                                    Layout::right_to_left(Align::Center),
-                                    |ui| {
-                                        ui.strong(RichText::new("Count").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[2]);
-                                ui.with_layout(
-                                    Layout::right_to_left(Align::Center),
-                                    |ui| {
-                                        ui.strong(RichText::new("Min (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[3]);
-                                ui.with_layout(
-                                    Layout::right_to_left(Align::Center),
-                                    |ui| {
-                                        ui.strong(RichText::new("Max (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[4]);
-                                ui.with_layout(
-                                    Layout::right_to_left(Align::Center),
-                                    |ui| {
-                                        ui.strong(RichText::new("Mean (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.scope(|ui| {
-                                ui.set_min_width(col_widths[5]);
-                                ui.with_layout(
-                                    Layout::right_to_left(Align::Center),
-                                    |ui| {
-                                        ui.strong(RichText::new("Median (ms)").monospace());
-                                    },
-                                );
-                            });
-                            ui.end_row();
+                        .show(ui, |ui_grid| {
+                            draw_left_aligned_text_cell(ui_grid, col_widths[0], "Node", true);
+                            draw_right_aligned_text_cell(ui_grid, col_widths[1], "Count", true, None);
+                            draw_right_aligned_text_cell(ui_grid, col_widths[2], "Min (ms)", true, None);
+                            draw_right_aligned_text_cell(ui_grid, col_widths[3], "Max (ms)", true, None);
+                            draw_right_aligned_text_cell(ui_grid, col_widths[4], "Mean (ms)", true, None);
+                            draw_right_aligned_text_cell(ui_grid, col_widths[5], "Median (ms)", true, None);
+                            ui_grid.end_row();
                         });
 
                     // Add a horizontal separator line
@@ -716,14 +668,7 @@ impl AnalyzeDependencyModal {
                             });
 
                             // Calculate column widths using the same grid width and percentages
-                            let col_widths = [
-                                (grid_width * col_percentages[0]).max(140.0), // Node
-                                (grid_width * col_percentages[1]).max(60.0),  // Count
-                                (grid_width * col_percentages[2]).max(80.0),  // Min
-                                (grid_width * col_percentages[3]).max(80.0),  // Max
-                                (grid_width * col_percentages[4]).max(80.0),  // Mean
-                                (grid_width * col_percentages[5]).max(80.0),  // Median
-                            ];
+                            let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
 
                             // Use Grid for tabular data (without headers)
                             Grid::new("dependency_analysis_grid")
@@ -743,17 +688,20 @@ impl AnalyzeDependencyModal {
                                             let stats = &node_result.link_delay_statistics;
 
                                             // Node Name + Focus Button Column
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[0]);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
+                                            ui.scope(|ui_cell| {
+                                                ui_cell.set_min_width(col_widths[0]);
+                                                ui_cell.horizontal(|ui_horiz| {
+                                                    ui_horiz.label(
                                                         RichText::new(&node_name).monospace(),
                                                     );
-                                                    ui.add_space(5.0); // Padding
-                                                    let focus_response = ui.button("🔍");
+                                                    ui_horiz.add_space(5.0); // Padding
+                                                    let focus_response = ui_horiz.button("🔍");
                                                     if focus_response.clicked() {
                                                         self.focus_node = Some(node_name.clone());
                                                         modal_closed = true;
+                                                    }
+                                                    if focus_response.hovered() {
+                                                        focus_response.on_hover_text("Focus trace view on this node");
                                                     }
                                                 });
                                             });
@@ -761,86 +709,55 @@ impl AnalyzeDependencyModal {
                                             // Stats columns
                                             if stats.count > 0 {
                                                 // Count
-                                                ui.scope(|ui| {
-                                                    ui.set_min_width(col_widths[1]);
-                                                    ui.with_layout(
-                                                        Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.label(
-                                                                RichText::new(format!("{}", stats.count))
-                                                                    .monospace(),
-                                                            );
-                                                        },
-                                                    );
-                                                });
+                                                draw_right_aligned_text_cell(
+                                                    ui,
+                                                    col_widths[1],
+                                                    &format!("{}", stats.count),
+                                                    false,
+                                                    None
+                                                );
                                                 // Min
-                                                ui.scope(|ui| {
-                                                    ui.set_min_width(col_widths[2]);
-                                                    ui.with_layout(
-                                                        Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.label(
-                                                                RichText::new(format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND))
-                                                                    .monospace()
-                                                                    .color(Color32::from_rgb(50, 150, 200)),
-                                                            );
-                                                        },
-                                                    );
-                                                });
+                                                draw_right_aligned_text_cell(
+                                                    ui,
+                                                    col_widths[2],
+                                                    &format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND),
+                                                    false,
+                                                    Some(Color32::from_rgb(50, 150, 200))
+                                                );
                                                 // Max
-                                                ui.scope(|ui| {
-                                                    ui.set_min_width(col_widths[3]);
-                                                    ui.with_layout(
-                                                        Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.label(
-                                                                RichText::new(format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND))
-                                                                    .monospace()
-                                                                    .color(Color32::from_rgb(50, 150, 200)),
-                                                            );
-                                                        },
-                                                    );
-                                                });
+                                                draw_right_aligned_text_cell(
+                                                    ui,
+                                                    col_widths[3],
+                                                    &format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND),
+                                                    false,
+                                                    Some(Color32::from_rgb(50, 150, 200))
+                                                );
                                                 // Mean
-                                                ui.scope(|ui| {
-                                                    ui.set_min_width(col_widths[4]);
-                                                    ui.with_layout(
-                                                        Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.label(
-                                                                RichText::new(format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND))
-                                                                    .monospace(),
-                                                            );
-                                                        },
-                                                    );
-                                                });
+                                                draw_right_aligned_text_cell(
+                                                    ui,
+                                                    col_widths[4],
+                                                    &format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND),
+                                                    false,
+                                                    None
+                                                );
                                                 // Median
-                                                ui.scope(|ui| {
-                                                    ui.set_min_width(col_widths[5]);
-                                                    ui.with_layout(
-                                                        Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.label(
-                                                                RichText::new(format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND)) // Corrected: median is also in ms
-                                                                    .monospace(),
-                                                            );
-                                                        },
-                                                    );
-                                                });
+                                                draw_right_aligned_text_cell(
+                                                    ui,
+                                                    col_widths[5],
+                                                    &format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND),
+                                                    false,
+                                                    None
+                                                );
                                             } else {
                                                 // No links for this node, display "-" for all stat columns (Count, Min, Max, Mean, Median)
-                                                for col_width in col_widths.iter().skip(1) { // Iterate for the 5 stat columns
-                                                    ui.scope(|ui| {
-                                                        ui.set_min_width(*col_width);
-                                                        ui.with_layout(
-                                                            Layout::right_to_left(Align::Center),
-                                                            |ui| {
-                                                                ui.label(
-                                                                    RichText::new("-").monospace(),
-                                                                );
-                                                            },
-                                                        );
-                                                    });
+                                                for col_idx in 1..=5 { // Iterate for the 5 stat columns
+                                                    draw_right_aligned_text_cell(
+                                                        ui,
+                                                        col_widths[col_idx],
+                                                        "-",
+                                                        false,
+                                                        None
+                                                    );
                                                 }
                                             }
                                             ui.end_row();
@@ -849,17 +766,9 @@ impl AnalyzeDependencyModal {
 
                                     // If no results found
                                     if result.per_node_results.is_empty() {
-                                        ui.scope(|ui| {
-                                            ui.set_min_width(col_widths[0]);
-                                            ui.label(
-                                                RichText::new("No matching dependencies found").monospace(),
-                                            );
-                                        });
-                                        for _ in 0..5 {
-                                            ui.scope(|ui| {
-                                                ui.set_min_width(col_widths[1]);
-                                                ui.label("");
-                                            });
+                                        draw_left_aligned_text_cell(ui, col_widths[0], "No matching dependencies found", false);
+                                        for col_idx in 1..=5 { // Iterate for the 5 stat columns
+                                             draw_right_aligned_text_cell(ui, col_widths[col_idx], "", false, None);
                                         }
                                         ui.end_row();
                                     }
@@ -876,8 +785,6 @@ impl AnalyzeDependencyModal {
                     if ui.button("Close").clicked() {
                         modal_closed = true;
                     }
-
-                    // Future: Add a "Focus" button here with magnifying glass icon
                 });
             });
         });

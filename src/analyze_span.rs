@@ -1,8 +1,12 @@
-use crate::analyze_utils;
+use crate::analyze_utils::{
+    calculate_table_column_widths, collect_matching_spans, draw_left_aligned_text_cell,
+    draw_right_aligned_text_cell, process_spans_for_analysis, show_span_details, span_search_ui,
+    span_selection_list_ui, Statistics,
+};
 use crate::types::{NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
 use eframe::egui::{
-    Align, Align2, Button, Color32, Context, Grid, Id, Key, Label, Layout, Modal, Order, RichText,
-    ScrollArea, Sense, Ui, Vec2, Window,
+    Align, Button, Color32, Context, Grid, Id, Label, Layout, Modal, RichText, ScrollArea, Sense,
+    Ui, Vec2,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -32,7 +36,7 @@ pub struct AnalyzeSpanModal {
 /// Struct to hold duration statistics for spans.
 /// Also stores references to the spans with the min duration and max duration.
 struct SpanStatistics {
-    duration_stats: analyze_utils::Statistics,
+    duration_stats: Statistics,
 
     min_span: Option<Rc<Span>>,
     max_span: Option<Rc<Span>>,
@@ -41,7 +45,7 @@ struct SpanStatistics {
 impl SpanStatistics {
     fn new() -> Self {
         Self {
-            duration_stats: analyze_utils::Statistics::new(),
+            duration_stats: Statistics::new(),
             min_span: None,
             max_span: None,
         }
@@ -95,84 +99,39 @@ enum StatType {
     Max,
 }
 
-/// Struct to group parameters for drawing a clickable stat cell.
-struct ClickableStatCellDrawParams<'a> {
-    ui: &'a mut Ui,
-    width: f32,
-    value_str: &'a str,
-    is_strong: bool,
-    node_identifier: NodeIdentifier,
-    stat_type: StatType,
-}
-
-// Helper function to draw a left-aligned node name cell.
-fn draw_node_name_cell(ui: &mut Ui, width: f32, text: &str, is_strong: bool) {
-    ui.scope(|cell_ui| {
-        cell_ui.set_min_width(width);
-        let rich_text = RichText::new(text).monospace();
-        if is_strong {
-            cell_ui.strong(rich_text);
-        } else {
-            cell_ui.label(rich_text);
-        }
-    });
-}
-
-// Helper function to draw a right-aligned statistics cell (non-clickable).
-fn draw_right_stat_cell(ui: &mut Ui, width: f32, value_str: &str, is_strong: bool) {
-    ui.scope(|cell_ui| {
-        cell_ui.set_min_width(width);
-        cell_ui.with_layout(Layout::right_to_left(Align::Center), |inner_ui| {
-            let rich_text = RichText::new(value_str).monospace();
-            if is_strong {
-                inner_ui.strong(rich_text);
-            } else {
-                inner_ui.label(rich_text);
-            }
-        });
-    });
-}
-
 impl AnalyzeSpanModal {
-    /// Helper function to calculate column widths based on percentages.
-    fn calculate_column_widths(grid_width: f32, col_percentages: &[f32; 6]) -> [f32; 6] {
-        [
-            (grid_width * col_percentages[0]).max(140.0), // Node
-            (grid_width * col_percentages[1]).max(60.0),  // Count
-            (grid_width * col_percentages[2]).max(80.0),  // Min
-            (grid_width * col_percentages[3]).max(80.0),  // Max
-            (grid_width * col_percentages[4]).max(80.0),  // Mean
-            (grid_width * col_percentages[5]).max(80.0),  // Median
-        ]
-    }
-
     /// Helper method to draw a right-aligned, clickable statistics cell (for Min/Max).
     fn draw_clickable_stat_cell(
         &self,
-        params: ClickableStatCellDrawParams,
+        ui: &mut Ui,
+        width: f32,
+        value_str: &str,
+        is_strong: bool,
+        node_identifier: NodeIdentifier,
+        stat_type: StatType,
         span_to_view: &mut Option<Rc<Span>>,
     ) {
-        params.ui.scope(|cell_ui| {
-            cell_ui.set_min_width(params.width);
+        ui.scope(|cell_ui| {
+            cell_ui.set_min_width(width);
             cell_ui.with_layout(Layout::right_to_left(Align::Center), |inner_ui| {
-                let mut rich_text = RichText::new(params.value_str)
+                let mut rich_text = RichText::new(value_str)
                     .monospace()
                     .color(Color32::from_rgb(50, 150, 200));
-                if params.is_strong {
+                if is_strong {
                     rich_text = rich_text.strong();
                 }
                 let response = inner_ui.add(Label::new(rich_text).sense(Sense::click()));
 
                 if response.clicked() {
-                    let found_span = match params.stat_type {
-                        StatType::Min => self.find_min_span_for_node(&params.node_identifier),
-                        StatType::Max => self.find_max_span_for_node(&params.node_identifier),
+                    let found_span = match stat_type {
+                        StatType::Min => self.find_min_span_for_node(&node_identifier),
+                        StatType::Max => self.find_max_span_for_node(&node_identifier),
                     };
                     if let Some(s) = found_span {
                         *span_to_view = Some(s);
                     }
                 }
-                let hover_text = match params.stat_type {
+                let hover_text = match stat_type {
                     StatType::Min => "Click to see details of span with minimum duration",
                     StatType::Max => "Click to see details of span with maximum duration",
                 };
@@ -184,7 +143,7 @@ impl AnalyzeSpanModal {
     }
 
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
-        let (all_spans, unique_names) = analyze_utils::process_spans_for_analysis(spans);
+        let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;
         self.unique_span_names = unique_names;
     }
@@ -194,7 +153,7 @@ impl AnalyzeSpanModal {
         let target_name = target_span_name.to_string();
 
         // Collect matching spans
-        analyze_utils::collect_matching_spans(
+        collect_matching_spans(
             &self.all_spans_for_analysis,
             &target_name,
             &mut matching_spans,
@@ -290,7 +249,7 @@ impl AnalyzeSpanModal {
                     // Search field (left side, takes 70% of width)
                     ui.with_layout(Layout::left_to_right(eframe::emath::Align::Center), |ui| {
                         ui.set_max_width(max_width * 0.7);
-                        analyze_utils::span_search_ui(
+                        span_search_ui(
                             ui,
                             &mut self.search_text,
                             "Search span by name:",
@@ -323,7 +282,7 @@ impl AnalyzeSpanModal {
                 let results_height = (max_height - 120.0) * 0.7 - 20.0;
 
                 // Show list of span names in a scrollable area
-                let selection_changed = analyze_utils::span_selection_list_ui(
+                let selection_changed = span_selection_list_ui(
                     ui,
                     &self.unique_span_names,
                     &self.search_text,
@@ -362,7 +321,7 @@ impl AnalyzeSpanModal {
                     let grid_width = available_width;
 
                     // Calculate pixel widths for columns based on percentages of the full width
-                    let col_widths = Self::calculate_column_widths(grid_width, &col_percentages);
+                    let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
 
                     // Header row - outside scrollable area to make it sticky
                     Grid::new("span_analysis_header_grid")
@@ -372,14 +331,44 @@ impl AnalyzeSpanModal {
                         .min_col_width(0.0)
                         .show(ui, |ui_grid| {
                             // First cell (Node) is left-aligned
-                            draw_node_name_cell(ui_grid, col_widths[0], "Node", true);
+                            draw_left_aligned_text_cell(ui_grid, col_widths[0], "Node", true);
 
                             // Subsequent cells are right-aligned
-                            draw_right_stat_cell(ui_grid, col_widths[1], "Count", true);
-                            draw_right_stat_cell(ui_grid, col_widths[2], "Min (ms)", true);
-                            draw_right_stat_cell(ui_grid, col_widths[3], "Max (ms)", true);
-                            draw_right_stat_cell(ui_grid, col_widths[4], "Mean (ms)", true);
-                            draw_right_stat_cell(ui_grid, col_widths[5], "Median (ms)", true);
+                            draw_right_aligned_text_cell(
+                                ui_grid,
+                                col_widths[1],
+                                "Count",
+                                true,
+                                None,
+                            );
+                            draw_right_aligned_text_cell(
+                                ui_grid,
+                                col_widths[2],
+                                "Min (ms)",
+                                true,
+                                None,
+                            );
+                            draw_right_aligned_text_cell(
+                                ui_grid,
+                                col_widths[3],
+                                "Max (ms)",
+                                true,
+                                None,
+                            );
+                            draw_right_aligned_text_cell(
+                                ui_grid,
+                                col_widths[4],
+                                "Mean (ms)",
+                                true,
+                                None,
+                            );
+                            draw_right_aligned_text_cell(
+                                ui_grid,
+                                col_widths[5],
+                                "Median (ms)",
+                                true,
+                                None,
+                            );
 
                             ui_grid.end_row();
                         });
@@ -416,7 +405,7 @@ impl AnalyzeSpanModal {
 
                             // Calculate column widths using the same grid width and percentages
                             let col_widths =
-                                Self::calculate_column_widths(grid_width, &col_percentages);
+                                calculate_table_column_widths(grid_width, &col_percentages);
 
                             // Use Grid for tabular data (without headers)
                             Grid::new("span_analysis_grid")
@@ -433,17 +422,18 @@ impl AnalyzeSpanModal {
                                     // Rows for each node
                                     for node_name in node_names {
                                         if let Some(stats) = result.per_node_stats.get(&node_name) {
-                                            draw_node_name_cell(
+                                            draw_left_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[0],
                                                 &node_name,
                                                 false,
                                             );
-                                            draw_right_stat_cell(
+                                            draw_right_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[1],
                                                 &format!("{}", stats.duration_stats.count),
                                                 false,
+                                                None,
                                             );
 
                                             let min_text = format!(
@@ -451,16 +441,12 @@ impl AnalyzeSpanModal {
                                                 stats.duration_stats.min * MILLISECONDS_PER_SECOND
                                             );
                                             self.draw_clickable_stat_cell(
-                                                ClickableStatCellDrawParams {
-                                                    ui: ui_grid,
-                                                    width: col_widths[2],
-                                                    value_str: &min_text,
-                                                    is_strong: false,
-                                                    node_identifier: NodeIdentifier::Node(
-                                                        node_name.clone(),
-                                                    ),
-                                                    stat_type: StatType::Min,
-                                                },
+                                                ui_grid,
+                                                col_widths[2],
+                                                &min_text,
+                                                false,
+                                                NodeIdentifier::Node(node_name.clone()),
+                                                StatType::Min,
                                                 &mut span_to_view,
                                             );
 
@@ -469,20 +455,16 @@ impl AnalyzeSpanModal {
                                                 stats.duration_stats.max * MILLISECONDS_PER_SECOND
                                             );
                                             self.draw_clickable_stat_cell(
-                                                ClickableStatCellDrawParams {
-                                                    ui: ui_grid,
-                                                    width: col_widths[3],
-                                                    value_str: &max_text,
-                                                    is_strong: false,
-                                                    node_identifier: NodeIdentifier::Node(
-                                                        node_name.clone(),
-                                                    ),
-                                                    stat_type: StatType::Max,
-                                                },
+                                                ui_grid,
+                                                col_widths[3],
+                                                &max_text,
+                                                false,
+                                                NodeIdentifier::Node(node_name.clone()),
+                                                StatType::Max,
                                                 &mut span_to_view,
                                             );
 
-                                            draw_right_stat_cell(
+                                            draw_right_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[4],
                                                 &format!(
@@ -491,8 +473,9 @@ impl AnalyzeSpanModal {
                                                         * MILLISECONDS_PER_SECOND
                                                 ),
                                                 false,
+                                                None,
                                             );
-                                            draw_right_stat_cell(
+                                            draw_right_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[5],
                                                 &format!(
@@ -501,6 +484,7 @@ impl AnalyzeSpanModal {
                                                         * MILLISECONDS_PER_SECOND
                                                 ),
                                                 false,
+                                                None,
                                             );
 
                                             ui_grid.end_row();
@@ -509,17 +493,18 @@ impl AnalyzeSpanModal {
 
                                     // Overall statistics row
                                     let overall = &result.overall_stats;
-                                    draw_node_name_cell(
+                                    draw_left_aligned_text_cell(
                                         ui_grid,
                                         col_widths[0],
                                         &NodeIdentifier::AllNodes.to_string(),
                                         true,
                                     );
-                                    draw_right_stat_cell(
+                                    draw_right_aligned_text_cell(
                                         ui_grid,
                                         col_widths[1],
                                         &format!("{}", overall.duration_stats.count),
                                         true,
+                                        None,
                                     );
 
                                     let min_text_overall = format!(
@@ -527,14 +512,12 @@ impl AnalyzeSpanModal {
                                         overall.duration_stats.min * MILLISECONDS_PER_SECOND
                                     );
                                     self.draw_clickable_stat_cell(
-                                        ClickableStatCellDrawParams {
-                                            ui: ui_grid,
-                                            width: col_widths[2],
-                                            value_str: &min_text_overall,
-                                            is_strong: true,
-                                            node_identifier: NodeIdentifier::AllNodes,
-                                            stat_type: StatType::Min,
-                                        },
+                                        ui_grid,
+                                        col_widths[2],
+                                        &min_text_overall,
+                                        true,
+                                        NodeIdentifier::AllNodes,
+                                        StatType::Min,
                                         &mut span_to_view,
                                     );
 
@@ -543,18 +526,16 @@ impl AnalyzeSpanModal {
                                         overall.duration_stats.max * MILLISECONDS_PER_SECOND
                                     );
                                     self.draw_clickable_stat_cell(
-                                        ClickableStatCellDrawParams {
-                                            ui: ui_grid,
-                                            width: col_widths[3],
-                                            value_str: &max_text_overall,
-                                            is_strong: true,
-                                            node_identifier: NodeIdentifier::AllNodes,
-                                            stat_type: StatType::Max,
-                                        },
+                                        ui_grid,
+                                        col_widths[3],
+                                        &max_text_overall,
+                                        true,
+                                        NodeIdentifier::AllNodes,
+                                        StatType::Max,
                                         &mut span_to_view,
                                     );
 
-                                    draw_right_stat_cell(
+                                    draw_right_aligned_text_cell(
                                         ui_grid,
                                         col_widths[4],
                                         &format!(
@@ -562,8 +543,9 @@ impl AnalyzeSpanModal {
                                             overall.duration_stats.mean() * MILLISECONDS_PER_SECOND
                                         ),
                                         true,
+                                        None,
                                     );
-                                    draw_right_stat_cell(
+                                    draw_right_aligned_text_cell(
                                         ui_grid,
                                         col_widths[5],
                                         &format!(
@@ -572,6 +554,7 @@ impl AnalyzeSpanModal {
                                                 * MILLISECONDS_PER_SECOND
                                         ),
                                         true,
+                                        None,
                                     );
 
                                     ui_grid.end_row();
@@ -592,7 +575,7 @@ impl AnalyzeSpanModal {
             });
         });
 
-        // Apply changes if modal closed
+        // Apply changes if modal got closed
         if modal_closed {
             self.show = false;
             self.spans_processed = false;
@@ -600,133 +583,16 @@ impl AnalyzeSpanModal {
             self.search_text = String::new();
             self.detailed_span_analysis = None;
             self.analysis_summary_message = None;
-            self.span_details = None;
         }
 
-        if let Some(span) = span_to_view {
-            self.span_details = Some(span);
-            ctx.request_repaint();
-        }
-
-        if let Some(span) = &self.span_details {
-            if self.show_span_details(ctx, span, max_width, max_height) {
+        // If a specific span was clicked for detailed view (e.g., min/max duration span),
+        // or if a detail view was already open, show/keep it open.
+        if let Some(span_rc) = span_to_view.or_else(|| self.span_details.take()) {
+            if show_span_details(ctx, &span_rc, max_width, max_height) {
                 self.span_details = None;
-                ctx.request_repaint();
+            } else {
+                self.span_details = Some(span_rc);
             }
         }
-    }
-
-    /// Show details of a specific span.
-    fn show_span_details(
-        &self,
-        ctx: &Context,
-        span: &Rc<Span>,
-        max_width: f32,
-        max_height: f32,
-    ) -> bool {
-        let mut should_close = false;
-
-        // Create a modal dialog for the span details
-        let mut open = true;
-        Window::new("Span Details")
-            .fixed_size([max_width * 0.8, max_height * 0.6])
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .order(Order::Foreground)
-            .show(ctx, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.heading(&span.name);
-                    ui.add_space(10.0);
-
-                    // Display timing information
-                    ui.strong(format!(
-                        "Duration: {:.3} ms",
-                        (span.end_time - span.start_time) * 1000.0
-                    ));
-                    ui.label(format!(
-                        "Time: {} - {}",
-                        crate::types::time_point_to_utc_string(span.start_time),
-                        crate::types::time_point_to_utc_string(span.end_time)
-                    ));
-
-                    // Display span identification
-                    ui.add_space(5.0);
-                    ui.label(format!("Node: {}", span.node.name));
-                    ui.label(format!("Span ID: {}", hex::encode(&span.span_id)));
-                    ui.label(format!(
-                        "Parent Span ID: {}",
-                        hex::encode(&span.parent_span_id)
-                    ));
-
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(10.0);
-
-                    // Display attributes
-                    ui.heading("Attributes");
-                    if span.attributes.is_empty() {
-                        ui.label("No attributes");
-                    } else {
-                        Grid::new("span_details_attributes")
-                            .num_columns(2)
-                            .spacing([10.0, 6.0])
-                            .striped(true)
-                            .show(ui, |ui| {
-                                for (name, value) in &span.attributes {
-                                    ui.strong(name);
-                                    ui.label(crate::types::value_to_text(value));
-                                    ui.end_row();
-                                }
-                            });
-                    }
-
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(10.0);
-
-                    // Display events
-                    ui.heading("Events");
-                    ScrollArea::vertical()
-                        .max_height(max_height * 0.3)
-                        .show(ui, |ui| {
-                            if span.events.is_empty() {
-                                ui.label("No events");
-                            } else {
-                                for event in &span.events {
-                                    ui.collapsing(event.name.clone(), |ui| {
-                                        ui.label(format!(
-                                            "Time: {}",
-                                            crate::types::time_point_to_utc_string(event.time)
-                                        ));
-
-                                        for (name, value) in &event.attributes {
-                                            ui.label(format!(
-                                                "{}: {}",
-                                                name,
-                                                crate::types::value_to_text(value)
-                                            ));
-                                        }
-                                    });
-                                }
-                            }
-                        });
-
-                    ui.add_space(10.0);
-                    if ui.button("Close").clicked() {
-                        should_close = true;
-                    }
-                });
-            });
-
-        // Check for ESC key to close the span details window
-        ctx.input(|i| {
-            if i.key_pressed(Key::Escape) {
-                should_close = true;
-            }
-        });
-
-        !open || should_close
     }
 }
