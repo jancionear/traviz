@@ -245,10 +245,7 @@ impl App {
             }
 
             ComboBox::new("mode chooser", "")
-                .selected_text(format!(
-                    "Display mode: {:?}",
-                    self.current_display_mode_name
-                ))
+                .selected_text(format!("Display mode: {}", self.current_display_mode_name))
                 .show_ui(ui, |ui| {
                     for mode in &self.display_modes {
                         ui.selectable_value(
