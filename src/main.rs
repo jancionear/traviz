@@ -330,7 +330,7 @@ impl App {
                         ui.selectable_value(
                             &mut self.current_display_mode_name,
                             mode.name.clone(),
-                            format!("{:?}", mode.name),
+                            format!("{}", mode.name),
                         );
                     }
                 });
@@ -429,6 +429,7 @@ impl App {
 
         self.spans_to_display = (*mode.transformation)(&self.raw_data)?;
         set_min_max_time(&self.spans_to_display);
+        self.applied_display_mode_name = self.current_display_mode_name.clone();
 
         Ok(())
     }
@@ -1074,8 +1075,7 @@ impl App {
         {
             let start_x = span.display_start.get();
             // Ensure display_length is not negative
-            let display_length = span.display_length.get().max(0.0);
-            let end_x = start_x + display_length;
+            let end_x = start_x + span.display_length.get().max(0.0);
 
             let name = if end_x - start_x > self.layout.span_name_threshold {
                 span.name.as_str()
@@ -1100,7 +1100,10 @@ impl App {
 
             let time_rect = Rect::from_min_max(
                 Pos2::new(start_x, start_height),
-                Pos2::new(start_x + display_length, start_height + span_height),
+                Pos2::new(
+                    start_x + span.time_display_length.get().max(0.0),
+                    start_height + span_height,
+                ),
             );
             let display_rect = Rect::from_min_max(
                 Pos2::new(start_x, start_height),
@@ -1326,7 +1329,7 @@ impl App {
                     i,
                     s_idx + 1,
                     link.source_spans.len(),
-                    source_s.name,
+                    source_s.original_name,
                     source_s.node.name,
                     hex::encode(&source_s.span_id)
                 );
@@ -1340,7 +1343,7 @@ impl App {
             println!(
                 "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
                 i,
-                target_s.name,
+                target_s.original_name,
                 target_s.node.name,
                 hex::encode(&target_s.span_id)
             );

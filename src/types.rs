@@ -26,6 +26,7 @@ pub type HeightLevel = u64;
 #[derive(Debug, Clone)]
 pub struct Span {
     pub name: String,
+    pub original_name: String,
     pub span_id: Vec<u8>,
     pub trace_id: Vec<u8>,
     pub parent_span_id: Vec<u8>,

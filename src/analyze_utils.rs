@@ -39,7 +39,7 @@ pub fn collect_matching_spans(
     matching_spans: &mut Vec<Rc<Span>>,
 ) {
     for span in spans {
-        if span.name == target_name {
+        if span.original_name == target_name {
             matching_spans.push(span.clone());
         }
     }
@@ -178,7 +178,7 @@ pub fn process_spans_for_analysis(spans: &[Rc<Span>]) -> (Vec<Rc<Span>>, Vec<Str
     // Create a set of unique span names
     let mut unique_span_names_set: HashSet<String> = HashSet::new();
     for span in &all_spans_for_analysis {
-        unique_span_names_set.insert(span.name.clone());
+        unique_span_names_set.insert(span.original_name.clone());
     }
 
     // Convert to sorted vector
