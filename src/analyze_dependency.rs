@@ -138,6 +138,8 @@ impl AnalyzeDependencyModal {
     }
 
     fn analyze_dependencies(&mut self) {
+        self.analysis_result = None;
+
         // Validate source and target span names
         let source_name = match &self.source_span_name {
             Some(name) => name.clone(),
