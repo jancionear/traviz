@@ -606,8 +606,8 @@ impl AnalyzeDependencyModal {
                 // These will be properly set if analysis_result is Some,
                 // and the ScrollArea that uses them is only shown in that case.
                 let mut grid_width = 0.0;
-                // Define percentage-based column widths that sum exactly to 100%
-                let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15]; // Node, Count, Min, Max, Mean, Median
+                // Define percentage-based column widths
+                let col_percentages = [0.25, 0.14, 0.14, 0.14, 0.14, 0.14]; // Node, Count, Min, Max, Mean, Median
 
                 if let Some(result) = &self.analysis_result {
                     ui.horizontal(|ui| {
@@ -689,7 +689,7 @@ impl AnalyzeDependencyModal {
                                                     ui_horiz.label(
                                                         RichText::new(&node_name).monospace(),
                                                     );
-                                                    ui_horiz.add_space(5.0); // Padding
+                                                    ui_horiz.add_space(5.0);
                                                     let focus_response = ui_horiz.button("🔍");
                                                     if focus_response.clicked() {
                                                         self.focus_node = Some(node_name.clone());
