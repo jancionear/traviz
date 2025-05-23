@@ -6,7 +6,7 @@ use crate::analyze_utils::{
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
-    self, Button, Color32, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
+    self, Button, Color32, ComboBox, Grid, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
 };
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -602,6 +602,13 @@ impl AnalyzeDependencyModal {
                 // Results area
                 ui.label("Dependency Analysis Results:");
 
+                // Initialize grid_width and col_percentages with defaults
+                // These will be properly set if analysis_result is Some,
+                // and the ScrollArea that uses them is only shown in that case.
+                let mut grid_width = 0.0;
+                // Define percentage-based column widths that sum exactly to 100%
+                let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15]; // Node, Count, Min, Max, Mean, Median
+
                 if let Some(result) = &self.analysis_result {
                     ui.horizontal(|ui| {
                         ui.label(format!(
@@ -620,13 +627,7 @@ impl AnalyzeDependencyModal {
                 // Create the grid headers outside the scroll area (to keep them visible)
                 if self.analysis_result.is_some() {
                     ui.add_space(10.0);
-
-                    let available_width = ui.available_width();
-
-                    // Define percentage-based column widths that sum exactly to 100%
-                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15];
-
-                    let grid_width = available_width;
+                    grid_width = ui.available_width();
 
                     // Calculate pixel widths for columns based on percentages
                     let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
@@ -649,12 +650,6 @@ impl AnalyzeDependencyModal {
 
                     // Add a horizontal separator line
                     ui.separator();
-
-                    // Store the grid width and column percentages for the data grid
-                    ui.memory_mut(|mem| {
-                        mem.data.insert_temp(Id::new("dependency_grid_width"), grid_width);
-                        mem.data.insert_temp(Id::new("dependency_col_percentages"), col_percentages);
-                    });
                 }
 
                 // Grid contents in a scrollable area
@@ -668,15 +663,6 @@ impl AnalyzeDependencyModal {
                     .id_salt("dependency_results_scroll_area")
                     .show_viewport(ui, |ui, _viewport| {
                         if let Some(result) = &self.analysis_result {
-                            // Retrieve the stored grid width and column percentages
-                            let (grid_width, col_percentages) = ui.memory(|mem| {
-                                let width = mem.data.get_temp::<f32>(Id::new("dependency_grid_width"))
-                                    .unwrap_or_else(|| ui.available_width());
-                                let percentages = mem.data.get_temp::<[f32; 6]>(Id::new("dependency_col_percentages"))
-                                    .unwrap_or([0.25, 0.1, 0.15, 0.2, 0.15, 0.15]);
-                                (width, percentages)
-                            });
-
                             // Calculate column widths using the same grid width and percentages
                             let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
 

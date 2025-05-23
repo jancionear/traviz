@@ -5,8 +5,8 @@ use crate::analyze_utils::{
 };
 use crate::types::{NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
 use eframe::egui::{
-    Align, Button, Color32, Context, Grid, Id, Label, Layout, Modal, RichText, ScrollArea, Sense,
-    Ui, Vec2,
+    Align, Button, Color32, Context, Grid, Label, Layout, Modal, RichText, ScrollArea, Sense, Ui,
+    Vec2,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -242,6 +242,13 @@ impl AnalyzeSpanModal {
 
                 ui.heading("Analyze Span");
 
+                // Initialize grid_width and col_percentages with defaults
+                // These will be properly set if detailed_span_analysis is Some,
+                // and the ScrollArea that uses them is only shown in that case.
+                let mut grid_width = 0.0;
+                // Define percentage-based column widths that sum exactly to 100%
+                let col_percentages = [0.25, 0.1, 0.15, 0.15, 0.15, 0.2]; // Node, Count, Min, Max, Mean, Median
+
                 // Top row with search and analyze button
                 ui.horizontal(|ui| {
                     // Search field (left side, takes 70% of width)
@@ -306,17 +313,10 @@ impl AnalyzeSpanModal {
                     ui.colored_label(Color32::YELLOW, message);
                 }
 
-                // Create the grid headers first outside the scroll area (to keep them visible)
+                // Analysis results table header
                 if self.detailed_span_analysis.is_some() {
                     ui.add_space(10.0);
-
-                    let available_width = ui.available_width();
-
-                    // Define percentage-based column widths that sum exactly to 100%
-                    // This ensures the full width is used in both header and data grid
-                    let col_percentages = [0.25, 0.1, 0.15, 0.2, 0.15, 0.15];
-
-                    let grid_width = available_width;
+                    grid_width = ui.available_width();
 
                     // Calculate pixel widths for columns based on percentages of the full width
                     let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
@@ -372,14 +372,6 @@ impl AnalyzeSpanModal {
                         });
 
                     ui.separator();
-
-                    // Store the grid width and column percentages for the data grid
-                    ui.memory_mut(|mem| {
-                        mem.data
-                            .insert_temp(Id::new("analyze_grid_width"), grid_width);
-                        mem.data
-                            .insert_temp(Id::new("analyze_col_percentages"), col_percentages);
-                    });
                 }
 
                 // Grid contents in a scrollable area
@@ -388,19 +380,6 @@ impl AnalyzeSpanModal {
                     .id_salt("analysis_results_scroll_area")
                     .show_viewport(ui, |ui, _viewport| {
                         if let Some(result) = &self.detailed_span_analysis {
-                            // Retrieve the stored grid width and column percentages
-                            let (grid_width, col_percentages) = ui.memory(|mem| {
-                                let width = mem
-                                    .data
-                                    .get_temp::<f32>(Id::new("analyze_grid_width"))
-                                    .unwrap_or_else(|| ui.available_width());
-                                let percentages = mem
-                                    .data
-                                    .get_temp::<[f32; 6]>(Id::new("analyze_col_percentages"))
-                                    .unwrap_or([0.25, 0.1, 0.15, 0.2, 0.15, 0.15]);
-                                (width, percentages)
-                            });
-
                             // Calculate column widths using the same grid width and percentages
                             let col_widths =
                                 calculate_table_column_widths(grid_width, &col_percentages);
