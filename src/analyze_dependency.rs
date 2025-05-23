@@ -40,12 +40,30 @@ impl std::fmt::Display for SourceScope {
     }
 }
 
+/// Defines the strategy for selecting source spans when multiple are available.
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub enum SourceTimingStrategy {
+    #[default]
+    EarliestFirst,
+    LatestFirst,
+}
+
+impl std::fmt::Display for SourceTimingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceTimingStrategy::EarliestFirst => write!(f, "Earliest First"),
+            SourceTimingStrategy::LatestFirst => write!(f, "Latest First"),
+        }
+    }
+}
+
 pub struct DependencyAnalysisResult {
     pub source_span_name: String,
     pub target_span_name: String,
     pub threshold: usize,
     pub metadata_field: String,
     pub source_scope: SourceScope,
+    pub source_timing_strategy: SourceTimingStrategy,
     pub per_node_results: HashMap<String, NodeDependencyMetrics>,
     pub analysis_duration_ms: u128,
 }
@@ -70,6 +88,8 @@ pub struct AnalyzeDependencyModal {
     metadata_field: String,
     /// Scope for selecting source spans: "self" (same node as target) or "all nodes".
     source_scope: SourceScope,
+    /// Strategy for selecting source spans (earliest or latest).
+    source_timing_strategy: SourceTimingStrategy,
     /// A sorted list of unique span names found in the current trace data.
     unique_span_names: Vec<String>,
     /// Flag indicating if the span list for the modal has been processed from the current trace data.
@@ -97,6 +117,7 @@ impl AnalyzeDependencyModal {
             threshold_edit_str: initial_threshold.to_string(),
             metadata_field: String::new(),
             source_scope: SourceScope::default(),
+            source_timing_strategy: SourceTimingStrategy::default(),
             unique_span_names: Vec::new(),
             spans_processed: false,
             analysis_result: None,
@@ -338,12 +359,25 @@ impl AnalyzeDependencyModal {
 
                 if potential_sources_for_this_target.len() >= self.threshold && self.threshold > 0 {
                     let num_to_take = self.threshold;
-                    let selected_source_spans_group: Vec<Rc<Span>> =
-                        potential_sources_for_this_target
+                    let selected_source_spans_group: Vec<Rc<Span>> = match self
+                        .source_timing_strategy
+                    {
+                        SourceTimingStrategy::EarliestFirst => potential_sources_for_this_target
                             .iter()
                             .take(num_to_take)
                             .cloned()
-                            .collect();
+                            .collect(),
+                        SourceTimingStrategy::LatestFirst => {
+                            let skip_count = potential_sources_for_this_target
+                                .len()
+                                .saturating_sub(num_to_take);
+                            potential_sources_for_this_target
+                                .iter()
+                                .skip(skip_count)
+                                .cloned()
+                                .collect()
+                        }
+                    };
 
                     if !selected_source_spans_group.is_empty() {
                         // Should always be Some() if num_to_take > 0 and len >= threshold
@@ -410,6 +444,7 @@ impl AnalyzeDependencyModal {
             threshold: self.threshold,
             metadata_field: self.metadata_field.clone(),
             source_scope: self.source_scope.clone(),
+            source_timing_strategy: self.source_timing_strategy.clone(),
             per_node_results,
             analysis_duration_ms: analysis_duration,
         });
@@ -573,6 +608,38 @@ impl AnalyzeDependencyModal {
                         });
                     });
 
+                    ui.add_space(10.0);
+
+                    // Source Timing Strategy dropdown
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Timing:");
+                            let timing_combo_response = ComboBox::new(ui.id().with("source_timing_strategy"), "")
+                                .selected_text(self.source_timing_strategy.to_string())
+                                .width(120.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut self.source_timing_strategy,
+                                        SourceTimingStrategy::EarliestFirst,
+                                        SourceTimingStrategy::EarliestFirst.to_string()
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.source_timing_strategy,
+                                        SourceTimingStrategy::LatestFirst,
+                                        SourceTimingStrategy::LatestFirst.to_string()
+                                    );
+                                });
+
+                            if timing_combo_response.response.hovered() {
+                                timing_combo_response.response.on_hover_text(
+                                    "Determines which source spans are selected if multiple are available before the target: \
+                                    'Earliest First' picks the oldest preceding source spans. \
+                                    'Latest First' picks the most recent preceding source spans."
+                                );
+                            }
+                        });
+                    });
+
                     ui.add_space(20.0);
 
                     // Analyze button (right side)
@@ -614,12 +681,13 @@ impl AnalyzeDependencyModal {
                 if let Some(result) = &self.analysis_result {
                     ui.horizontal(|ui| {
                         ui.label(format!(
-                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, metadata field: {}, source: {})",
+                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, metadata: {}, scope: {}, timing: {})",
                             result.source_span_name,
                             result.target_span_name,
                             result.threshold,
                             if result.metadata_field.is_empty() { "none" } else { &result.metadata_field },
-                            result.source_scope
+                            result.source_scope,
+                            result.source_timing_strategy
                         ));
 
                         ui.label(format!("(Analysis took {} ms)", result.analysis_duration_ms));
@@ -798,6 +866,7 @@ impl AnalyzeDependencyModal {
             self.threshold_edit_str = self.threshold.to_string();
             self.metadata_field = String::new();
             self.source_scope = SourceScope::default();
+            self.source_timing_strategy = SourceTimingStrategy::default();
             self.error_message = None;
         }
     }
