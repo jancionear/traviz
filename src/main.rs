@@ -330,7 +330,7 @@ impl App {
                         ui.selectable_value(
                             &mut self.current_display_mode_name,
                             mode.name.clone(),
-                            format!("{}", mode.name),
+                            mode.name.to_string(),
                         );
                     }
                 });
