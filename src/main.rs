@@ -730,13 +730,56 @@ impl App {
     }
 
     fn draw_spans(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
+        let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
+
+        if !self.highlighted_spans.is_empty() {
+            // This block ensures that if any spans are highlighted, their complete hierarchical context
+            // (i.e., their root span from the `all_spans_for_analysis` list) is included for drawing.
+            // A new vector is created only if highlighted spans necessitate adding roots not already
+            // present in the current display mode's spans.
+            let mut roots_to_add_if_highlighted: Vec<Rc<Span>> = Vec::new();
+            let mut current_display_plus_new_root_ids: HashSet<Vec<u8>> = self
+                .spans_to_display
+                .iter()
+                .map(|s| s.span_id.clone())
+                .collect();
+
+            for highlighted_span_rc in &self.highlighted_spans {
+                let mut containing_root_from_all_spans: Option<Rc<Span>> = None;
+                for root_candidate_from_all in &self.all_spans_for_analysis {
+                    if root_candidate_from_all.is_ancestor_or_self(&highlighted_span_rc.span_id) {
+                        containing_root_from_all_spans = Some(root_candidate_from_all.clone());
+                        break;
+                    }
+                }
+
+                if let Some(root_to_potentially_add) = containing_root_from_all_spans {
+                    if current_display_plus_new_root_ids
+                        .insert(root_to_potentially_add.span_id.clone())
+                    {
+                        roots_to_add_if_highlighted.push(root_to_potentially_add);
+                    }
+                }
+            }
+
+            if !roots_to_add_if_highlighted.is_empty() {
+                let mut temp_spans = self.spans_to_display.clone();
+                temp_spans.extend(roots_to_add_if_highlighted);
+                final_spans_for_drawing_owned = Some(temp_spans);
+            }
+        }
+
+        let spans_to_process = final_spans_for_drawing_owned
+            .as_ref()
+            .unwrap_or(&self.spans_to_display);
+
         let mut node_spans: BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)> = BTreeMap::new();
-        for span in &self.spans_to_display {
+        for span_ref in spans_to_process {
             node_spans
-                .entry(span.node.name.clone())
-                .or_insert((span.node.clone(), vec![]))
+                .entry(span_ref.node.name.clone())
+                .or_insert((span_ref.node.clone(), vec![]))
                 .1
-                .push(span.clone());
+                .push(span_ref.clone());
         }
 
         let time_points_area = Rect::from_min_max(
@@ -759,7 +802,7 @@ impl App {
             time_points_area,
             Color32::from_gray(240),
             ui,
-            &self.spans_to_display,
+            spans_to_process,
         );
 
         let under_time_points_area =
@@ -773,7 +816,7 @@ impl App {
             ),
         );
 
-        if self.spans_to_display.is_empty() {
+        if spans_to_process.is_empty() {
             ui.put(
                 Rect::from_center_size(under_time_points_area.center(), Vec2::new(200.0, 200.0)),
                 Label::new("No spans to display.\nOpen a file or change filters."),

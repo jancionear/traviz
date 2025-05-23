@@ -53,6 +53,20 @@ pub struct Span {
     pub time_display_length: Cell<f32>,
 }
 
+impl Span {
+    pub fn is_ancestor_or_self(&self, target_span_id: &Vec<u8>) -> bool {
+        if self.span_id == *target_span_id {
+            return true;
+        }
+        for child in self.children.borrow().iter() {
+            if child.is_ancestor_or_self(target_span_id) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Event {
     pub name: String,
