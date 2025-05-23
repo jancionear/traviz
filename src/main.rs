@@ -18,8 +18,11 @@ use types::{
 };
 
 mod modes;
+mod structured_modes;
 mod task_timer;
 mod types;
+
+use modes::{get_all_modes, DisplayMode};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -95,7 +98,9 @@ struct App {
     timeline_bar2_time: TimePoint,
     clicked_span: Option<Rc<Span>>,
     include_children_events: bool,
-    display_mode: DisplayMode,
+    display_modes: Vec<DisplayMode>,
+    applied_display_mode_name: String,
+    current_display_mode_name: String,
     search: Search,
 }
 
@@ -110,27 +115,15 @@ struct Layout {
     middle_bar_height: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum DisplayMode {
-    Everything,
-    Doomslug,
-    Chain,
-    ChainShard0,
-}
-
-impl DisplayMode {
-    pub fn all_modes() -> &'static [DisplayMode] {
-        &[
-            DisplayMode::Everything,
-            DisplayMode::Doomslug,
-            DisplayMode::Chain,
-            DisplayMode::ChainShard0,
-        ]
-    }
-}
-
 impl Default for App {
     fn default() -> Self {
+        let display_modes = get_all_modes();
+        let current_display_mode_name = display_modes
+            .first()
+            .expect("There should be at least one display mode")
+            .name
+            .clone();
+
         let mut res = Self {
             layout: Layout {
                 top_bar_height: 30.0,
@@ -156,7 +149,9 @@ impl Default for App {
             timeline_bar2_time: 0.0,
             clicked_span: None,
             include_children_events: true,
-            display_mode: DisplayMode::Everything,
+            display_modes,
+            applied_display_mode_name: current_display_mode_name.clone(),
+            current_display_mode_name,
             search: Search::default(),
         };
         res.timeline.init(1.0, 3.0);
@@ -259,24 +254,22 @@ impl App {
                 }
             }
 
-            let display_mode_before = self.display_mode;
             ComboBox::new("mode chooser", "")
-                .selected_text(format!("Display mode: {:?}", self.display_mode))
+                .selected_text(format!("Display mode: {}", self.current_display_mode_name))
                 .show_ui(ui, |ui| {
-                    for mode in DisplayMode::all_modes() {
-                        ui.selectable_value(&mut self.display_mode, *mode, format!("{:?}", mode));
+                    for mode in &self.display_modes {
+                        ui.selectable_value(
+                            &mut self.current_display_mode_name,
+                            mode.name.clone(),
+                            format!("{:?}", mode.name),
+                        );
                     }
                 });
-            if display_mode_before != self.display_mode {
-                let res = match self.display_mode {
-                    DisplayMode::Everything => self.apply_mode(modes::everything_mode),
-                    DisplayMode::Doomslug => self.apply_mode(modes::doomslug_mode),
-                    DisplayMode::Chain => self.apply_mode(modes::chain_mode),
-                    DisplayMode::ChainShard0 => self.apply_mode(modes::chain_shard0_mode),
-                };
-                if let Err(e) = res {
-                    println!("Error applying mode: {}", e);
-                    self.display_mode = DisplayMode::Everything;
+            if self.current_display_mode_name != self.applied_display_mode_name {
+                if let Err(e) = self.apply_current_mode() {
+                    println!("Failed to apply display mode: {}", e);
+                    // Go back to the previous mode
+                    self.current_display_mode_name = self.applied_display_mode_name.clone();
                 }
             }
         });
@@ -289,7 +282,7 @@ impl App {
 
         self.raw_data = parse_trace_file(&file_bytes)?;
 
-        self.apply_mode(modes::everything_mode)?;
+        self.apply_current_mode()?;
 
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
@@ -298,13 +291,16 @@ impl App {
         Ok(())
     }
 
-    fn apply_mode(
-        &mut self,
-        mode_fn: impl Fn(&[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>>,
-    ) -> Result<()> {
-        self.spans_to_display = mode_fn(&self.raw_data)?;
+    fn apply_current_mode(&mut self) -> Result<()> {
+        let mode = self
+            .display_modes
+            .iter()
+            .find(|m| m.name == self.current_display_mode_name)
+            .expect("Display mode not found");
+
+        self.spans_to_display = (*mode.transformation)(&self.raw_data)?;
         set_min_max_time(&self.spans_to_display);
-        //let (min_time, max_time) = get_min_max_time(&self.spans_to_display);
+
         Ok(())
     }
 
