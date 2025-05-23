@@ -108,22 +108,9 @@ impl AnalyzeDependencyModal {
     pub fn new() -> Self {
         let initial_threshold = 1;
         Self {
-            show: false,
-            source_search_text: String::new(),
-            target_search_text: String::new(),
-            source_span_name: None,
-            target_span_name: None,
             threshold: initial_threshold,
             threshold_edit_str: initial_threshold.to_string(),
-            metadata_field: String::new(),
-            source_scope: SourceScope::default(),
-            source_timing_strategy: SourceTimingStrategy::default(),
-            unique_span_names: Vec::new(),
-            spans_processed: false,
-            analysis_result: None,
-            error_message: None,
-            all_spans_for_analysis: Vec::new(),
-            focus_node: None,
+            ..Default::default()
         }
     }
 
@@ -133,10 +120,6 @@ impl AnalyzeDependencyModal {
         self.target_search_text = String::new();
         self.update_span_list(spans_for_analysis);
         self.spans_processed = true;
-    }
-
-    pub fn reset_processed_flag(&mut self) {
-        self.spans_processed = false;
     }
 
     pub fn clear_focus(&mut self) {

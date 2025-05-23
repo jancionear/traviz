@@ -148,10 +148,6 @@ impl AnalyzeSpanModal {
         self.spans_processed = true;
     }
 
-    pub fn reset_processed_flag(&mut self) {
-        self.spans_processed = false;
-    }
-
     pub fn update_span_list(&mut self, spans: &[Rc<Span>]) {
         let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;

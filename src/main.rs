@@ -23,12 +23,13 @@ mod analyze_dependency;
 mod analyze_span;
 mod analyze_utils;
 mod modes;
+mod structured_modes;
 mod task_timer;
 mod types;
 
 use analyze_dependency::AnalyzeDependencyModal;
 use analyze_span::AnalyzeSpanModal;
-use modes::{chain_mode, chain_shard0_mode, doomslug_mode, everything_mode};
+use modes::{get_all_modes, DisplayMode};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -117,7 +118,9 @@ struct App {
     timeline_bar2_time: TimePoint,
     clicked_span: Option<Rc<Span>>,
     include_children_events: bool,
-    display_mode: DisplayMode,
+    display_modes: Vec<DisplayMode>,
+    applied_display_mode_name: String,
+    current_display_mode_name: String,
     search: Search,
 
     // Analyze 'features'
@@ -144,25 +147,6 @@ struct Layout {
     middle_bar_height: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum DisplayMode {
-    Everything,
-    Doomslug,
-    Chain,
-    ChainShard0,
-}
-
-impl DisplayMode {
-    pub fn all_modes() -> &'static [DisplayMode] {
-        &[
-            DisplayMode::Everything,
-            DisplayMode::Doomslug,
-            DisplayMode::Chain,
-            DisplayMode::ChainShard0,
-        ]
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ArrowKey {
     source_span_id: Vec<u8>,
@@ -187,6 +171,13 @@ struct ArrowInfo {
 
 impl Default for App {
     fn default() -> Self {
+        let display_modes = get_all_modes();
+        let current_display_mode_name = display_modes
+            .first()
+            .expect("There should be at least one display mode")
+            .name
+            .clone();
+
         let mut res = Self {
             layout: Layout {
                 top_bar_height: 30.0,
@@ -212,7 +203,9 @@ impl Default for App {
             timeline_bar2_time: 0.0,
             clicked_span: None,
             include_children_events: true,
-            display_mode: DisplayMode::Everything,
+            display_modes,
+            applied_display_mode_name: current_display_mode_name.clone(),
+            current_display_mode_name,
             search: Search::default(),
             all_spans_for_analysis: vec![],
             analyze_span_modal: AnalyzeSpanModal::default(),
@@ -224,6 +217,16 @@ impl Default for App {
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
         res.search.search_term = "NOT IMPLEMENTED".to_string();
+
+        if let Some(first_arg) = std::env::args().nth(1) {
+            println!("Trying to open file: {}", first_arg);
+            if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
+                println!("Error loading file: {}", err);
+            } else {
+                println!("File loaded successfully.");
+            }
+        }
+
         res
     }
 }
@@ -320,24 +323,22 @@ impl App {
                 }
             }
 
-            let display_mode_before = self.display_mode;
             ComboBox::new("mode chooser", "")
-                .selected_text(format!("Display mode: {:?}", self.display_mode))
+                .selected_text(format!("Display mode: {}", self.current_display_mode_name))
                 .show_ui(ui, |ui| {
-                    for mode in DisplayMode::all_modes() {
-                        ui.selectable_value(&mut self.display_mode, *mode, format!("{:?}", mode));
+                    for mode in &self.display_modes {
+                        ui.selectable_value(
+                            &mut self.current_display_mode_name,
+                            mode.name.clone(),
+                            format!("{:?}", mode.name),
+                        );
                     }
                 });
-            if display_mode_before != self.display_mode {
-                let res = match self.display_mode {
-                    DisplayMode::Everything => self.apply_mode(everything_mode),
-                    DisplayMode::Doomslug => self.apply_mode(doomslug_mode),
-                    DisplayMode::Chain => self.apply_mode(chain_mode),
-                    DisplayMode::ChainShard0 => self.apply_mode(chain_shard0_mode),
-                };
-                if let Err(e) = res {
-                    println!("Error applying mode: {}", e);
-                    self.display_mode = DisplayMode::Everything;
+            if self.current_display_mode_name != self.applied_display_mode_name {
+                if let Err(e) = self.apply_current_mode() {
+                    println!("Failed to apply display mode: {}", e);
+                    // Go back to the previous mode
+                    self.current_display_mode_name = self.applied_display_mode_name.clone();
                 }
             }
 
@@ -393,27 +394,25 @@ impl App {
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
-        self.analyze_span_modal.reset_processed_flag();
-        self.analyze_dependency_modal.reset_processed_flag();
+        self.analyze_span_modal = AnalyzeSpanModal::default();
+        self.analyze_dependency_modal = AnalyzeDependencyModal::new();
 
-        // Extract all spans for analysis purposes immediately after loading raw_data
-        self.all_spans_for_analysis = everything_mode(&self.raw_data)?;
+        let everything_mode = self
+            .display_modes
+            .iter()
+            .find(|m| m.name == "Everything")
+            .expect("'Everything' display mode not found during initialization.");
+
+        // Populate all_spans_for_analysis using the transformation from the "Everything" mode.
+        self.all_spans_for_analysis = (everything_mode.transformation)(&self.raw_data)
+            .expect("Failed to transform data using 'Everything' mode.");
+
         println!(
-            "Stored {} parent spans from everything_mode for analysis after file load.",
+            "Stored {} spans from 'Everything' mode for analysis after file load.",
             self.all_spans_for_analysis.len()
         );
 
-        match self.display_mode {
-            DisplayMode::Everything => {
-                // Optimization: If current mode is Everything, reuse the already computed all_spans_for_analysis.
-                self.spans_to_display = self.all_spans_for_analysis.clone();
-                set_min_max_time(&self.spans_to_display);
-            }
-            DisplayMode::Doomslug => self.apply_mode(doomslug_mode)?,
-            DisplayMode::Chain => self.apply_mode(chain_mode)?,
-            DisplayMode::ChainShard0 => self.apply_mode(chain_shard0_mode)?,
-        }
-
+        self.apply_current_mode()?;
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
         self.set_timeline_end_bars_to_selected();
@@ -421,13 +420,16 @@ impl App {
         Ok(())
     }
 
-    fn apply_mode(
-        &mut self,
-        mode_fn: impl Fn(&[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>>,
-    ) -> Result<()> {
-        self.spans_to_display = mode_fn(&self.raw_data)?;
+    fn apply_current_mode(&mut self) -> Result<()> {
+        let mode = self
+            .display_modes
+            .iter()
+            .find(|m| m.name == self.current_display_mode_name)
+            .expect("Display mode not found");
+
+        self.spans_to_display = (*mode.transformation)(&self.raw_data)?;
         set_min_max_time(&self.spans_to_display);
-        //let (min_time, max_time) = get_min_max_time(&self.spans_to_display);
+
         Ok(())
     }
 
@@ -1026,12 +1028,30 @@ impl App {
         for span in spans {
             let next_start_height = start_height
                 + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
-            self.draw_arranged_span(
-                span,
+
+            // Check if the span itself is within the visible vertical area before drawing
+            if next_start_height <= ui.clip_rect().max.y
+                && (next_start_height + span_height) >= ui.clip_rect().min.y
+            {
+                self.draw_arranged_span(
+                    span,
+                    ui,
+                    next_start_height,
+                    span_height,
+                    level,
+                    highlighted_span_ids,
+                );
+            }
+
+            // Recurse for children. The children's drawing function will also check visibility.
+            // The height for children starts after this span and its margin.
+            let children_start_height = next_start_height + span_height + self.layout.span_margin;
+            self.draw_arranged_spans(
+                span.display_children.borrow().as_slice(),
                 ui,
-                next_start_height,
+                children_start_height,
                 span_height,
-                level,
+                level + 1,
                 highlighted_span_ids,
             );
         }
@@ -1053,7 +1073,9 @@ impl App {
         if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
         {
             let start_x = span.display_start.get();
-            let end_x = start_x + span.display_length.get();
+            // Ensure display_length is not negative
+            let display_length = span.display_length.get().max(0.0);
+            let end_x = start_x + display_length;
 
             let name = if end_x - start_x > self.layout.span_name_threshold {
                 span.name.as_str()
@@ -1078,10 +1100,7 @@ impl App {
 
             let time_rect = Rect::from_min_max(
                 Pos2::new(start_x, start_height),
-                Pos2::new(
-                    start_x + span.time_display_length.get(),
-                    start_height + span_height,
-                ),
+                Pos2::new(start_x + display_length, start_height + span_height),
             );
             let display_rect = Rect::from_min_max(
                 Pos2::new(start_x, start_height),
@@ -1159,16 +1178,6 @@ impl App {
                 ));
             });
         }
-
-        // Always recurse into children
-        self.draw_arranged_spans(
-            span.display_children.borrow().as_slice(),
-            ui,
-            start_height + span_height + self.layout.span_margin,
-            span_height,
-            level + 1,
-            highlighted_span_ids,
-        );
     }
 
     fn draw_clicked_span(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
