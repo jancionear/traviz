@@ -3,7 +3,7 @@ use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Vec2, Widget};
 use crate::edit_modes::{AddingOrEditing, EditDisplayModes, HIGHLIGHT_COLOR};
 use crate::structured_modes::{MatchCondition, MatchOperator};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeFilter {
     pub name: String,
     pub rules: Vec<NodeRule>,
@@ -11,11 +11,15 @@ pub struct NodeFilter {
     pub is_editable: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeRule {
     pub name: String,
     pub condition: MatchCondition,
     pub visible: bool,
+}
+
+pub fn builtin_filters() -> Vec<NodeFilter> {
+    vec![NodeFilter::show_all(), NodeFilter::show_none()]
 }
 
 impl NodeFilter {

@@ -6,7 +6,7 @@
 
 use crate::types::{value_to_text, DisplayLength, Span};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StructuredMode {
     pub name: String,
     /// A list of rules that define how to display spans.
@@ -18,7 +18,7 @@ pub struct StructuredMode {
 }
 
 /// A rule that defines how to display a span that matches the selector.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpanRule {
     pub name: String,
     /// A span that matches this selector
@@ -28,7 +28,7 @@ pub struct SpanRule {
 }
 
 /// A selector used to determine whether a span matches a rule.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpanSelector {
     /// Span's name must match this condition
     pub span_name_condition: MatchCondition,
@@ -40,7 +40,7 @@ pub struct SpanSelector {
 }
 
 /// Defines how to display a span that matches some rule.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpanDecision {
     /// Whether the span should be visible or not.
     pub visible: bool,
@@ -54,14 +54,13 @@ pub struct SpanDecision {
     pub add_shard_id_to_name: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MatchCondition {
     pub operator: MatchOperator,
     pub value: String,
 }
 
-#[allow(unused)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MatchOperator {
     /// Always matches
     Any,
@@ -231,6 +230,6 @@ fn show_span(name: &str) -> SpanRule {
 }
 
 /// List of all modes
-pub fn get_all_structured_modes() -> Vec<StructuredMode> {
+pub fn builtin_structured_modes() -> Vec<StructuredMode> {
     vec![chain_structured_mode(), everything_structured_mode()]
 }

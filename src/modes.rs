@@ -32,7 +32,7 @@ pub struct DisplayMode {
 pub fn get_all_modes() -> Vec<DisplayMode> {
     // Include all structured modes in the display modes.
     // For now those are all of the modes, but in the future we may add more.
-    let structured_modes: Vec<DisplayMode> = structured_modes::get_all_structured_modes()
+    let structured_modes: Vec<DisplayMode> = structured_modes::builtin_structured_modes()
         .into_iter()
         .map(|mode| DisplayMode {
             name: mode.name.clone(),
