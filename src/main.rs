@@ -24,6 +24,8 @@ use types::{
 mod edit_modes;
 mod modes;
 mod node_filter;
+#[cfg(feature = "profiling")]
+mod profiling;
 mod structured_modes;
 mod task_timer;
 mod types;
@@ -92,12 +94,16 @@ fn screen_change_to_time_change(
     after - before
 }
 
+/// A map from a node name to the node itself and a list of its associated spans.
+/// Used for efficiently accessing all spans belonging to a particular node for rendering.
+type NodeSpansMap = BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)>;
+
 struct App {
     layout: Layout,
     timeline: Timeline,
     raw_data: Vec<ExportTraceServiceRequest>,
     spans_to_display: Vec<Rc<Span>>,
-
+    cached_node_spans: Option<NodeSpansMap>,
     timeline_bar1_time: TimePoint,
     timeline_bar2_time: TimePoint,
     clicked_span: Option<Rc<Span>>,
@@ -159,6 +165,7 @@ impl Default for App {
             search: Search::default(),
             edit_display_modes: EditDisplayModes::new(),
             edit_node_filters: EditNodeFilters::new(),
+            cached_node_spans: None,
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
@@ -248,6 +255,8 @@ impl eframe::App for App {
                 }
 
                 t.inspect(|t| t.stop());
+                #[cfg(feature = "profiling")]
+                profiling::GLOBAL_PROFILER.increment_frame_count();
             });
     }
 }
@@ -357,6 +366,7 @@ impl App {
 
         self.spans_to_display = structured_mode_transformation(&self.raw_data, mode)?;
         set_min_max_time(&self.spans_to_display);
+        self.cached_node_spans = None;
 
         Ok(())
     }
@@ -657,14 +667,28 @@ impl App {
     }
 
     fn draw_spans(&mut self, area: Rect, ui: &mut Ui) {
-        let mut node_spans: BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)> = BTreeMap::new();
-        for span in &self.spans_to_display {
-            node_spans
-                .entry(span.node.name.clone())
-                .or_insert((span.node.clone(), vec![]))
-                .1
-                .push(span.clone());
+        #[cfg(feature = "profiling")]
+        let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_spans");
+
+        if self.cached_node_spans.is_none() {
+            let mut node_spans_map: NodeSpansMap = BTreeMap::new();
+            for span in &self.spans_to_display {
+                node_spans_map
+                    .entry(span.node.name.clone())
+                    .or_insert((span.node.clone(), vec![]))
+                    .1
+                    .push(span.clone());
+            }
+            self.cached_node_spans = Some(node_spans_map);
         }
+
+        let node_spans_items: Vec<_> = self
+            .cached_node_spans
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
 
         let time_points_area = Rect::from_min_max(
             Pos2::new(area.min.x + self.layout.node_name_width, area.min.y),
@@ -748,7 +772,7 @@ impl App {
 
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
-                    for (node_name, (_node, spans)) in node_spans {
+                    for (node_name, (_node, spans)) in node_spans_items {
                         // TODO - filter spans before displaying, like display modes. It'd work better with search etc.
                         if let Some(current_node_filter) =
                             self.node_filters.get(self.current_node_filter_index)
@@ -904,6 +928,8 @@ impl App {
         span_height: f32,
         level: u64,
     ) {
+        #[cfg(feature = "profiling")]
+        let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_arranged_spans");
         for span in spans {
             let next_start_height = start_height
                 + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
@@ -919,8 +945,9 @@ impl App {
         span_height: f32,
         level: u64,
     ) {
-        // Only draw if this span is visible
         let visible_rect = ui.clip_rect();
+
+        // Check if the current span itself is visible and draw it
         if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
         {
             let start_x = span.display_start.get();
@@ -1005,14 +1032,23 @@ impl App {
             });
         }
 
-        // Always recurse into children
-        self.draw_arranged_spans(
-            span.display_children.borrow().as_slice(),
-            ui,
-            start_height + span_height + self.layout.span_margin,
-            span_height,
-            level + 1,
-        );
+        // Determine the starting height for children
+        let children_start_height = start_height + span_height + self.layout.span_margin;
+
+        // Only recurse if the children's starting area might be visible
+        // and if there are children to display.
+        if children_start_height <= visible_rect.max.y {
+            let display_children = span.display_children.borrow();
+            if !display_children.is_empty() {
+                self.draw_arranged_spans(
+                    display_children.as_slice(),
+                    ui,
+                    children_start_height,
+                    span_height,
+                    level + 1,
+                );
+            }
+        }
     }
 
     fn draw_clicked_span(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
@@ -1128,6 +1164,9 @@ struct SpanBoundingBox {
 
 /// Sets relative_display_pos for all spans and their children
 fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundingBox {
+    #[cfg(feature = "profiling")]
+    let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
+
     if input_spans.is_empty() {
         return SpanBoundingBox {
             start: 0.0,
