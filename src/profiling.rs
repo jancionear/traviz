@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc, Mutex,
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Default)]
 struct FunctionTiming {
     total_duration: Duration,
-    call_count: u32,
+    call_count: u64,
 }
 
 pub struct Profiler {
@@ -18,7 +18,7 @@ pub struct Profiler {
     frame_count: Arc<AtomicU32>,
 }
 
-pub static GLOBAL_PROFILER: Lazy<Profiler> = Lazy::new(Profiler::new);
+pub static GLOBAL_PROFILER: LazyLock<Profiler> = LazyLock::new(Profiler::new);
 
 impl Profiler {
     fn new() -> Self {

@@ -3356,7 +3356,6 @@ dependencies = [
  "chrono",
  "eframe",
  "hex",
- "once_cell",
  "opentelemetry-proto",
  "rfd",
  "serde_json",
