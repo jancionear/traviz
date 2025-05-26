@@ -410,10 +410,10 @@ impl EditNodeFilters {
 
     fn new_rule() -> NodeRule {
         NodeRule {
-            name: "Show my_node".to_string(),
+            name: "Rule 1".to_string(),
             condition: MatchCondition {
                 operator: MatchOperator::EqualTo,
-                value: "my_node".to_string(),
+                value: "something".to_string(),
             },
             visible: true,
         }

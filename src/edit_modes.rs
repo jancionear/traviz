@@ -94,31 +94,14 @@ impl EditDisplayModes {
     fn new_mode() -> StructuredMode {
         StructuredMode {
             name: "New Mode".to_string(),
-            span_rules: vec![SpanRule {
-                name: "Show apply_new_chunk".to_string(),
-                selector: SpanSelector {
-                    span_name_condition: MatchCondition {
-                        operator: MatchOperator::EqualTo,
-                        value: "apply_new_chunk".to_string(),
-                    },
-                    node_name_condition: MatchCondition::any(),
-                    attribute_conditions: Vec::new(),
-                },
-                decision: SpanDecision {
-                    visible: true,
-                    display_length: DisplayLength::Text,
-                    replace_name: String::new(),
-                    add_height_to_name: true,
-                    add_shard_id_to_name: true,
-                },
-            }],
+            span_rules: vec![Self::new_span_rule()],
             is_editable: true,
         }
     }
 
     fn new_span_rule() -> SpanRule {
         SpanRule {
-            name: "New Span Rule".to_string(),
+            name: "Rule 1".to_string(),
             selector: SpanSelector {
                 span_name_condition: MatchCondition {
                     operator: MatchOperator::EqualTo,
@@ -131,8 +114,8 @@ impl EditDisplayModes {
                 visible: true,
                 display_length: DisplayLength::Text,
                 replace_name: String::new(),
-                add_height_to_name: false,
-                add_shard_id_to_name: false,
+                add_height_to_name: true,
+                add_shard_id_to_name: true,
             },
         }
     }
