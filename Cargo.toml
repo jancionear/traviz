@@ -12,5 +12,9 @@ opentelemetry-proto = { version = "0.5.0", features = ["gen-tonic", "trace", "wi
 rfd = "0.15.2"
 serde_json = "1.0.138"
 
+[features]
+default = []
+profiling = []
+
 [profile.dev.package."*"]
 opt-level = 3

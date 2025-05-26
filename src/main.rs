@@ -23,6 +23,8 @@ mod analyze_dependency;
 mod analyze_span;
 mod analyze_utils;
 mod modes;
+#[cfg(feature = "profiling")]
+mod profiling;
 mod structured_modes;
 mod task_timer;
 mod types;
@@ -288,6 +290,8 @@ impl eframe::App for App {
                 }
 
                 t.inspect(|t| t.stop());
+                #[cfg(feature = "profiling")]
+                profiling::GLOBAL_PROFILER.increment_frame_count();
             });
     }
 }
@@ -730,6 +734,8 @@ impl App {
     }
 
     fn draw_spans(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
+        #[cfg(feature = "profiling")]
+        let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_spans");
         let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
 
         if !self.highlighted_spans.is_empty() {
@@ -1069,6 +1075,8 @@ impl App {
         level: u64,
         highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
+        #[cfg(feature = "profiling")]
+        let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_arranged_spans");
         for span in spans {
             let next_start_height = start_height
                 + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
@@ -1726,6 +1734,9 @@ struct SpanBoundingBox {
 
 /// Sets relative_display_pos for all spans and their children
 fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundingBox {
+    #[cfg(feature = "profiling")]
+    let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
+
     if input_spans.is_empty() {
         return SpanBoundingBox {
             start: 0.0,
