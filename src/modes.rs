@@ -17,14 +17,17 @@ use crate::types::{
     SpanDisplayConfig,
 };
 
+#[allow(unused)]
 pub type DisplayModeTransform = Box<dyn Fn(&[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>>>;
 
+#[allow(unused)]
 pub struct DisplayMode {
     pub name: String,
     /// Function which takes raw data and outputs spans that should be displayed.
     pub transformation: DisplayModeTransform,
 }
 
+#[allow(unused)]
 /// Get all of the built-in display modes.
 pub fn get_all_modes() -> Vec<DisplayMode> {
     // Include all structured modes in the display modes.
@@ -82,8 +85,8 @@ fn structured_mode_transformation_rek(
         modified_span.dont_collapse_this_span.set(true);
         modified_span.collapse_children.set(true);
     }
-    if decision.replace_name.is_some() {
-        modified_span.name = decision.replace_name.unwrap();
+    if !decision.replace_name.is_empty() {
+        modified_span.name = decision.replace_name;
     }
     if decision.add_height_to_name {
         add_height_to_name(&mut modified_span);
