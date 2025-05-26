@@ -1,4 +1,4 @@
-use eframe::egui::{self, Button, Modal, ScrollArea, Ui, Vec2, Widget};
+use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Vec2, Widget};
 
 use crate::edit_modes::{AddingOrEditing, EditDisplayModes, HIGHLIGHT_COLOR};
 use crate::structured_modes::{MatchCondition, MatchOperator};
@@ -366,7 +366,17 @@ impl EditNodeFilters {
         self.draw_short_separator(ui);
         ui.label("Decision");
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.current_rule.visible, "Visible");
+            ui.label("Visibility:");
+            ComboBox::new("node spans visible or hidden", "")
+                .selected_text(if self.current_rule.visible {
+                    "Show"
+                } else {
+                    "Hide"
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.current_rule.visible, true, "Show");
+                    ui.selectable_value(&mut self.current_rule.visible, false, "Hide");
+                });
         });
         self.draw_short_separator(ui);
         ui.horizontal(|ui| {

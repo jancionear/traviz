@@ -429,7 +429,25 @@ impl EditDisplayModes {
         }
         self.draw_short_separator(ui);
         ui.label("Decision");
-        ui.checkbox(&mut self.current_span_rule.decision.visible, "Visible");
+        ui.horizontal(|ui| {
+            ui.label("Visibility:");
+            ComboBox::new("span visible or hidden", "").selected_text(if self.current_span_rule.decision.visible {
+                "Show"
+            } else {
+                "Hide"
+            }).show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut self.current_span_rule.decision.visible,
+                    true,
+                    "Show",
+                );
+                ui.selectable_value(
+                    &mut self.current_span_rule.decision.visible,
+                    false,
+                    "Hide",
+                );
+            });
+        });
         ui.horizontal(|ui| {
             ui.label("Display length:");
             ComboBox::new("display length", "")
