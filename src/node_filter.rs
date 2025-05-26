@@ -153,7 +153,9 @@ impl EditNodeFilters {
                         self.editing_or_adding_filter = AddingOrEditing::Editing;
                         self.state = EditNodeFiltersState::EditingFilter;
                     } else {
-                        self.not_editable_message = "This filter is not editable! Builtin filters that are provided in traviz cannot be changed from the UI. You can clone this filter to create your own custom one and then edit the custom filter".to_string();
+                        self.not_editable_message =
+                        "This filter is not editable! Builtin filters that are provided in traviz cannot be changed from the UI. \
+                        You can clone this filter to create your own custom one and then edit the custom filter".to_string();
                         self.state = EditNodeFiltersState::NotEditableError;
                     }
                 }

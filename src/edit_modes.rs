@@ -185,7 +185,9 @@ impl EditDisplayModes {
                         self.editing_or_adding_mode = AddingOrEditing::Editing;
                         self.state = EditDisplayModesState::EditingMode;
                     } else {
-                        self.not_editable_message = "This mode is not editable! Builtin modes that are provided in traviz cannot be changed from the UI. You can clone this mode to create your own custom one and then edit the custom mode".to_string();
+                        self.not_editable_message = 
+                        "This mode is not editable! Builtin modes that are provided in traviz cannot be changed from the UI. \
+                        You can clone this mode to create your own custom one and then edit the custom mode".to_string();
                         self.state = EditDisplayModesState::NotEditableError;
                     }
                 }
