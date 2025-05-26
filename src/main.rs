@@ -90,12 +90,16 @@ fn screen_change_to_time_change(
     after - before
 }
 
+/// A map from a node name to the node itself and a list of its associated spans.
+/// Used for efficiently accessing all spans belonging to a particular node for rendering.
+type NodeSpansMap = BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)>;
+
 struct App {
     layout: Layout,
     timeline: Timeline,
     raw_data: Vec<ExportTraceServiceRequest>,
     spans_to_display: Vec<Rc<Span>>,
-
+    cached_node_spans: Option<NodeSpansMap>,
     timeline_bar1_time: TimePoint,
     timeline_bar2_time: TimePoint,
     clicked_span: Option<Rc<Span>>,
@@ -155,6 +159,7 @@ impl Default for App {
             applied_display_mode_name: current_display_mode_name.clone(),
             current_display_mode_name,
             search: Search::default(),
+            cached_node_spans: None,
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
@@ -304,6 +309,7 @@ impl App {
 
         self.spans_to_display = (*mode.transformation)(&self.raw_data)?;
         set_min_max_time(&self.spans_to_display);
+        self.cached_node_spans = None;
 
         Ok(())
     }
@@ -606,14 +612,26 @@ impl App {
     fn draw_spans(&mut self, area: Rect, ui: &mut Ui) {
         #[cfg(feature = "profiling")]
         let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_spans");
-        let mut node_spans: BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)> = BTreeMap::new();
-        for span in &self.spans_to_display {
-            node_spans
-                .entry(span.node.name.clone())
-                .or_insert((span.node.clone(), vec![]))
-                .1
-                .push(span.clone());
+
+        if self.cached_node_spans.is_none() {
+            let mut node_spans_map: NodeSpansMap = BTreeMap::new();
+            for span in &self.spans_to_display {
+                node_spans_map
+                    .entry(span.node.name.clone())
+                    .or_insert((span.node.clone(), vec![]))
+                    .1
+                    .push(span.clone());
+            }
+            self.cached_node_spans = Some(node_spans_map);
         }
+
+        let node_spans_items: Vec<_> = self
+            .cached_node_spans
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
 
         let time_points_area = Rect::from_min_max(
             Pos2::new(area.min.x + self.layout.node_name_width, area.min.y),
@@ -697,7 +715,7 @@ impl App {
 
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
-                    for (node_name, (_node, spans)) in node_spans {
+                    for (node_name, (_node, spans)) in node_spans_items {
                         let spans_in_range: Vec<Rc<Span>> = spans
                             .iter()
                             .filter(|s| {
@@ -864,7 +882,8 @@ impl App {
         let visible_rect = ui.clip_rect();
 
         // Check if the current span itself is visible and draw it
-        if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y {
+        if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
+        {
             let start_x = span.display_start.get();
             let end_x = start_x + span.display_length.get();
 
