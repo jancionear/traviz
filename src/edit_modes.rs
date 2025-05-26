@@ -232,7 +232,7 @@ impl EditDisplayModes {
 
         result
     }
-    
+
     fn draw_delete_confirmation(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
         ui.label("Are you sure you want to delete this mode?");
         self.draw_short_separator(ui);
@@ -322,6 +322,14 @@ impl EditDisplayModes {
                         self.selected_span_rule_idx = self.current_mode.span_rules.len() - 1;
                     }
                 }
+            }
+            if ui.button("Clone rule").clicked()
+                && self.selected_span_rule_idx < self.current_mode.span_rules.len()
+            {
+                let mut new_rule = self.current_mode.span_rules[self.selected_span_rule_idx].clone();
+                new_rule.name = format!("{} Clone", new_rule.name);
+                self.current_mode.span_rules.push(new_rule);
+                self.selected_span_rule_idx = self.current_mode.span_rules.len() - 1;
             }
             if ui.button("Move up").clicked() && self.selected_span_rule_idx > 0 {
                 self.current_mode

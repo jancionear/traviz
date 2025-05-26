@@ -304,6 +304,14 @@ impl EditNodeFilters {
                     }
                 }
             }
+            if ui.button("Clone rule").clicked()
+                && self.selected_rule_idx < self.current_filter.rules.len()
+            {
+                let mut new_rule = self.current_filter.rules[self.selected_rule_idx].clone();
+                new_rule.name = format!("{} Clone", new_rule.name);
+                self.current_filter.rules.push(new_rule);
+                self.selected_rule_idx = self.current_filter.rules.len() - 1;
+            }
             if ui.button("Move up").clicked() && self.selected_rule_idx > 0 {
                 self.current_filter
                     .rules
