@@ -516,7 +516,7 @@ impl App {
             let time_str = time_point_to_utc_string(cur_time);
             ui.painter().rect_filled(
                 Rect::from_min_size(Pos2::new(cur_pos, area.min.y), Vec2::new(2.0, 30.0)),
-                0.0, // rounding
+                0.0,
                 color,
             );
             let text_rect = ui.painter().text(
@@ -906,8 +906,8 @@ impl App {
                 Pos2::new(start_x, start_height),
                 Pos2::new(end_x, start_height + span_height),
             );
-            ui.painter().rect_filled(display_rect, 0.0, base_color);
-            ui.painter().rect_filled(time_rect, 0.0, time_color);
+            ui.painter().rect_filled(display_rect, 0, base_color);
+            ui.painter().rect_filled(time_rect, 0, time_color);
 
             if level == 0 {
                 // Top level spans get a color line at the top
