@@ -65,11 +65,17 @@ impl Profiler {
                 sorted_timings.sort_by_key(|(name, _)| name.clone());
 
                 for (name, timing) in sorted_timings {
+                    let avg_duration_ms = if timing.call_count > 0 {
+                        (timing.total_duration.as_secs_f64() * 1000.0) / timing.call_count as f64
+                    } else {
+                        0.0
+                    };
                     println!(
-                        "[PROFILE]  - {}: {:.3}ms ({} calls)",
+                        "[PROFILE]  - {}: {:.3}ms total ({} calls, avg {:.3}ms/call)",
                         name,
-                        timing.total_duration.as_secs_f32() * 1000.0,
-                        timing.call_count
+                        timing.total_duration.as_secs_f64() * 1000.0,
+                        timing.call_count,
+                        avg_duration_ms
                     );
                 }
 
