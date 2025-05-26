@@ -72,7 +72,6 @@ pub struct EditNodeFilters {
 pub enum EditNodeFiltersState {
     Closed,
     Open,
-    CloningFilter,
     DeleteFilterConfirmation,
     NotEditableError,
     EditingFilter,
@@ -120,7 +119,6 @@ impl EditNodeFilters {
             match self.state {
                 EditNodeFiltersState::Closed => unreachable!(),
                 EditNodeFiltersState::Open => result = self.draw_open(ui, ctx),
-                EditNodeFiltersState::CloningFilter => self.draw_cloning_filter(ui, ctx),
                 EditNodeFiltersState::DeleteFilterConfirmation => {
                     self.draw_delete_confirmation(ui, ctx)
                 }
@@ -189,8 +187,8 @@ impl EditNodeFilters {
                 let mut new_filter = self.filters[self.selected_filter_idx].clone();
                 new_filter.name = format!("{} Clone", new_filter.name);
                 new_filter.is_editable = true;
-                self.state = EditNodeFiltersState::CloningFilter;
-                self.current_filter = new_filter;
+                self.filters.push(new_filter);
+                self.selected_filter_idx = self.filters.len() - 1;
             }
             if ui.button("Delete Filter").clicked() {
                 if let Some(filter) = self.filters.get(self.selected_filter_idx) {
@@ -218,26 +216,6 @@ impl EditNodeFilters {
         });
 
         result
-    }
-
-    fn draw_cloning_filter(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
-        ui.label("Clone Filter");
-        self.draw_short_separator(ui);
-
-        ui.horizontal(|ui| {
-            ui.label("Filter Name:");
-            ui.text_edit_singleline(&mut self.current_filter.name);
-        });
-
-        self.draw_short_separator(ui);
-        if ui.button("Clone").clicked() {
-            self.filters.push(self.current_filter.clone());
-            self.selected_filter_idx = self.filters.len() - 1;
-            self.state = EditNodeFiltersState::Open;
-        }
-        if ui.button("Cancel").clicked() {
-            self.state = EditNodeFiltersState::Open;
-        }
     }
 
     fn draw_delete_confirmation(&mut self, ui: &mut Ui, _ctx: &egui::Context) {

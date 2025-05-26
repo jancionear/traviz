@@ -26,7 +26,6 @@ pub struct EditDisplayModes {
 enum EditDisplayModesState {
     Closed,
     Opened,
-    CloningMode,
     DeleteModeConfirmation,
     NotEditableError,
     EditingMode,
@@ -80,7 +79,6 @@ impl EditDisplayModes {
             match self.state {
                 EditDisplayModesState::Closed => unreachable!(),
                 EditDisplayModesState::Opened => result = self.draw_opened(ui, ctx),
-                EditDisplayModesState::CloningMode => self.draw_cloning_mode(ui, ctx),
                 EditDisplayModesState::DeleteModeConfirmation => {
                     self.draw_delete_confirmation(ui, ctx)
                 }
@@ -204,8 +202,8 @@ impl EditDisplayModes {
                 let mut new_mode = self.all_modes[self.selected_mode_idx].clone();
                 new_mode.name = format!("{} Clone", new_mode.name);
                 new_mode.is_editable = true;
-                self.state = EditDisplayModesState::CloningMode;
-                self.current_mode = new_mode;
+                self.all_modes.push(new_mode);
+                self.selected_mode_idx = self.all_modes.len() - 1;
             }
             if ui.button("Delete Mode").clicked() {
                 if let Some(mode) = self.all_modes.get(self.selected_mode_idx) {
@@ -234,27 +232,7 @@ impl EditDisplayModes {
 
         result
     }
-
-    fn draw_cloning_mode(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
-        ui.label("Clone Mode");
-        self.draw_short_separator(ui);
-
-        ui.horizontal(|ui| {
-            ui.label("Mode Name:");
-            ui.text_edit_singleline(&mut self.current_mode.name);
-        });
-
-        self.draw_short_separator(ui);
-        if ui.button("Clone").clicked() {
-            self.all_modes.push(self.current_mode.clone());
-            self.selected_mode_idx = self.all_modes.len() - 1;
-            self.state = EditDisplayModesState::Opened;
-        }
-        if ui.button("Cancel").clicked() {
-            self.state = EditDisplayModesState::Opened;
-        }
-    }
-
+    
     fn draw_delete_confirmation(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
         ui.label("Are you sure you want to delete this mode?");
         self.draw_short_separator(ui);
