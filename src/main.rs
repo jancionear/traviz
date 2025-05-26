@@ -219,12 +219,10 @@ impl eframe::App for App {
 
                 self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
 
-                if let Some(new_display_modes) = self.edit_display_modes.draw(
-                    ui,
-                    ctx,
-                    window_width - 100.0,
-                    window_height - 100.0,
-                ) {
+                if let Some(new_display_modes) =
+                    self.edit_display_modes
+                        .draw(ctx, window_width - 100.0, window_height - 100.0)
+                {
                     self.display_modes = new_display_modes;
                     if self.current_display_mode_index >= self.display_modes.len() {
                         self.current_display_mode_index = 0;
@@ -234,12 +232,10 @@ impl eframe::App for App {
                     }
                 }
 
-                if let Some(new_node_filters) = self.edit_node_filters.draw(
-                    ui,
-                    ctx,
-                    window_width - 100.0,
-                    window_height - 100.0,
-                ) {
+                if let Some(new_node_filters) =
+                    self.edit_node_filters
+                        .draw(ctx, window_width - 100.0, window_height - 100.0)
+                {
                     self.node_filters = new_node_filters;
                     if self.current_node_filter_index >= self.node_filters.len() {
                         self.current_node_filter_index = 0;

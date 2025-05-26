@@ -63,7 +63,6 @@ impl EditDisplayModes {
 
     pub fn draw(
         &mut self,
-        _ui: &mut Ui,
         ctx: &egui::Context,
         max_width: f32,
         max_height: f32,
