@@ -331,15 +331,15 @@ impl EditDisplayModes {
             if ui.button("Move up").clicked() && self.selected_span_rule_idx > 0 {
                 self.current_mode
                     .span_rules
-                    .swap(self.selected_mode_idx, self.selected_mode_idx - 1);
+                    .swap(self.selected_span_rule_idx, self.selected_span_rule_idx - 1);
                 self.selected_span_rule_idx -= 1;
             }
             if ui.button("Move down").clicked()
-                && self.selected_span_rule_idx < self.current_mode.span_rules.len() - 1
+                && self.selected_span_rule_idx + 1 < self.current_mode.span_rules.len()
             {
                 self.current_mode
                     .span_rules
-                    .swap(self.selected_mode_idx, self.selected_mode_idx + 1);
+                    .swap(self.selected_span_rule_idx, self.selected_span_rule_idx + 1);
                 self.selected_span_rule_idx += 1;
             }
         });

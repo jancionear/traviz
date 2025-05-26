@@ -149,13 +149,13 @@ impl EditNodeFilters {
                 if let Some(filter) = self.filters.get(self.selected_filter_idx) {
                     if filter.is_editable {
                         self.current_filter = filter.clone();
-                    self.selected_rule_idx = 0;
-                    self.editing_or_adding_filter = AddingOrEditing::Editing;
-                    self.state = EditNodeFiltersState::EditingFilter;
+                        self.selected_rule_idx = 0;
+                        self.editing_or_adding_filter = AddingOrEditing::Editing;
+                        self.state = EditNodeFiltersState::EditingFilter;
                     } else {
                         self.not_editable_message = "This filter is not editable! Builtin filters that are provided in traviz cannot be changed from the UI. You can clone this filter to create your own custom one and then edit the custom filter".to_string();
+                        self.state = EditNodeFiltersState::NotEditableError;
                     }
-                    
                 }
             }
             if ui.button("Clone Filter").clicked() {
@@ -286,20 +286,20 @@ impl EditNodeFilters {
                 self.current_filter.rules.remove(self.selected_rule_idx);
                 if self.selected_rule_idx >= self.current_filter.rules.len() {
                     if self.current_filter.rules.is_empty() {
-                        self.selected_filter_idx = 0;
+                        self.selected_rule_idx = 0;
                     } else {
-                        self.selected_filter_idx = self.current_filter.rules.len() - 1;
+                        self.selected_rule_idx = self.current_filter.rules.len() - 1;
                     }
                 }
             }
             if ui.button("Move up").clicked() && self.selected_rule_idx > 0 {
                 self.current_filter
                     .rules
-                    .swap(self.selected_filter_idx, self.selected_filter_idx - 1);
-                self.selected_filter_idx -= 1;
+                    .swap(self.selected_rule_idx, self.selected_rule_idx - 1);
+                self.selected_rule_idx -= 1;
             }
             if ui.button("Move down").clicked()
-                && self.selected_rule_idx < self.current_filter.rules.len() - 1
+                && self.selected_rule_idx + 1 < self.current_filter.rules.len()
             {
                 self.current_filter
                     .rules
