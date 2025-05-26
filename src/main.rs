@@ -110,12 +110,18 @@ fn screen_change_to_time_change(
     after - before
 }
 
+type NodeSpans = (Rc<Node>, Vec<Rc<Span>>);
+/// A map from a node name to the node itself and a list of its associated spans.
+type NodeSpansMap = BTreeMap<String, NodeSpans>;
+/// Same as [NodeSpansMap] but in vector of pairs.
+type NodeSpansVec = Vec<(String, NodeSpans)>;
+
 struct App {
     layout: Layout,
     timeline: Timeline,
     raw_data: Vec<ExportTraceServiceRequest>,
     spans_to_display: Vec<Rc<Span>>,
-
+    cached_node_spans: Option<NodeSpansMap>,
     timeline_bar1_time: TimePoint,
     timeline_bar2_time: TimePoint,
     clicked_span: Option<Rc<Span>>,
@@ -215,6 +221,7 @@ impl Default for App {
             highlighted_spans: Vec::new(),
             clicked_arrow_info: None,
             hovered_arrow_key: None,
+            cached_node_spans: None,
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
@@ -434,6 +441,7 @@ impl App {
         self.spans_to_display = (*mode.transformation)(&self.raw_data)?;
         set_min_max_time(&self.spans_to_display);
         self.applied_display_mode_name = self.current_display_mode_name.clone();
+        self.cached_node_spans = None;
 
         Ok(())
     }
@@ -736,8 +744,8 @@ impl App {
     fn draw_spans(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
         #[cfg(feature = "profiling")]
         let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_spans");
-        let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
 
+        let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
         if !self.highlighted_spans.is_empty() {
             // This block ensures that if any spans are highlighted, their complete hierarchical context
             // (i.e., their root span from the `all_spans_for_analysis` list) is included for drawing.
@@ -775,17 +783,43 @@ impl App {
             }
         }
 
-        let spans_to_process = final_spans_for_drawing_owned
+        let spans_to_render = final_spans_for_drawing_owned
             .as_ref()
             .unwrap_or(&self.spans_to_display);
 
-        let mut node_spans: BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)> = BTreeMap::new();
-        for span_ref in spans_to_process {
-            node_spans
-                .entry(span_ref.node.name.clone())
-                .or_insert((span_ref.node.clone(), vec![]))
-                .1
-                .push(span_ref.clone());
+        let node_spans_items_for_loop: NodeSpansVec;
+
+        if final_spans_for_drawing_owned.is_some() {
+            // Highlights are active and modified the span list, build a temporary map
+            let mut temp_map_for_highlight: NodeSpansMap = BTreeMap::new();
+            for span_ref in spans_to_render {
+                temp_map_for_highlight
+                    .entry(span_ref.node.name.clone())
+                    .or_insert((span_ref.node.clone(), vec![]))
+                    .1
+                    .push(span_ref.clone());
+            }
+            node_spans_items_for_loop = temp_map_for_highlight.into_iter().collect();
+        } else {
+            // No active highlights modifying the list, or no highlights at all. Use cache.
+            if self.cached_node_spans.is_none() {
+                let mut node_spans_map: NodeSpansMap = BTreeMap::new();
+                for span in &self.spans_to_display {
+                    node_spans_map
+                        .entry(span.node.name.clone())
+                        .or_insert((span.node.clone(), vec![]))
+                        .1
+                        .push(span.clone());
+                }
+                self.cached_node_spans = Some(node_spans_map);
+            }
+            node_spans_items_for_loop = self
+                .cached_node_spans
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
         }
 
         let time_points_area = Rect::from_min_max(
@@ -808,7 +842,7 @@ impl App {
             time_points_area,
             Color32::from_gray(240),
             ui,
-            spans_to_process,
+            spans_to_render,
         );
 
         let under_time_points_area =
@@ -822,7 +856,7 @@ impl App {
             ),
         );
 
-        if spans_to_process.is_empty() {
+        if spans_to_render.is_empty() {
             ui.put(
                 Rect::from_center_size(under_time_points_area.center(), Vec2::new(200.0, 200.0)),
                 Label::new("No spans to display.\nOpen a file or change filters."),
@@ -870,7 +904,6 @@ impl App {
 
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
-                    // Create a mapping from span_id to (node_name, y-position) for dependency arrows
                     let mut span_positions: HashMap<Vec<u8>, f32> = HashMap::new();
 
                     let highlighted_span_ids_set: HashSet<Vec<u8>> =
@@ -883,7 +916,7 @@ impl App {
                             HashSet::new()
                         };
 
-                    for (node_name, (_node, spans)) in &node_spans {
+                    for (node_name, (_node, spans)) in node_spans_items_for_loop {
                         let spans_in_range: Vec<Rc<Span>> = spans
                             .iter()
                             .filter(|s| {
@@ -1077,35 +1110,42 @@ impl App {
     ) {
         #[cfg(feature = "profiling")]
         let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_arranged_spans");
-        for span in spans {
-            let next_start_height = start_height
-                + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
 
-            // Check if the span itself is within the visible vertical area before drawing
-            if next_start_height <= ui.clip_rect().max.y
-                && (next_start_height + span_height) >= ui.clip_rect().min.y
+        for span_rc in spans {
+            let current_span_draw_y = start_height
+                + span_rc.parent_height_offset.get() as f32
+                    * (span_height + self.layout.span_margin);
+
+            if current_span_draw_y <= ui.clip_rect().max.y
+                && (current_span_draw_y + span_height) >= ui.clip_rect().min.y
             {
                 self.draw_arranged_span(
-                    span,
+                    span_rc,
                     ui,
-                    next_start_height,
+                    current_span_draw_y,
                     span_height,
                     level,
                     highlighted_span_ids,
                 );
             }
 
-            // Recurse for children. The children's drawing function will also check visibility.
-            // The height for children starts after this span and its margin.
-            let children_start_height = next_start_height + span_height + self.layout.span_margin;
-            self.draw_arranged_spans(
-                span.display_children.borrow().as_slice(),
-                ui,
-                children_start_height,
-                span_height,
-                level + 1,
-                highlighted_span_ids,
-            );
+            // Recurse for children, applying culling if the entire children's block is off-screen.
+            let children_block_start_y =
+                current_span_draw_y + span_height + self.layout.span_margin;
+
+            if children_block_start_y <= ui.clip_rect().max.y {
+                let display_children = span_rc.display_children.borrow();
+                if !display_children.is_empty() {
+                    self.draw_arranged_spans(
+                        display_children.as_slice(),
+                        ui,
+                        children_block_start_y,
+                        span_height,
+                        level + 1,
+                        highlighted_span_ids,
+                    );
+                }
+            }
         }
     }
 
@@ -1119,9 +1159,9 @@ impl App {
         highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
         let is_highlighted = highlighted_span_ids.contains(&span.span_id);
-
-        // Only draw if this span is visible
         let visible_rect = ui.clip_rect();
+
+        // Check if the current span itself is visible and draw it
         if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
         {
             let start_x = span.display_start.get();
