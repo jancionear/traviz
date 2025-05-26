@@ -510,7 +510,7 @@ impl App {
             let time_str = time_point_to_utc_string(cur_time);
             ui.painter().rect_filled(
                 Rect::from_min_size(Pos2::new(cur_pos, area.min.y), Vec2::new(2.0, 30.0)),
-                0.0,
+                0.0, // rounding
                 color,
             );
             let text_rect = ui.painter().text(
@@ -861,10 +861,10 @@ impl App {
         span_height: f32,
         level: u64,
     ) {
-        // Only draw if this span is visible
         let visible_rect = ui.clip_rect();
-        if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
-        {
+
+        // Check if the current span itself is visible and draw it
+        if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y {
             let start_x = span.display_start.get();
             let end_x = start_x + span.display_length.get();
 
@@ -887,8 +887,8 @@ impl App {
                 Pos2::new(start_x, start_height),
                 Pos2::new(end_x, start_height + span_height),
             );
-            ui.painter().rect_filled(display_rect, 0, base_color);
-            ui.painter().rect_filled(time_rect, 0, time_color);
+            ui.painter().rect_filled(display_rect, 0.0, base_color);
+            ui.painter().rect_filled(time_rect, 0.0, time_color);
 
             if level == 0 {
                 // Top level spans get a color line at the top
@@ -947,14 +947,23 @@ impl App {
             });
         }
 
-        // Always recurse into children
-        self.draw_arranged_spans(
-            span.display_children.borrow().as_slice(),
-            ui,
-            start_height + span_height + self.layout.span_margin,
-            span_height,
-            level + 1,
-        );
+        // Determine the starting height for children
+        let children_start_height = start_height + span_height + self.layout.span_margin;
+
+        // Only recurse if the children's starting area might be visible
+        // and if there are children to display.
+        if children_start_height <= visible_rect.max.y {
+            let display_children = span.display_children.borrow();
+            if !display_children.is_empty() {
+                self.draw_arranged_spans(
+                    display_children.as_slice(),
+                    ui,
+                    children_start_height,
+                    span_height,
+                    level + 1,
+                );
+            }
+        }
     }
 
     fn draw_clicked_span(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
