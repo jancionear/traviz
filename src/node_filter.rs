@@ -1,4 +1,4 @@
-use eframe::egui::{self, Button, Modal, ScrollArea, Ui, Widget};
+use eframe::egui::{self, Button, Modal, ScrollArea, Ui, Vec2, Widget};
 
 use crate::edit_modes::{AddingOrEditing, EditDisplayModes, HIGHLIGHT_COLOR};
 use crate::structured_modes::{MatchCondition, MatchOperator};
@@ -31,6 +31,18 @@ impl NodeFilter {
         }
     }
 
+    pub fn show_none() -> NodeFilter {
+        NodeFilter {
+            name: "Show none".to_string(),
+            rules: vec![NodeRule {
+                name: "Show none".to_string(),
+                condition: MatchCondition::any(),
+                visible: false,
+            }],
+            is_editable: false,
+        }
+    }
+
     pub fn should_show_span(&self, node_name: &str) -> bool {
         for rule in &self.rules {
             if rule.condition.matches(node_name) {
@@ -53,6 +65,7 @@ pub struct EditNodeFilters {
     editing_or_adding_filter: AddingOrEditing,
     editing_or_adding_rule: AddingOrEditing,
     not_editable_message: String,
+    max_scrollarea_size: Vec2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +92,7 @@ impl EditNodeFilters {
             editing_or_adding_filter: AddingOrEditing::Adding,
             editing_or_adding_rule: AddingOrEditing::Adding,
             not_editable_message: String::new(),
+            max_scrollarea_size: Vec2::new(800.0, 600.0),
         }
     }
 
@@ -99,6 +113,7 @@ impl EditNodeFilters {
 
         let mut result = None;
         self.max_width = max_width;
+        self.max_scrollarea_size = Vec2::new(max_width, max_height - 200.0);
         Modal::new("edit node filters".into()).show(ctx, |ui| {
             ui.set_max_width(max_width);
             ui.set_max_height(max_height);
@@ -119,24 +134,35 @@ impl EditNodeFilters {
     }
 
     fn draw_open(&mut self, ui: &mut Ui, _ctx: &egui::Context) -> Option<Vec<NodeFilter>> {
-        ui.label("Node filters");
-        ScrollArea::vertical()
-            .id_salt("node filters")
-            .show(ui, |ui| {
-                for (index, filter) in self.filters.iter().enumerate() {
-                    let button = if self.selected_filter_idx == index {
-                        Button::new(filter.name.clone()).fill(HIGHLIGHT_COLOR)
-                    } else {
-                        Button::new(filter.name.clone())
-                    };
-                    if button.ui(ui).clicked() {
-                        self.selected_filter_idx = index;
+        ui.label("Edit node filters");
+        self.draw_short_separator(ui);
+        ui.label("Filters");
+        ui.allocate_ui(self.max_scrollarea_size, |ui| {
+            ScrollArea::vertical()
+                .id_salt("node filters")
+                .show(ui, |ui| {
+                    for (index, filter) in self.filters.iter().enumerate() {
+                        let filter_name = if filter.is_editable {
+                            filter.name.clone()
+                        } else {
+                            format!("{} (builtin)", filter.name)
+                        };
+
+                        let button = if self.selected_filter_idx == index {
+                            Button::new(filter_name).fill(HIGHLIGHT_COLOR)
+                        } else {
+                            Button::new(filter_name)
+                        };
+                        if button.ui(ui).clicked() {
+                            self.selected_filter_idx = index;
+                        }
                     }
-                }
-            });
+                });
+        });
 
         self.draw_short_separator(ui);
 
+        ui.label("Actions");
         ui.horizontal(|ui| {
             if ui.button("New Filter").clicked() {
                 self.current_filter = Self::new_filter();
@@ -248,40 +274,47 @@ impl EditNodeFilters {
             ui.label("Filter Name:");
             ui.text_edit_singleline(&mut self.current_filter.name);
         });
+        self.draw_short_separator(ui);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label("Filter Rules");
-                ScrollArea::vertical()
-                    .id_salt("filter rules")
-                    .show(ui, |ui| {
-                        for (index, rule) in self.current_filter.rules.iter().enumerate() {
-                            let button = if self.selected_rule_idx == index {
-                                Button::new(rule.name.to_string()).fill(HIGHLIGHT_COLOR)
-                            } else {
-                                Button::new(rule.name.to_string())
-                            };
-                            if button.ui(ui).clicked() {
-                                self.selected_rule_idx = index;
+                ui.label("Filter rules");
+                ui.allocate_ui(self.max_scrollarea_size, |ui| {
+                    ScrollArea::vertical()
+                        .id_salt("filter rules")
+                        .show(ui, |ui| {
+                            for (index, rule) in self.current_filter.rules.iter().enumerate() {
+                                let button = if self.selected_rule_idx == index {
+                                    Button::new(rule.name.to_string()).fill(HIGHLIGHT_COLOR)
+                                } else {
+                                    Button::new(rule.name.to_string())
+                                };
+                                if button.ui(ui).clicked() {
+                                    self.selected_rule_idx = index;
+                                }
                             }
-                        }
-                    });
+                            if self.current_filter.rules.is_empty() {
+                                ui.label("<empty>");
+                            }
+                        });
+                });
             });
         });
         self.draw_short_separator(ui);
+        ui.label("Actions");
         ui.horizontal(|ui| {
             if ui.button("New Rule").clicked() {
                 self.current_rule = Self::new_rule();
                 self.state = EditNodeFiltersState::EditingFilterRule;
                 self.editing_or_adding_rule = AddingOrEditing::Adding;
             };
-            if ui.button("Edit").clicked() {
+            if ui.button("Edit Rule").clicked() {
                 if let Some(rule) = self.current_filter.rules.get(self.selected_rule_idx) {
                     self.current_rule = rule.clone();
                     self.state = EditNodeFiltersState::EditingFilterRule;
                     self.editing_or_adding_rule = AddingOrEditing::Editing;
                 }
             }
-            if ui.button("Delete").clicked()
+            if ui.button("Delete Rule").clicked()
                 && self.selected_rule_idx < self.current_filter.rules.len()
             {
                 self.current_filter.rules.remove(self.selected_rule_idx);

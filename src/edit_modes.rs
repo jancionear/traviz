@@ -1,4 +1,4 @@
-use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Widget};
+use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Vec2, Widget};
 
 use crate::structured_modes::{
     MatchCondition, MatchOperator, SpanDecision, SpanRule, SpanSelector, StructuredMode,
@@ -18,8 +18,8 @@ pub struct EditDisplayModes {
     selected_span_rule_idx: usize,
     current_span_rule: SpanRule,
     max_width: f32,
-    max_height: f32,
     not_editable_message: String,
+    max_scrollarea_size: Vec2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,8 +51,8 @@ impl EditDisplayModes {
             selected_span_rule_idx: 0,
             current_span_rule: Self::new_span_rule(),
             max_width: 800.0,
-            max_height: 600.0,
             not_editable_message: String::new(),
+            max_scrollarea_size: Vec2::new(800.0, 400.0),
         }
     }
 
@@ -72,7 +72,7 @@ impl EditDisplayModes {
         }
 
         self.max_width = max_width;
-        self.max_height = max_height;
+        self.max_scrollarea_size = Vec2::new(max_width, max_height - 200.0);
         let mut result = None;
         Modal::new("edit display modes".into()).show(ctx, |ui| {
             ui.set_max_width(max_width);
@@ -151,23 +151,32 @@ impl EditDisplayModes {
         self.draw_short_separator(ui);
 
         ui.label("Modes");
+        ui.allocate_ui(self.max_scrollarea_size, |ui| {
         ScrollArea::vertical()
             .id_salt("display modes")
             .show(ui, |ui| {
                 for (index, mode) in self.all_modes.iter().enumerate() {
-                    let button = if self.selected_mode_idx == index {
-                        Button::new(mode.name.clone()).fill(HIGHLIGHT_COLOR)
+                    let mode_name = if mode.is_editable {
+                        mode.name.clone()
                     } else {
-                        Button::new(mode.name.clone())
+                        format!("{} (builtin)", mode.name)
+                    };
+
+                    let button = if self.selected_mode_idx == index {
+                        Button::new(mode_name).fill(HIGHLIGHT_COLOR)
+                    } else {
+                        Button::new(mode_name)
                     };
                     if button.ui(ui).clicked() {
                         self.selected_mode_idx = index;
                     }
                 }
             });
+        });
 
         self.draw_short_separator(ui);
 
+        ui.label("Actions");
         ui.horizontal(|ui| {
             if ui.button("New Mode").clicked() {
                 let new_mode = Self::new_mode();
@@ -280,9 +289,11 @@ impl EditDisplayModes {
             ui.label("Mode Name:");
             ui.text_edit_singleline(&mut self.current_mode.name);
         });
+        self.draw_short_separator(ui);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label("Span Rules");
+                ui.label("Span rules");
+                ui.allocate_ui(self.max_scrollarea_size, |ui| {
                 ScrollArea::vertical().id_salt("span rules").show(ui, |ui| {
                     for (index, rule) in self.current_mode.span_rules.iter().enumerate() {
                         let button = if self.selected_span_rule_idx == index {
@@ -294,17 +305,22 @@ impl EditDisplayModes {
                             self.selected_span_rule_idx = index;
                         }
                     }
+                    if self.current_mode.span_rules.is_empty() {
+                        ui.label("<empty>");
+                    }
                 });
+            });
             });
         });
         self.draw_short_separator(ui);
+        ui.label("Actions");
         ui.horizontal(|ui| {
-            if ui.button("New Span Rule").clicked() {
+            if ui.button("New rule").clicked() {
                 self.current_span_rule = Self::new_span_rule();
                 self.state = EditDisplayModesState::EditingSpanRule;
                 self.editing_or_adding_rule = AddingOrEditing::Adding;
             };
-            if ui.button("Edit").clicked() {
+            if ui.button("Edit rule").clicked() {
                 if let Some(span_rule) = self
                     .current_mode
                     .span_rules
@@ -315,7 +331,7 @@ impl EditDisplayModes {
                     self.editing_or_adding_rule = AddingOrEditing::Editing;
                 }
             }
-            if ui.button("Delete").clicked()
+            if ui.button("Delete rule").clicked()
                 && self.selected_span_rule_idx < self.current_mode.span_rules.len()
             {
                 self.current_mode

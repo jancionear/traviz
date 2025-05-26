@@ -160,7 +160,7 @@ impl Default for App {
             include_children_events: true,
             display_modes: structured_modes::get_all_structured_modes(),
             current_display_mode_index: 0,
-            node_filters: vec![NodeFilter::show_all()],
+            node_filters: vec![NodeFilter::show_all(), NodeFilter::show_none()],
             current_node_filter_index: 0,
             search: Search::default(),
             edit_display_modes: EditDisplayModes::new(),
