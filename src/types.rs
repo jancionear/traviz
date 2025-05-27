@@ -1,9 +1,12 @@
 #![allow(unused)]
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::rc::Rc;
 
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
+
+pub const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 
 /// Seconds since epoch
 /// TODO: make nicer, f64 isn't great for this
@@ -23,6 +26,7 @@ pub type HeightLevel = u64;
 #[derive(Debug, Clone)]
 pub struct Span {
     pub name: String,
+    pub original_name: String,
     pub span_id: Vec<u8>,
     pub trace_id: Vec<u8>,
     pub parent_span_id: Vec<u8>,
@@ -47,6 +51,20 @@ pub struct Span {
     pub display_start: Cell<f32>,
     pub display_length: Cell<f32>,
     pub time_display_length: Cell<f32>,
+}
+
+impl Span {
+    pub fn is_ancestor_or_self(&self, target_span_id: &Vec<u8>) -> bool {
+        if self.span_id == *target_span_id {
+            return true;
+        }
+        for child in self.children.borrow().iter() {
+            if child.is_ancestor_or_self(target_span_id) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -180,4 +198,20 @@ pub fn stringify_attributes(attributes: &BTreeMap<String, Option<Value>>) -> Str
     }
     s.push('}');
     s
+}
+
+/// Identifies a node (by its name) or the entire set of nodes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NodeIdentifier {
+    Node(String),
+    AllNodes,
+}
+
+impl fmt::Display for NodeIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeIdentifier::Node(name) => write!(f, "{}", name),
+            NodeIdentifier::AllNodes => write!(f, "ALL NODES"),
+        }
+    }
 }

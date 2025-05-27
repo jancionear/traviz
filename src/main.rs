@@ -1,5 +1,6 @@
 use core::f32;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::Hash;
 use std::io::Read;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -11,6 +12,7 @@ use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
     ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
+use eframe::epaint::PathShape;
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -18,9 +20,12 @@ use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
 use types::{
     time_point_to_utc_string, value_to_text, DisplayLength, Event, HeightLevel, Node, Span,
-    TimePoint,
+    TimePoint, MILLISECONDS_PER_SECOND,
 };
 
+mod analyze_dependency;
+mod analyze_span;
+mod analyze_utils;
 mod edit_modes;
 mod modes;
 mod node_filter;
@@ -30,9 +35,12 @@ mod structured_modes;
 mod task_timer;
 mod types;
 
+use analyze_dependency::AnalyzeDependencyModal;
+use analyze_span::AnalyzeSpanModal;
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default(),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
         ..Default::default()
     };
     eframe::run_native("traviz", options, Box::new(|_cc| Ok(Box::<App>::default())))
@@ -61,6 +69,19 @@ impl Timeline {
         self.selected_start = min_time;
         self.selected_end = (self.selected_start + 1.0).min(max_time);
     }
+}
+
+/// Holds parameters for converting a `TimePoint` to a horizontal (X-axis) screen coordinate.
+///
+/// This struct encapsulates the current timeline view's mapping:
+/// - `selected_start_time` and `selected_end_time`: Define the time range currently visible or selected.
+/// - `visual_start_x` and `visual_end_x`: Define the corresponding pixel coordinates on the screen
+///   where this time range begins and ends.
+struct TimeToScreenParams {
+    selected_start_time: TimePoint,
+    selected_end_time: TimePoint,
+    visual_start_x: f32,
+    visual_end_x: f32,
 }
 
 fn screen_to_time(
@@ -94,9 +115,11 @@ fn screen_change_to_time_change(
     after - before
 }
 
+type NodeSpans = (Rc<Node>, Vec<Rc<Span>>);
 /// A map from a node name to the node itself and a list of its associated spans.
-/// Used for efficiently accessing all spans belonging to a particular node for rendering.
-type NodeSpansMap = BTreeMap<String, (Rc<Node>, Vec<Rc<Span>>)>;
+type NodeSpansMap = BTreeMap<String, NodeSpans>;
+/// Same as [NodeSpansMap] but in vector of pairs.
+type NodeSpansVec = Vec<(String, NodeSpans)>;
 
 struct App {
     layout: Layout,
@@ -118,6 +141,18 @@ struct App {
     search: Search,
     edit_display_modes: EditDisplayModes,
     edit_node_filters: EditNodeFilters,
+
+    // Analyze 'features'
+    all_spans_for_analysis: Vec<Rc<Span>>,
+    analyze_span_modal: AnalyzeSpanModal,
+    analyze_dependency_modal: AnalyzeDependencyModal,
+
+    // Spans highlighting
+    highlighted_spans: Vec<Rc<Span>>,
+
+    // Dependency arrow interactivity
+    clicked_arrow_info: Option<ArrowInfo>,
+    hovered_arrow_key: Option<ArrowKey>,
 }
 
 struct Layout {
@@ -129,6 +164,28 @@ struct Layout {
     span_margin: f32,
     spans_time_points_height: f32,
     middle_bar_height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ArrowKey {
+    source_span_id: Vec<u8>,
+    source_node_name: String,
+    target_span_id: Vec<u8>,
+    target_node_name: String,
+}
+
+#[derive(Clone, Debug)]
+struct ArrowInfo {
+    source_span_name: String,
+    source_node_name: String,
+    source_start_time: TimePoint,
+    source_end_time: TimePoint,
+    target_span_name: String,
+    target_node_name: String,
+    target_start_time: TimePoint,
+    target_end_time: TimePoint,
+    /// Duration of the link (target_start_time - source_end_time)
+    duration: TimePoint,
 }
 
 impl Default for App {
@@ -165,6 +222,12 @@ impl Default for App {
             search: Search::default(),
             edit_display_modes: EditDisplayModes::new(),
             edit_node_filters: EditNodeFilters::new(),
+            all_spans_for_analysis: vec![],
+            analyze_span_modal: AnalyzeSpanModal::default(),
+            analyze_dependency_modal: AnalyzeDependencyModal::new(),
+            highlighted_spans: Vec::new(),
+            clicked_arrow_info: None,
+            hovered_arrow_key: None,
             cached_node_spans: None,
         };
         res.timeline.init(1.0, 3.0);
@@ -222,7 +285,7 @@ impl eframe::App for App {
                     Pos2::new(0.0, middle_bar_area.max.y),
                     Vec2::new(window_width, window_height - middle_bar_area.max.y),
                 );
-                self.draw_spans(spans_area, ui);
+                self.draw_spans(spans_area, ui, ctx);
 
                 self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
 
@@ -248,6 +311,14 @@ impl eframe::App for App {
                         self.current_node_filter_index = 0;
                     }
                 }
+                self.draw_analyze_span_modal(ctx, window_width - 200.0, window_height - 200.0);
+
+                self.draw_analyze_dependency_modal(
+                    ctx,
+                    window_width - 200.0,
+                    window_height - 200.0,
+                );
+                self.draw_clicked_arrow_popup(ctx, window_width - 150.0, window_height - 150.0);
 
                 // If Ctrl+Q clicked, quit the app
                 if ctx.input(|i| i.key_down(Key::Q) && i.modifiers.ctrl) {
@@ -339,6 +410,44 @@ impl App {
             if ui.button("Edit node filters").clicked() {
                 self.edit_node_filters.open(self.node_filters.clone());
             }
+
+            // Analyze Span button, disabled if no spans are loaded
+            let has_spans = !self.spans_to_display.is_empty();
+            let analyze_button = ui.add_enabled(has_spans, Button::new("Analyze Span"));
+            if analyze_button.clicked() {
+                self.analyze_span_modal.open(&self.all_spans_for_analysis);
+            }
+
+            // Analyze Dependency button, disabled if no spans are loaded
+            let analyze_dep_button = ui.add_enabled(has_spans, Button::new("Analyze Dependency"));
+            if analyze_dep_button.clicked() {
+                self.analyze_dependency_modal
+                    .open(&self.all_spans_for_analysis);
+            }
+
+            // Clear Highlights button, only enabled when there are highlighted spans
+            let has_highlights = !self.highlighted_spans.is_empty();
+            ui.with_layout(
+                egui::Layout::right_to_left(eframe::emath::Align::RIGHT),
+                |ui| {
+                    let clear_button = ui.add_enabled(
+                        has_highlights,
+                        Button::new("Clear Highlights").fill(if has_highlights {
+                            Color32::from_rgb(220, 230, 245)
+                        } else {
+                            Color32::from_rgb(180, 180, 180)
+                        }),
+                    );
+                    if clear_button.clicked() {
+                        println!(
+                            "Clearing {} highlighted spans",
+                            self.highlighted_spans.len()
+                        );
+                        self.highlighted_spans.clear();
+                        self.analyze_dependency_modal.clear_focus();
+                    }
+                },
+            );
         });
     }
 
@@ -349,8 +458,31 @@ impl App {
 
         self.raw_data = parse_trace_file(&file_bytes)?;
 
-        self.apply_current_mode()?;
+        // Clear old data before loading new traces
+        self.all_spans_for_analysis.clear();
+        self.spans_to_display.clear();
+        self.clicked_span = None;
+        self.highlighted_spans.clear();
+        self.analyze_span_modal = AnalyzeSpanModal::default();
+        self.analyze_dependency_modal = AnalyzeDependencyModal::new();
 
+        let everything_mode = self
+            .display_modes
+            .iter()
+            .find(|m| m.name == "Everything")
+            .expect("'Everything' display mode not found during initialization.");
+
+        // Populate all_spans_for_analysis using the transformation from the "Everything" mode.
+        self.all_spans_for_analysis =
+            structured_mode_transformation(&self.raw_data, everything_mode)
+                .expect("Failed to transform data using 'Everything' mode.");
+
+        println!(
+            "Stored {} spans from 'Everything' mode for analysis after file load.",
+            self.all_spans_for_analysis.len()
+        );
+
+        self.apply_current_mode()?;
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
         self.set_timeline_end_bars_to_selected();
@@ -666,29 +798,86 @@ impl App {
         });
     }
 
-    fn draw_spans(&mut self, area: Rect, ui: &mut Ui) {
+    fn draw_spans(&mut self, area: Rect, ui: &mut Ui, ctx: &egui::Context) {
         #[cfg(feature = "profiling")]
         let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_spans");
 
-        if self.cached_node_spans.is_none() {
-            let mut node_spans_map: NodeSpansMap = BTreeMap::new();
-            for span in &self.spans_to_display {
-                node_spans_map
-                    .entry(span.node.name.clone())
-                    .or_insert((span.node.clone(), vec![]))
-                    .1
-                    .push(span.clone());
+        let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
+        if !self.highlighted_spans.is_empty() {
+            // This block ensures that if any spans are highlighted, their complete hierarchical context
+            // (i.e., their root span from the `all_spans_for_analysis` list) is included for drawing.
+            // A new vector is created only if highlighted spans necessitate adding roots not already
+            // present in the current display mode's spans.
+            let mut roots_to_add_if_highlighted: Vec<Rc<Span>> = Vec::new();
+            let mut current_display_plus_new_root_ids: HashSet<Vec<u8>> = self
+                .spans_to_display
+                .iter()
+                .map(|s| s.span_id.clone())
+                .collect();
+
+            for highlighted_span_rc in &self.highlighted_spans {
+                let mut containing_root_from_all_spans: Option<Rc<Span>> = None;
+                for root_candidate_from_all in &self.all_spans_for_analysis {
+                    if root_candidate_from_all.is_ancestor_or_self(&highlighted_span_rc.span_id) {
+                        containing_root_from_all_spans = Some(root_candidate_from_all.clone());
+                        break;
+                    }
+                }
+
+                if let Some(root_to_potentially_add) = containing_root_from_all_spans {
+                    if current_display_plus_new_root_ids
+                        .insert(root_to_potentially_add.span_id.clone())
+                    {
+                        roots_to_add_if_highlighted.push(root_to_potentially_add);
+                    }
+                }
             }
-            self.cached_node_spans = Some(node_spans_map);
+
+            if !roots_to_add_if_highlighted.is_empty() {
+                let mut temp_spans = self.spans_to_display.clone();
+                temp_spans.extend(roots_to_add_if_highlighted);
+                final_spans_for_drawing_owned = Some(temp_spans);
+            }
         }
 
-        let node_spans_items: Vec<_> = self
-            .cached_node_spans
+        let spans_to_render = final_spans_for_drawing_owned
             .as_ref()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+            .unwrap_or(&self.spans_to_display);
+
+        let node_spans_items_for_loop: NodeSpansVec;
+
+        if final_spans_for_drawing_owned.is_some() {
+            // Highlights are active and modified the span list, build a temporary map
+            let mut temp_map_for_highlight: NodeSpansMap = BTreeMap::new();
+            for span_ref in spans_to_render {
+                temp_map_for_highlight
+                    .entry(span_ref.node.name.clone())
+                    .or_insert((span_ref.node.clone(), vec![]))
+                    .1
+                    .push(span_ref.clone());
+            }
+            node_spans_items_for_loop = temp_map_for_highlight.into_iter().collect();
+        } else {
+            // No active highlights modifying the list, or no highlights at all. Use cache.
+            if self.cached_node_spans.is_none() {
+                let mut node_spans_map: NodeSpansMap = BTreeMap::new();
+                for span in &self.spans_to_display {
+                    node_spans_map
+                        .entry(span.node.name.clone())
+                        .or_insert((span.node.clone(), vec![]))
+                        .1
+                        .push(span.clone());
+                }
+                self.cached_node_spans = Some(node_spans_map);
+            }
+            node_spans_items_for_loop = self
+                .cached_node_spans
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+        }
 
         let time_points_area = Rect::from_min_max(
             Pos2::new(area.min.x + self.layout.node_name_width, area.min.y),
@@ -710,7 +899,7 @@ impl App {
             time_points_area,
             Color32::from_gray(240),
             ui,
-            &self.spans_to_display,
+            spans_to_render,
         );
 
         let under_time_points_area =
@@ -724,7 +913,7 @@ impl App {
             ),
         );
 
-        if self.spans_to_display.is_empty() {
+        if spans_to_render.is_empty() {
             ui.put(
                 Rect::from_center_size(under_time_points_area.center(), Vec2::new(200.0, 200.0)),
                 Label::new("No spans to display.\nOpen a file or change filters."),
@@ -772,7 +961,19 @@ impl App {
 
                     let mut cur_height = under_time_points_area.min.y - visible_rect.min.y;
 
-                    for (node_name, (_node, spans)) in node_spans_items {
+                    let mut span_positions: HashMap<Vec<u8>, f32> = HashMap::new();
+
+                    let highlighted_span_ids_set: HashSet<Vec<u8>> =
+                        if !self.highlighted_spans.is_empty() {
+                            self.highlighted_spans
+                                .iter()
+                                .map(|s| s.span_id.clone())
+                                .collect()
+                        } else {
+                            HashSet::new()
+                        };
+
+                    for (node_name, (_node, spans)) in node_spans_items_for_loop {
                         // TODO - filter spans before displaying, like display modes. It'd work better with search etc.
                         if let Some(current_node_filter) =
                             self.node_filters.get(self.current_node_filter_index)
@@ -795,9 +996,13 @@ impl App {
                             .cloned()
                             .collect();
 
-                        set_display_children(&spans_in_range);
-                        Self::set_display_params(
+                        set_display_children_with_highlights(
                             &spans_in_range,
+                            &self.highlighted_spans,
+                        );
+                        Self::set_display_params_with_highlights(
+                            &spans_in_range,
+                            &highlighted_span_ids_set,
                             self.timeline.selected_start,
                             self.timeline.selected_end,
                             under_time_points_area.min.x + self.layout.node_name_width,
@@ -805,8 +1010,26 @@ impl App {
                             ui,
                         );
                         let bbox = arrange_spans(&spans_in_range, true);
+
+                        if !highlighted_span_ids_set.is_empty() {
+                            self.collect_span_positions(
+                                &spans_in_range,
+                                cur_height,
+                                span_height,
+                                &mut span_positions,
+                                &highlighted_span_ids_set,
+                            );
+                        }
+
                         ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
-                        self.draw_arranged_spans(&spans_in_range, ui, cur_height, span_height, 0);
+                        self.draw_arranged_spans(
+                            &spans_in_range,
+                            ui,
+                            cur_height,
+                            span_height,
+                            0,
+                            &highlighted_span_ids_set,
+                        );
 
                         let next_height = cur_height
                             + bbox.height as f32 * (span_height + self.layout.span_margin);
@@ -830,6 +1053,18 @@ impl App {
                             Stroke::new(1.0, line_color),
                         );
                         cur_height = next_height;
+                    }
+
+                    // Draw dependency arrows if needed
+                    if !highlighted_span_ids_set.is_empty() {
+                        let time_params = TimeToScreenParams {
+                            selected_start_time: self.timeline.selected_start,
+                            selected_end_time: self.timeline.selected_end,
+                            visual_start_x: under_time_points_area.min.x
+                                + self.layout.node_name_width,
+                            visual_end_x: under_time_points_area.max.x,
+                        };
+                        self.draw_dependency_links(ui, &span_positions, &time_params, ctx);
                     }
 
                     ui.input(|i| {
@@ -881,8 +1116,9 @@ impl App {
         self.timeline_bar2_time += shift;
     }
 
-    fn set_display_params(
+    fn set_display_params_with_highlights(
         spans: &[Rc<Span>],
+        highlighted_span_ids: &HashSet<Vec<u8>>,
         start_time: TimePoint,
         end_time: TimePoint,
         start_pos: f32,
@@ -890,11 +1126,19 @@ impl App {
         ui: &Ui,
     ) {
         for span in spans {
+            let is_highlighted = highlighted_span_ids.contains(&span.span_id);
+
             let start_x = time_to_screen(span.start_time, start_pos, end_pos, start_time, end_time);
             let time_display_len =
                 time_to_screen(span.end_time, start_pos, end_pos, start_time, end_time) - start_x;
 
-            let display_len = match span.display_options.display_length {
+            let display_mode = if is_highlighted {
+                DisplayLength::Text
+            } else {
+                span.display_options.display_length
+            };
+
+            let display_len = match display_mode {
                 DisplayLength::Time => time_display_len,
                 DisplayLength::Text => {
                     let text_len = ui.fonts(|fs| {
@@ -909,8 +1153,9 @@ impl App {
             span.display_length.set(display_len);
             span.time_display_length.set(time_display_len);
 
-            Self::set_display_params(
+            Self::set_display_params_with_highlights(
                 span.display_children.borrow().as_slice(),
+                highlighted_span_ids,
                 start_time,
                 end_time,
                 start_pos,
@@ -927,13 +1172,46 @@ impl App {
         start_height: f32,
         span_height: f32,
         level: u64,
+        highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
         #[cfg(feature = "profiling")]
         let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("draw_arranged_spans");
-        for span in spans {
-            let next_start_height = start_height
-                + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin);
-            self.draw_arranged_span(span, ui, next_start_height, span_height, level);
+
+        for span_rc in spans {
+            let current_span_draw_y = start_height
+                + span_rc.parent_height_offset.get() as f32
+                    * (span_height + self.layout.span_margin);
+
+            if current_span_draw_y <= ui.clip_rect().max.y
+                && (current_span_draw_y + span_height) >= ui.clip_rect().min.y
+            {
+                self.draw_arranged_span(
+                    span_rc,
+                    ui,
+                    current_span_draw_y,
+                    span_height,
+                    level,
+                    highlighted_span_ids,
+                );
+            }
+
+            // Recurse for children, applying culling if the entire children's block is off-screen.
+            let children_block_start_y =
+                current_span_draw_y + span_height + self.layout.span_margin;
+
+            if children_block_start_y <= ui.clip_rect().max.y {
+                let display_children = span_rc.display_children.borrow();
+                if !display_children.is_empty() {
+                    self.draw_arranged_spans(
+                        display_children.as_slice(),
+                        ui,
+                        children_block_start_y,
+                        span_height,
+                        level + 1,
+                        highlighted_span_ids,
+                    );
+                }
+            }
         }
     }
 
@@ -944,14 +1222,17 @@ impl App {
         start_height: f32,
         span_height: f32,
         level: u64,
+        highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
+        let is_highlighted = highlighted_span_ids.contains(&span.span_id);
         let visible_rect = ui.clip_rect();
 
         // Check if the current span itself is visible and draw it
         if start_height <= visible_rect.max.y && (start_height + span_height) >= visible_rect.min.y
         {
             let start_x = span.display_start.get();
-            let end_x = start_x + span.display_length.get();
+            // Ensure display_length is not negative
+            let end_x = start_x + span.display_length.get().max(0.0);
 
             let name = if end_x - start_x > self.layout.span_name_threshold {
                 span.name.as_str()
@@ -959,12 +1240,25 @@ impl App {
                 ""
             };
 
-            let time_color = Color32::from_rgb(242, 176, 34);
-            let base_color = Color32::from_rgb(242, 242, 217);
+            // Set colors based on whether it's a highlighted span
+            let (time_color, base_color) = if is_highlighted {
+                // Use blue color for highlighted spans
+                (
+                    Color32::from_rgb(50, 150, 220),
+                    Color32::from_rgb(200, 220, 240),
+                )
+            } else {
+                // Use yellow/gold colors for normal spans
+                (
+                    Color32::from_rgb(242, 176, 34),
+                    Color32::from_rgb(242, 242, 217),
+                )
+            };
+
             let time_rect = Rect::from_min_max(
                 Pos2::new(start_x, start_height),
                 Pos2::new(
-                    start_x + span.time_display_length.get(),
+                    start_x + span.time_display_length.get().max(0.0),
                     start_height + span_height,
                 ),
             );
@@ -974,6 +1268,19 @@ impl App {
             );
             ui.painter().rect_filled(display_rect, 0, base_color);
             ui.painter().rect_filled(time_rect, 0, time_color);
+
+            // Highlighted spans also have a nice border around them
+            if is_highlighted {
+                let border_stroke = Stroke::new(2.5, Color32::from_rgb(0, 110, 230));
+                let points = vec![
+                    display_rect.min,
+                    Pos2::new(display_rect.max.x, display_rect.min.y),
+                    display_rect.max,
+                    Pos2::new(display_rect.min.x, display_rect.max.y),
+                ];
+                let border_shape = PathShape::closed_line(points, border_stroke);
+                ui.painter().add(border_shape);
+            }
 
             if level == 0 {
                 // Top level spans get a color line at the top
@@ -1006,7 +1313,7 @@ impl App {
                 ui.separator();
                 ui.label(format!(
                     "{:.3} ms",
-                    (span.end_time - span.start_time) * 1000.0
+                    (span.end_time - span.start_time) * MILLISECONDS_PER_SECOND
                 ));
                 ui.label(format!(
                     "{} - {}",
@@ -1030,24 +1337,6 @@ impl App {
                     num_events
                 ));
             });
-        }
-
-        // Determine the starting height for children
-        let children_start_height = start_height + span_height + self.layout.span_margin;
-
-        // Only recurse if the children's starting area might be visible
-        // and if there are children to display.
-        if children_start_height <= visible_rect.max.y {
-            let display_children = span.display_children.borrow();
-            if !display_children.is_empty() {
-                self.draw_arranged_spans(
-                    display_children.as_slice(),
-                    ui,
-                    children_start_height,
-                    span_height,
-                    level + 1,
-                );
-            }
         }
     }
 
@@ -1074,7 +1363,7 @@ impl App {
                 ui.label("");
                 ui.label(format!(
                     "{:.3} ms",
-                    (span.end_time - span.start_time) * 1000.0
+                    (span.end_time - span.start_time) * MILLISECONDS_PER_SECOND
                 ));
                 ui.label(format!(
                     "{} - {}",
@@ -1134,6 +1423,393 @@ impl App {
                 self.clicked_span = None;
             }
         })
+    }
+
+    fn draw_analyze_span_modal(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
+        if !self.analyze_span_modal.show {
+            return;
+        }
+        let modal = &mut self.analyze_span_modal;
+        modal.show_modal(ctx, max_width, max_height);
+    }
+
+    fn draw_analyze_dependency_modal(
+        &mut self,
+        ctx: &egui::Context,
+        max_width: f32,
+        max_height: f32,
+    ) {
+        if self.analyze_dependency_modal.show {
+            let modal = &mut self.analyze_dependency_modal;
+            modal.show_modal(ctx, max_width, max_height);
+            return;
+        }
+        // Modal is not set to be shown. Check if it was just closed by a selection.
+        if self.analyze_dependency_modal.focus_node.is_none() {
+            // If modal.show is false and focus_node is None, we do nothing further.
+            return;
+        }
+
+        let focus_node_name = self.analyze_dependency_modal.focus_node.take().unwrap();
+
+        // Clear previous highlights
+        self.highlighted_spans.clear();
+
+        // Get the analysis result
+        let analysis = match &self.analyze_dependency_modal.analysis_result {
+            Some(res) => res,
+            None => {
+                println!("No analysis result available!");
+                return;
+            }
+        };
+
+        let node_result = match analysis.per_node_results.get(&focus_node_name) {
+            Some(res) => res,
+            None => {
+                println!("Node result not found for: {}", focus_node_name);
+                return;
+            }
+        };
+
+        println!("Found node result with {} links", node_result.links.len());
+
+        let mut spans_to_highlight = Vec::new();
+        let mut unique_span_ids_to_highlight: HashSet<Vec<u8>> = HashSet::new();
+
+        // Iterate through links and directly collect unique spans
+        for (i, link) in node_result.links.iter().enumerate() {
+            // Process source spans
+            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
+                println!(
+                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
+                    i,
+                    s_idx + 1,
+                    link.source_spans.len(),
+                    source_s.original_name,
+                    source_s.node.name,
+                    hex::encode(&source_s.span_id)
+                );
+                if unique_span_ids_to_highlight.insert(source_s.span_id.clone()) {
+                    spans_to_highlight.push(source_s.clone());
+                }
+            }
+
+            // Process target span
+            let target_s = &link.target_span;
+            println!(
+                "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
+                i,
+                target_s.original_name,
+                target_s.node.name,
+                hex::encode(&target_s.span_id)
+            );
+            if unique_span_ids_to_highlight.insert(target_s.span_id.clone()) {
+                spans_to_highlight.push(target_s.clone());
+            }
+        }
+
+        // Assign the collected unique spans
+        self.highlighted_spans = spans_to_highlight;
+
+        // Adjust timeline to show these spans if needed
+        if self.highlighted_spans.is_empty() {
+            println!("No spans were highlighted!");
+            return;
+        }
+
+        let mut min_time = f64::MAX;
+        let mut max_time = f64::MIN;
+
+        for span in &self.highlighted_spans {
+            min_time = min_time.min(span.start_time);
+            max_time = max_time.max(span.end_time);
+        }
+
+        // Limit the range to 4 seconds maximum
+        let desired_max_time = min_time + 4.0;
+        if max_time > desired_max_time {
+            max_time = desired_max_time;
+        }
+
+        // Add padding around the time range
+        let padding = (max_time - min_time) * 0.2;
+        min_time -= padding;
+        max_time += padding;
+
+        // Update timeline if needed
+        if min_time < self.timeline.selected_start || max_time > self.timeline.selected_end {
+            self.timeline.selected_start = min_time;
+            self.timeline.selected_end = max_time;
+            self.set_timeline_end_bars_to_selected();
+        }
+    }
+
+    // Collect positions of spans in a node, including children
+    fn collect_span_positions(
+        &self,
+        spans: &[Rc<Span>],
+        start_height_param: f32,
+        span_height: f32,
+        positions: &mut HashMap<Vec<u8>, f32>,
+        highlighted_ids_to_store: &HashSet<Vec<u8>>,
+    ) {
+        for span in spans {
+            let y_pos = start_height_param
+                + span.parent_height_offset.get() as f32 * (span_height + self.layout.span_margin)
+                + span_height / 2.0;
+
+            // Only store position if this span's ID is in the highlighted set
+            if highlighted_ids_to_store.contains(&span.span_id) {
+                positions.insert(span.span_id.clone(), y_pos);
+            }
+
+            let children = span.display_children.borrow();
+            if !children.is_empty() {
+                let this_span_visual_top_y = start_height_param
+                    + span.parent_height_offset.get() as f32
+                        * (span_height + self.layout.span_margin);
+                let children_area_start_y =
+                    this_span_visual_top_y + span_height + self.layout.span_margin;
+
+                self.collect_span_positions(
+                    &children,
+                    children_area_start_y,
+                    span_height,
+                    positions,
+                    highlighted_ids_to_store,
+                );
+            }
+        }
+    }
+
+    /// Draws arrows between related spans.
+    fn draw_dependency_links(
+        &mut self,
+        ui: &mut Ui,
+        span_positions: &HashMap<Vec<u8>, f32>,
+        time_params: &TimeToScreenParams,
+        ctx: &egui::Context,
+    ) {
+        if self.highlighted_spans.is_empty() {
+            return;
+        }
+        let mut new_hovered_arrow_key = None;
+
+        // Determine the focused node from the highlighted spans
+        let focused_target_node_name = match self.highlighted_spans.first() {
+            Some(span) => span.node.name.clone(),
+            None => return,
+        };
+
+        let links_to_draw = match self
+            .analyze_dependency_modal
+            .get_links_for_node(&focused_target_node_name)
+        {
+            Some(links) => links,
+            None => return,
+        };
+
+        let arrow_color = Color32::from_rgb(50, 150, 220);
+        let base_arrow_stroke = Stroke::new(2.0, arrow_color);
+
+        for link in links_to_draw.iter() {
+            if link.source_spans.is_empty() {
+                continue;
+            }
+
+            let target_span = &link.target_span;
+
+            // Ensure target span y_center_on_screen is available
+            let target_y_center_on_screen = match span_positions.get(&target_span.span_id) {
+                Some(&y_center) => y_center,
+                None => continue, // Target span not found in positions, skip this link
+            };
+
+            // Calculate the x-coordinate for the arrow tip based on the target span's start time
+            let target_x_for_arrow_tip = time_to_screen(
+                target_span.start_time,
+                time_params.visual_start_x,
+                time_params.visual_end_x,
+                time_params.selected_start_time,
+                time_params.selected_end_time,
+            );
+            // The arrow points to the vertical center of the target span
+            let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
+
+            for source_span in &link.source_spans {
+                // Ensure source span y_center_on_screen is available
+                let source_y_center_on_screen = match span_positions.get(&source_span.span_id) {
+                    Some(&y_center) => y_center,
+                    None => continue, // Source span not found, skip this source
+                };
+
+                // Calculate the x-coordinate for the arrow origin based on the source span's end time
+                let source_x_for_arrow_origin = time_to_screen(
+                    source_span.end_time,
+                    time_params.visual_start_x,
+                    time_params.visual_end_x,
+                    time_params.selected_start_time,
+                    time_params.selected_end_time,
+                );
+                // The arrow originates from the vertical center of the source span
+                let from_pos = Pos2::new(source_x_for_arrow_origin, source_y_center_on_screen);
+
+                let distance_ms =
+                    (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
+
+                if distance_ms < 0.0 {
+                    // Ensure source ends before target starts
+                    continue;
+                }
+
+                let arrow_key = ArrowKey {
+                    source_span_id: source_span.span_id.clone(),
+                    source_node_name: source_span.node.name.clone(),
+                    target_span_id: target_span.span_id.clone(),
+                    target_node_name: target_span.node.name.clone(),
+                };
+
+                // Draw the arrow based on the hover state from the PREVIOUS frame
+                // (or the most recent state if multiple repaints happened quickly)
+                let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+
+                let arrow_interaction_result = draw_dependency_arrow(
+                    ui,
+                    from_pos,
+                    to_pos,
+                    base_arrow_stroke,
+                    format!("{:.2} ms", distance_ms),
+                    should_draw_highlighted,
+                    &arrow_key,
+                );
+
+                if arrow_interaction_result.is_precisely_hovered {
+                    // This arrow is being hovered in the current frame's input processing pass
+                    new_hovered_arrow_key = Some(arrow_key.clone());
+                }
+
+                if arrow_interaction_result.response.clicked() {
+                    self.clicked_arrow_info = Some(ArrowInfo {
+                        source_span_name: source_span.name.clone(),
+                        source_node_name: source_span.node.name.clone(),
+                        source_start_time: source_span.start_time,
+                        source_end_time: source_span.end_time,
+                        target_span_name: target_span.name.clone(),
+                        target_node_name: target_span.node.name.clone(),
+                        target_start_time: target_span.start_time,
+                        target_end_time: target_span.end_time,
+                        duration: target_span.start_time - source_span.end_time,
+                    });
+                }
+            }
+        }
+
+        // After checking all arrows, update the persistent hover state
+        // and request repaint if it changed.
+        if self.hovered_arrow_key != new_hovered_arrow_key {
+            self.hovered_arrow_key = new_hovered_arrow_key;
+            ctx.request_repaint();
+        }
+    }
+
+    fn draw_clicked_arrow_popup(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
+        if self.clicked_arrow_info.is_none() {
+            return;
+        }
+
+        let mut open = true;
+        let info = self.clicked_arrow_info.as_ref().unwrap().clone();
+
+        egui::Window::new("Dependency Link Information")
+            .id(egui::Id::new("clicked_arrow_modal_window")) // Unique ID for the window
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(max_width * 0.8);
+                ui.set_max_height(max_height * 0.6);
+
+                ui.vertical_centered(|ui| {
+                    ui.heading("Dependency Link Information"); // Already centered by vertical_centered
+                });
+                ui.add_space(5.0);
+                ui.separator();
+                ui.add_space(5.0);
+
+                egui::Grid::new("arrow_info_grid")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("Source Node:");
+                        ui.label(&info.source_node_name);
+                        ui.end_row();
+
+                        ui.strong("Source Span:");
+                        ui.label(&info.source_span_name);
+                        ui.end_row();
+
+                        ui.strong("Source Time:");
+                        ui.label(format!(
+                            "{} - {}",
+                            time_point_to_utc_string(info.source_start_time),
+                            time_point_to_utc_string(info.source_end_time)
+                        ));
+                        ui.end_row();
+
+                        ui.separator();
+                        ui.end_row();
+
+                        ui.strong("Target Node:");
+                        ui.label(&info.target_node_name);
+                        ui.end_row();
+
+                        ui.strong("Target Span:");
+                        ui.label(&info.target_span_name);
+                        ui.end_row();
+
+                        ui.strong("Target Time:");
+                        ui.label(format!(
+                            "{} - {}",
+                            time_point_to_utc_string(info.target_start_time),
+                            time_point_to_utc_string(info.target_end_time)
+                        ));
+                        ui.end_row();
+
+                        ui.separator();
+                        ui.end_row();
+
+                        ui.strong("Link Start Time:");
+                        ui.label(time_point_to_utc_string(info.source_end_time));
+                        ui.end_row();
+
+                        ui.strong("Link End Time:");
+                        ui.label(time_point_to_utc_string(info.target_start_time));
+                        ui.end_row();
+
+                        ui.strong("Link Duration:");
+                        ui.label(format!("{:.3} ms", info.duration * MILLISECONDS_PER_SECOND));
+                        ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.vertical_centered(|ui| {
+                    if ui.button("Close").clicked() {
+                        self.clicked_arrow_info = None;
+                    }
+                });
+            });
+
+        if !open {
+            self.clicked_arrow_info = None;
+        }
+
+        // Esc closes the popup
+        if ctx.input(|i| i.key_down(Key::Escape)) {
+            self.clicked_arrow_info = None;
+        }
     }
 }
 
@@ -1378,9 +2054,20 @@ fn get_time_dots(start_time: TimePoint, end_time: TimePoint) -> Vec<TimePoint> {
     dots
 }
 
-fn set_display_children(spans: &[Rc<Span>]) {
+fn set_display_children_with_highlights(spans: &[Rc<Span>], highlighted_spans: &[Rc<Span>]) {
+    // First, set dont_collapse_this_span for all highlighted spans
+    for span in highlighted_spans {
+        span.dont_collapse_this_span.set(true);
+    }
+
+    // Now run the regular set_display_children
     for s in spans {
         set_display_children_rec(s, false, &mut vec![]);
+    }
+
+    // After layout is done, reset the flags to avoid affecting future layouts
+    for span in highlighted_spans {
+        span.dont_collapse_this_span.set(false);
     }
 }
 
@@ -1427,6 +2114,141 @@ fn collect_produce_block_starts_with_nodes(spans: &[Rc<Span>]) -> Vec<(TimePoint
         result.extend(collect_produce_block_starts_with_nodes(children.as_slice()));
     }
     result
+}
+
+fn draw_dependency_arrow(
+    ui: &mut Ui,
+    from: Pos2,
+    to: Pos2,
+    base_stroke: Stroke,
+    label: String,
+    is_hovered: bool,
+    arrow_key: &ArrowKey,
+) -> ArrowInteractionOutput {
+    // Calculate the vector and its length
+    let vec = to - from;
+    let length = vec.length();
+
+    // If the arrow is too short, allocate a minimal response for its space and don't draw anything
+    if length < 0.001 {
+        return ArrowInteractionOutput {
+            response: ui.allocate_rect(Rect::from_min_max(from, to), Sense::hover()),
+            is_precisely_hovered: false,
+        };
+    }
+
+    // Normalize the vector for direction
+    let normalized = vec.normalized();
+
+    // Calculate the perpendicular (normal) vector for arrow heads and label placement
+    let normal = Vec2::new(-normalized.y, normalized.x);
+
+    // Draw the main line
+    let line_stroke = if is_hovered {
+        Stroke::new(base_stroke.width + 1.5, Color32::from_rgb(220, 240, 255))
+    } else {
+        base_stroke
+    };
+    ui.painter().line_segment([from, to], line_stroke);
+
+    // Arrow head size should be proportional to line length but capped
+    let arrow_size = (length * 0.1).clamp(6.0, 12.0);
+    let arrow_point = to - normalized * arrow_size;
+
+    // Draw arrow head with two lines
+    ui.painter()
+        .line_segment([to, arrow_point + normal * arrow_size * 0.5], line_stroke);
+    ui.painter()
+        .line_segment([to, arrow_point - normal * arrow_size * 0.5], line_stroke);
+
+    // Position the label at a fixed offset perpendicular to the line
+    let label_offset = normal * 15.0;
+    let label_pos = from + vec * 0.5 + label_offset;
+    let font_id = FontId::proportional(12.0);
+    let text_color = Color32::from_rgb(240, 240, 240);
+
+    // Measure text for background
+    let galley = ui.fonts(|fonts| fonts.layout_no_wrap(label.clone(), font_id.clone(), text_color));
+    let padding = Vec2::new(6.0, 4.0);
+    let text_rect = Rect::from_min_size(
+        label_pos - Vec2::new(galley.rect.width() / 2.0, galley.rect.height() / 2.0),
+        galley.rect.size() + padding,
+    );
+
+    // Draw text background for better visibility
+    ui.painter().rect_filled(
+        text_rect,
+        4.0,
+        Color32::from_rgba_premultiplied(30, 30, 30, 230),
+    );
+
+    // Draw the text
+    ui.painter()
+        .text(label_pos, Align2::CENTER_CENTER, label, font_id, text_color);
+
+    // Use a unique ID derived from the arrow_key to avoid conflicts
+    let interact_id = ui.id().with(arrow_key);
+
+    // Define the interactive area for the line itself
+    let hover_padding = base_stroke.width + 4.0;
+    let line_bounding_box = Rect::from_min_max(from.min(to), from.max(to));
+    let hoverable_line_rect = line_bounding_box.expand(hover_padding);
+
+    let interactive_rect = hoverable_line_rect;
+
+    let egui_response = ui.interact(interactive_rect, interact_id, Sense::click());
+
+    let mut is_precisely_hovered = false;
+    if egui_response.hovered() {
+        if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+            // Use the actual stroke width being drawn for precision check
+            let current_stroke_width = if is_hovered {
+                base_stroke.width + 1.5
+            } else {
+                base_stroke.width
+            };
+            // Check distance to the line segment (from -> to)
+            // Add a small buffer to the stroke width for easier hovering
+            let hover_threshold = current_stroke_width / 2.0 + 2.0;
+            if distance_sq_to_segment(mouse_pos, from, to) < hover_threshold * hover_threshold {
+                is_precisely_hovered = true;
+            }
+        }
+    }
+
+    ArrowInteractionOutput {
+        response: egui_response,
+        is_precisely_hovered,
+    }
+}
+
+/// Describes the interaction result for a drawn arrow, including precise hover detection.
+struct ArrowInteractionOutput {
+    /// The raw Egui response from interacting with the arrow's bounding box.
+    response: egui::Response,
+    /// True if the mouse pointer is close to the actual arrow line segment.
+    is_precisely_hovered: bool,
+}
+
+/// Calculates the square of the shortest distance from point `p` to the line segment `a`-`b`.
+fn distance_sq_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let l2 = a.distance_sq(b); // Squared length of the segment
+    if l2 == 0.0 {
+        return p.distance_sq(a); // a and b are the same point
+    }
+    // Consider the line extending the segment, parameterized as a + t * (b - a).
+    // Project point p onto this line.
+    // t = [(p - a) . (b - a)] / |b - a|^2
+    let t = ((p - a).dot(b - a)) / l2;
+    if t < 0.0 {
+        p.distance_sq(a) // Beyond the 'a' end of the segment
+    } else if t > 1.0 {
+        p.distance_sq(b) // Beyond the 'b' end of the segment
+    } else {
+        // Projection falls on the segment
+        let projection = a + (b - a) * t;
+        p.distance_sq(projection)
+    }
 }
 
 #[test]
