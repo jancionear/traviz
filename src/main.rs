@@ -1338,9 +1338,6 @@ impl App {
             return;
         }
 
-        // Should trigger a warning
-        let unused = 12;
-
         Modal::new("clicked span".into()).show(ctx, |ui| {
             ui.vertical(|ui| {
                 let span = self.clicked_span.as_ref().unwrap();
