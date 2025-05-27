@@ -1,3 +1,4 @@
+use crate::colors;
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
@@ -57,7 +58,7 @@ pub fn span_search_ui(
         ui.label(label);
         let text_edit = TextEdit::singleline(search_text)
             .hint_text(hint_text)
-            .text_color(Color32::DARK_GRAY)
+            .text_color(colors::DARK_GRAY)
             .desired_width(width);
         ui.add(text_edit);
     });

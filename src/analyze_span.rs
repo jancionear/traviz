@@ -3,10 +3,10 @@ use crate::analyze_utils::{
     draw_right_aligned_text_cell, process_spans_for_analysis, show_span_details, span_search_ui,
     span_selection_list_ui, Statistics,
 };
+use crate::colors;
 use crate::types::{NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
 use eframe::egui::{
-    Align, Button, Color32, Context, Grid, Label, Layout, Modal, RichText, ScrollArea, Sense, Ui,
-    Vec2,
+    Align, Button, Context, Grid, Label, Layout, Modal, RichText, ScrollArea, Sense, Ui, Vec2,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -115,7 +115,7 @@ impl AnalyzeSpanModal {
             cell_ui.with_layout(Layout::right_to_left(Align::Center), |inner_ui| {
                 let mut rich_text = RichText::new(value_str)
                     .monospace()
-                    .color(Color32::from_rgb(50, 150, 200));
+                    .color(colors::MILD_BLUE2);
                 if is_strong {
                     rich_text = rich_text.strong();
                 }
@@ -306,7 +306,7 @@ impl AnalyzeSpanModal {
                     ui.label(format!("Analysis of span: '{}'", result.span_name));
                 }
                 if let Some(message) = &self.analysis_summary_message {
-                    ui.colored_label(Color32::YELLOW, message);
+                    ui.colored_label(colors::YELLOW, message);
                 }
 
                 // Analysis results table header

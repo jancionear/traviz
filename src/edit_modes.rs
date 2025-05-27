@@ -1,11 +1,12 @@
 use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Vec2, Widget};
 
+use crate::colors;
 use crate::structured_modes::{
     MatchCondition, MatchOperator, SpanDecision, SpanRule, SpanSelector, StructuredMode,
 };
 use crate::types::DisplayLength;
 
-pub const HIGHLIGHT_COLOR: egui::Color32 = egui::Color32::from_rgb(51, 102, 153);
+pub const HIGHLIGHT_COLOR: egui::Color32 = colors::DARK_BLUE;
 
 pub struct EditDisplayModes {
     state: EditDisplayModesState,
