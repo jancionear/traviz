@@ -92,7 +92,7 @@ pub struct SpanDisplayConfig {
     pub display_length: DisplayLength,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayLength {
     /// Span is displayed from start time to end time, length is equal to length of the interval
     Time,

@@ -13,30 +13,30 @@ pub struct StructuredMode {
     /// For each span, the first rule that matches the span will be used to determine how to display it.
     /// If no rule matches, the span will not be visible.
     pub span_rules: Vec<SpanRule>,
-    /// Defines which nodes will be displayed.
-    /// If a node doesn't match any condition on this list, its spans will not be visible.
-    pub show_nodes: Vec<MatchCondition>,
+    /// Built-in modes (chain, everything, etc.) are not editable.
+    pub is_editable: bool,
 }
 
 /// A rule that defines how to display a span that matches the selector.
 #[derive(Debug, Clone)]
 pub struct SpanRule {
-    #[allow(unused)]
-    name: String,
+    pub name: String,
     /// A span that matches this selector
-    selector: SpanSelector,
+    pub selector: SpanSelector,
     /// Will be displayed like this
-    decision: SpanDecision,
+    pub decision: SpanDecision,
 }
 
 /// A selector used to determine whether a span matches a rule.
 #[derive(Debug, Clone)]
 pub struct SpanSelector {
     /// Span's name must match this condition
-    name_condition: MatchCondition,
+    pub span_name_condition: MatchCondition,
+    /// Node's name must match this condition
+    pub node_name_condition: MatchCondition,
     /// Span's attributes must match these conditions.
     /// If the attribute is not present, the span doesn't match the selector.
-    attribute_conditions: Vec<(String, MatchCondition)>,
+    pub attribute_conditions: Vec<(String, MatchCondition)>,
 }
 
 /// Defines how to display a span that matches some rule.
@@ -47,31 +47,41 @@ pub struct SpanDecision {
     /// Should the span's length be defined by time or length of the name text?
     pub display_length: DisplayLength,
     /// If a replacement name is provided, the span's name will be replaced with this name.
-    pub replace_name: Option<String>,
+    pub replace_name: String,
     /// Add height (e.g H=123) to the span's name, the height is read from the attributes.
     pub add_height_to_name: bool,
     /// Add shard id (e.g s=123) to the span's name, the shard id is read from the attributes.
     pub add_shard_id_to_name: bool,
 }
 
-#[allow(unused)]
 #[derive(Debug, Clone)]
-pub enum MatchCondition {
+pub struct MatchCondition {
+    pub operator: MatchOperator,
+    pub value: String,
+}
+
+#[allow(unused)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MatchOperator {
     /// Always matches
     Any,
     /// Never matches
     None,
     /// Matches if the value is equal to the given string
-    EqualTo(String),
+    EqualTo,
     /// Matches if the value is not equal to the given string
-    NotEqualTo(String),
+    NotEqualTo,
     /// Matches if the value contains the given substring
-    Contains(String),
+    Contains,
 }
 
 impl SpanSelector {
     pub fn matches(&self, span: &Span) -> bool {
-        if !self.name_condition.matches(&span.name) {
+        if !self.span_name_condition.matches(&span.name) {
+            return false;
+        }
+
+        if !self.node_name_condition.matches(&span.node.name) {
             return false;
         }
 
@@ -90,45 +100,39 @@ impl SpanSelector {
 }
 
 impl MatchCondition {
+    pub fn any() -> MatchCondition {
+        MatchCondition {
+            operator: MatchOperator::Any,
+            value: String::new(),
+        }
+    }
+
     pub fn matches(&self, value: &str) -> bool {
-        match self {
-            MatchCondition::Any => true,
-            MatchCondition::None => false,
-            MatchCondition::EqualTo(expected) => value == expected,
-            MatchCondition::NotEqualTo(expected) => value != expected,
-            MatchCondition::Contains(substring) => value.contains(substring),
+        match self.operator {
+            MatchOperator::Any => true,
+            MatchOperator::None => false,
+            MatchOperator::EqualTo => value == self.value,
+            MatchOperator::NotEqualTo => value != self.value,
+            MatchOperator::Contains => value.contains(self.value.as_str()),
         }
     }
 }
 
 impl StructuredMode {
     pub fn get_decision_for_span(&self, span: &Span) -> SpanDecision {
-        let hide_decision = SpanDecision {
-            visible: false,
-            display_length: DisplayLength::Time,
-            replace_name: None,
-            add_height_to_name: false,
-            add_shard_id_to_name: false,
-        };
-
-        let mut node_matched = false;
-        for node_condition in &self.show_nodes {
-            if node_condition.matches(&span.node.name) {
-                node_matched = true;
-                break;
-            }
-        }
-        if !node_matched {
-            return hide_decision;
-        }
-
         for rule in &self.span_rules {
             if rule.selector.matches(span) {
                 return rule.decision.clone();
             }
         }
 
-        hide_decision
+        SpanDecision {
+            visible: false,
+            display_length: DisplayLength::Time,
+            replace_name: String::new(),
+            add_height_to_name: false,
+            add_shard_id_to_name: false,
+        }
     }
 }
 
@@ -154,8 +158,9 @@ pub fn chain_structured_mode() -> StructuredMode {
             show_span("produce_optimistic_block_on_head"),
             show_span("validate_chunk_endorsement"),
             show_span("on_approval_message"),
+            show_span("send_chunk_endorsement"),
         ],
-        show_nodes: vec![MatchCondition::Any],
+        is_editable: false,
     }
 }
 
@@ -168,13 +173,17 @@ pub fn everything_structured_mode() -> StructuredMode {
             SpanRule {
                 name: "Shorter verify_chunk_endorsement".to_string(),
                 selector: SpanSelector {
-                    name_condition: MatchCondition::EqualTo("verify_chunk_endorsement".to_string()),
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "verify_chunk_endorsement".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
                     attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
                     display_length: DisplayLength::Time,
-                    replace_name: Some("VCE".to_string()),
+                    replace_name: "VCE".to_string(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
                 },
@@ -183,19 +192,20 @@ pub fn everything_structured_mode() -> StructuredMode {
             SpanRule {
                 name: "Show all".to_string(),
                 selector: SpanSelector {
-                    name_condition: MatchCondition::Any,
+                    span_name_condition: MatchCondition::any(),
+                    node_name_condition: MatchCondition::any(),
                     attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
                     display_length: DisplayLength::Time,
-                    replace_name: None,
+                    replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
                 },
             },
         ],
-        show_nodes: vec![MatchCondition::Any],
+        is_editable: false,
     }
 }
 
@@ -203,13 +213,17 @@ fn show_span(name: &str) -> SpanRule {
     SpanRule {
         name: format!("Show {}", name),
         selector: SpanSelector {
-            name_condition: MatchCondition::EqualTo(name.to_string()),
+            span_name_condition: MatchCondition {
+                operator: MatchOperator::EqualTo,
+                value: name.to_string(),
+            },
+            node_name_condition: MatchCondition::any(),
             attribute_conditions: vec![],
         },
         decision: SpanDecision {
             visible: true,
             display_length: DisplayLength::Text,
-            replace_name: None,
+            replace_name: String::new(),
             add_height_to_name: true,
             add_shard_id_to_name: true,
         },

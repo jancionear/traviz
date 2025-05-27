@@ -6,13 +6,17 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::Result;
+use edit_modes::EditDisplayModes;
 use eframe::egui::scroll_area::ScrollBarVisibility;
 use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
     ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
 use eframe::epaint::PathShape;
+use modes::structured_mode_transformation;
+use node_filter::{EditNodeFilters, NodeFilter};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
 use types::{
     time_point_to_utc_string, value_to_text, DisplayLength, Event, HeightLevel, Node, Span,
@@ -22,7 +26,9 @@ use types::{
 mod analyze_dependency;
 mod analyze_span;
 mod analyze_utils;
+mod edit_modes;
 mod modes;
+mod node_filter;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod structured_modes;
@@ -31,7 +37,6 @@ mod types;
 
 use analyze_dependency::AnalyzeDependencyModal;
 use analyze_span::AnalyzeSpanModal;
-use modes::{get_all_modes, DisplayMode};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -126,10 +131,16 @@ struct App {
     timeline_bar2_time: TimePoint,
     clicked_span: Option<Rc<Span>>,
     include_children_events: bool,
-    display_modes: Vec<DisplayMode>,
-    applied_display_mode_name: String,
-    current_display_mode_name: String,
+
+    display_modes: Vec<StructuredMode>,
+    current_display_mode_index: usize,
+
+    node_filters: Vec<NodeFilter>,
+    current_node_filter_index: usize,
+
     search: Search,
+    edit_display_modes: EditDisplayModes,
+    edit_node_filters: EditNodeFilters,
 
     // Analyze 'features'
     all_spans_for_analysis: Vec<Rc<Span>>,
@@ -179,13 +190,6 @@ struct ArrowInfo {
 
 impl Default for App {
     fn default() -> Self {
-        let display_modes = get_all_modes();
-        let current_display_mode_name = display_modes
-            .first()
-            .expect("There should be at least one display mode")
-            .name
-            .clone();
-
         let mut res = Self {
             layout: Layout {
                 top_bar_height: 30.0,
@@ -211,10 +215,13 @@ impl Default for App {
             timeline_bar2_time: 0.0,
             clicked_span: None,
             include_children_events: true,
-            display_modes,
-            applied_display_mode_name: current_display_mode_name.clone(),
-            current_display_mode_name,
+            display_modes: structured_modes::get_all_structured_modes(),
+            current_display_mode_index: 0,
+            node_filters: vec![NodeFilter::show_all(), NodeFilter::show_none()],
+            current_node_filter_index: 0,
             search: Search::default(),
+            edit_display_modes: EditDisplayModes::new(),
+            edit_node_filters: EditNodeFilters::new(),
             all_spans_for_analysis: vec![],
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
@@ -282,6 +289,28 @@ impl eframe::App for App {
 
                 self.draw_clicked_span(ctx, window_width - 100.0, window_height - 100.0);
 
+                if let Some(new_display_modes) =
+                    self.edit_display_modes
+                        .draw(ctx, window_width - 100.0, window_height - 100.0)
+                {
+                    self.display_modes = new_display_modes;
+                    if self.current_display_mode_index >= self.display_modes.len() {
+                        self.current_display_mode_index = 0;
+                    }
+                    if let Err(e) = self.apply_current_mode() {
+                        println!("Failed to apply display mode: {}", e);
+                    }
+                }
+
+                if let Some(new_node_filters) =
+                    self.edit_node_filters
+                        .draw(ctx, window_width - 100.0, window_height - 100.0)
+                {
+                    self.node_filters = new_node_filters;
+                    if self.current_node_filter_index >= self.node_filters.len() {
+                        self.current_node_filter_index = 0;
+                    }
+                }
                 self.draw_analyze_span_modal(ctx, window_width - 200.0, window_height - 200.0);
 
                 self.draw_analyze_dependency_modal(
@@ -334,23 +363,52 @@ impl App {
                 }
             }
 
+            let previous_display_mode_index = self.current_display_mode_index;
+            let current_mode_name = self
+                .display_modes
+                .get(self.current_display_mode_index)
+                .map_or("Deleted".to_string(), |mode| mode.name.clone());
             ComboBox::new("mode chooser", "")
-                .selected_text(format!("Display mode: {}", self.current_display_mode_name))
+                .selected_text(format!("Display mode: {}", current_mode_name))
                 .show_ui(ui, |ui| {
-                    for mode in &self.display_modes {
+                    for (i, mode) in self.display_modes.iter().enumerate() {
                         ui.selectable_value(
-                            &mut self.current_display_mode_name,
-                            mode.name.clone(),
+                            &mut self.current_display_mode_index,
+                            i,
                             mode.name.to_string(),
                         );
                     }
                 });
-            if self.current_display_mode_name != self.applied_display_mode_name {
+            if previous_display_mode_index != self.current_display_mode_index {
                 if let Err(e) = self.apply_current_mode() {
                     println!("Failed to apply display mode: {}", e);
                     // Go back to the previous mode
-                    self.current_display_mode_name = self.applied_display_mode_name.clone();
+                    self.current_display_mode_index = previous_display_mode_index;
                 }
+            }
+
+            let current_node_filter_name = self
+                .node_filters
+                .get(self.current_node_filter_index)
+                .map_or("Deleted".to_string(), |filter| filter.name.clone());
+            ComboBox::new("node filter chooser", "")
+                .selected_text(format!("Node filter: {}", current_node_filter_name))
+                .show_ui(ui, |ui| {
+                    for (i, filter) in self.node_filters.iter().enumerate() {
+                        ui.selectable_value(
+                            &mut self.current_node_filter_index,
+                            i,
+                            filter.name.to_string(),
+                        );
+                    }
+                });
+
+            if ui.button("Edit display modes").clicked() {
+                self.edit_display_modes.open(self.display_modes.clone());
+            }
+
+            if ui.button("Edit node filters").clicked() {
+                self.edit_node_filters.open(self.node_filters.clone());
             }
 
             // Analyze Span button, disabled if no spans are loaded
@@ -415,8 +473,9 @@ impl App {
             .expect("'Everything' display mode not found during initialization.");
 
         // Populate all_spans_for_analysis using the transformation from the "Everything" mode.
-        self.all_spans_for_analysis = (everything_mode.transformation)(&self.raw_data)
-            .expect("Failed to transform data using 'Everything' mode.");
+        self.all_spans_for_analysis =
+            structured_mode_transformation(&self.raw_data, everything_mode)
+                .expect("Failed to transform data using 'Everything' mode.");
 
         println!(
             "Stored {} spans from 'Everything' mode for analysis after file load.",
@@ -434,13 +493,11 @@ impl App {
     fn apply_current_mode(&mut self) -> Result<()> {
         let mode = self
             .display_modes
-            .iter()
-            .find(|m| m.name == self.current_display_mode_name)
-            .expect("Display mode not found");
+            .get(self.current_display_mode_index)
+            .ok_or_else(|| anyhow::anyhow!("Invalid display mode index"))?;
 
-        self.spans_to_display = (*mode.transformation)(&self.raw_data)?;
+        self.spans_to_display = structured_mode_transformation(&self.raw_data, mode)?;
         set_min_max_time(&self.spans_to_display);
-        self.applied_display_mode_name = self.current_display_mode_name.clone();
         self.cached_node_spans = None;
 
         Ok(())
@@ -917,6 +974,15 @@ impl App {
                         };
 
                     for (node_name, (_node, spans)) in node_spans_items_for_loop {
+                        // TODO - filter spans before displaying, like display modes. It'd work better with search etc.
+                        if let Some(current_node_filter) =
+                            self.node_filters.get(self.current_node_filter_index)
+                        {
+                            if !current_node_filter.should_show_span(&node_name) {
+                                continue;
+                            }
+                        }
+
                         let spans_in_range: Vec<Rc<Span>> = spans
                             .iter()
                             .filter(|s| {
