@@ -3,10 +3,11 @@ use crate::analyze_utils::{
     draw_right_aligned_text_cell, process_spans_for_analysis, span_search_ui,
     span_selection_list_ui, Statistics,
 };
+use crate::colors;
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
-    self, Button, Color32, ComboBox, Grid, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
+    self, Button, ComboBox, Grid, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
 };
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -645,7 +646,7 @@ impl AnalyzeDependencyModal {
                 // Display error message if any
                 if let Some(error) = &self.error_message {
                     ui.horizontal(|ui| {
-                        ui.colored_label(Color32::from_rgb(220, 50, 50), error);
+                        ui.colored_label(colors::MILD_RED, error);
                     });
                 }
 
@@ -770,7 +771,7 @@ impl AnalyzeDependencyModal {
                                                     col_widths[2],
                                                     &format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND),
                                                     false,
-                                                    Some(Color32::from_rgb(50, 150, 200))
+                                                    Some(colors::MILD_BLUE2)
                                                 );
                                                 // Max
                                                 draw_right_aligned_text_cell(
@@ -778,7 +779,7 @@ impl AnalyzeDependencyModal {
                                                     col_widths[3],
                                                     &format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND),
                                                     false,
-                                                    Some(Color32::from_rgb(50, 150, 200))
+                                                    Some(colors::MILD_BLUE2)
                                                 );
                                                 // Mean
                                                 draw_right_aligned_text_cell(

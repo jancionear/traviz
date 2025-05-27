@@ -26,6 +26,7 @@ use types::{
 mod analyze_dependency;
 mod analyze_span;
 mod analyze_utils;
+mod colors;
 mod edit_modes;
 mod modes;
 mod node_filter;
@@ -433,9 +434,9 @@ impl App {
                     let clear_button = ui.add_enabled(
                         has_highlights,
                         Button::new("Clear Highlights").fill(if has_highlights {
-                            Color32::from_rgb(220, 230, 245)
+                            colors::VERY_LIGHT_BLUE
                         } else {
-                            Color32::from_rgb(180, 180, 180)
+                            colors::GRAY_180
                         }),
                     );
                     if clear_button.clicked() {
@@ -509,7 +510,7 @@ impl App {
         let background_button = ui.put(
             area,
             Button::new("")
-                .fill(Color32::from_rgb(55, 127, 153))
+                .fill(colors::MILD_BLUE)
                 .sense(Sense::click_and_drag()),
         );
 
@@ -566,7 +567,7 @@ impl App {
             middle_rect,
             Button::new("")
                 .sense(Sense::drag())
-                .fill(Color32::from_rgb(134, 202, 227)),
+                .fill(colors::LIGHT_BLUE),
         );
 
         // Dragging end of selected area should adjust the selected area
@@ -659,7 +660,7 @@ impl App {
             self.timeline.visible_end,
             self.timeline.absolute_start,
             area,
-            Color32::from_rgb(50, 50, 50),
+            colors::GRAY_50,
             ui,
             &self.spans_to_display,
         );
@@ -737,7 +738,7 @@ impl App {
                         Pos2::new(x, area.max.y),
                         Pos2::new(x, area.max.y - marker_height),
                     ],
-                    Stroke::new(2.0, Color32::RED),
+                    Stroke::new(2.0, colors::RED),
                 );
 
                 // Remove "neard:" prefix if present
@@ -751,7 +752,7 @@ impl App {
                     Align2::LEFT_TOP,
                     short_node_name,
                     small_font_id,
-                    Color32::RED,
+                    colors::RED,
                 );
 
                 // Draw indicator for produce_block
@@ -759,11 +760,8 @@ impl App {
                     Pos2::new(area.min.x - 15.0, area.max.y - 16.0),
                     Vec2::new(90.0, 18.0),
                 );
-                ui.painter().rect_filled(
-                    label_rect,
-                    3.0,
-                    Color32::from_rgba_unmultiplied(60, 0, 0, 0),
-                );
+                ui.painter()
+                    .rect_filled(label_rect, 3.0, colors::TRANSPARENT);
                 let font_id =
                     FontId::proportional(0.7 * egui::TextStyle::Body.resolve(ui.style()).size);
                 ui.painter().text(
@@ -778,7 +776,7 @@ impl App {
     }
 
     fn draw_middle_bar(&mut self, area: Rect, ui: &mut Ui) {
-        ui.painter().rect_filled(area, 0.0, Color32::from_gray(10));
+        ui.painter().rect_filled(area, 0.0, colors::GRAY_10);
 
         let top_margin = 5;
         let ui_area = Rect::from_min_max(
@@ -788,7 +786,7 @@ impl App {
         ui.allocate_new_ui(UiBuilder::new().max_rect(ui_area), |ui| {
             ui.horizontal(|ui| {
                 TextEdit::singleline(&mut self.search.search_term)
-                    .background_color(Color32::from_gray(40))
+                    .background_color(colors::GRAY_40)
                     .ui(ui);
                 ui.button("Search").clicked();
                 ui.button("Next").clicked();
@@ -890,14 +888,14 @@ impl App {
         ui.painter().rect_filled(
             Rect::from_min_max(area.min, time_points_area.max),
             0.0,
-            Color32::from_rgb(60, 60, 70),
+            colors::BLUE_DARK_GRAY,
         );
         self.draw_time_points(
             self.timeline.selected_start,
             self.timeline.selected_end,
             self.timeline.absolute_start,
             time_points_area,
-            Color32::from_gray(240),
+            colors::GRAY_240,
             ui,
             spans_to_render,
         );
@@ -930,13 +928,13 @@ impl App {
                 .animated(false)
                 .show_viewport(ui, |ui, visible_rect| {
                     ui.style_mut().spacing.button_padding = Vec2::ZERO;
-                    ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
+                    ui.style_mut().visuals.override_text_color = Some(colors::BLACK);
 
                     // TODO - a button for background feels hacky x.x
                     let background_button = ui.put(
                         under_time_points_area,
                         Button::new("")
-                            .fill(Color32::from_rgb(30, 30, 30))
+                            .fill(colors::GRAY_30)
                             .sense(Sense::click_and_drag()),
                     );
                     if background_button.dragged_by(PointerButton::Secondary) {
@@ -949,12 +947,12 @@ impl App {
                     }
 
                     let span_height = ui.fonts(|fs| {
-                        fs.layout_no_wrap("A".to_string(), FontId::default(), Color32::BLACK)
+                        fs.layout_no_wrap("A".to_string(), FontId::default(), colors::BLACK)
                             .rect
                             .height()
                     }) * 1.2;
                     self.layout.span_name_threshold = ui.fonts(|fs| {
-                        fs.layout_no_wrap("...".to_string(), FontId::default(), Color32::BLACK)
+                        fs.layout_no_wrap("...".to_string(), FontId::default(), colors::BLACK)
                             .rect
                             .width()
                     });
@@ -1021,7 +1019,7 @@ impl App {
                             );
                         }
 
-                        ui.style_mut().visuals.override_text_color = Some(Color32::BLACK);
+                        ui.style_mut().visuals.override_text_color = Some(colors::BLACK);
                         self.draw_arranged_spans(
                             &spans_in_range,
                             ui,
@@ -1033,16 +1031,16 @@ impl App {
 
                         let next_height = cur_height
                             + bbox.height as f32 * (span_height + self.layout.span_margin);
-                        ui.style_mut().visuals.override_text_color = Some(Color32::WHITE);
+                        ui.style_mut().visuals.override_text_color = Some(colors::WHITE);
 
-                        let line_color = Color32::from_gray(230);
+                        let line_color = colors::GRAY_230;
                         ui.put(
                             Rect::from_min_max(
                                 Pos2::new(node_names_area.min.x, cur_height),
                                 Pos2::new(node_names_area.max.x, next_height),
                             ),
                             Button::new(node_name)
-                                .fill(Color32::from_rgb(10, 10, 20))
+                                .fill(colors::ALMOST_BLACK)
                                 .stroke(Stroke::new(1.0, line_color)),
                         );
                         ui.painter().line(
@@ -1142,7 +1140,7 @@ impl App {
                 DisplayLength::Time => time_display_len,
                 DisplayLength::Text => {
                     let text_len = ui.fonts(|fs| {
-                        fs.layout_no_wrap(span.name.to_string(), FontId::default(), Color32::BLACK)
+                        fs.layout_no_wrap(span.name.to_string(), FontId::default(), colors::BLACK)
                             .rect
                             .width()
                     });
@@ -1243,16 +1241,10 @@ impl App {
             // Set colors based on whether it's a highlighted span
             let (time_color, base_color) = if is_highlighted {
                 // Use blue color for highlighted spans
-                (
-                    Color32::from_rgb(50, 150, 220),
-                    Color32::from_rgb(200, 220, 240),
-                )
+                (colors::INTENSE_BLUE, colors::VERY_LIGHT_BLUE2)
             } else {
                 // Use yellow/gold colors for normal spans
-                (
-                    Color32::from_rgb(242, 176, 34),
-                    Color32::from_rgb(242, 242, 217),
-                )
+                (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
             };
 
             let time_rect = Rect::from_min_max(
@@ -1271,7 +1263,7 @@ impl App {
 
             // Highlighted spans also have a nice border around them
             if is_highlighted {
-                let border_stroke = Stroke::new(2.5, Color32::from_rgb(0, 110, 230));
+                let border_stroke = Stroke::new(2.5, colors::INTENSE_BLUE2);
                 let points = vec![
                     display_rect.min,
                     Pos2::new(display_rect.max.x, display_rect.min.y),
@@ -1289,7 +1281,7 @@ impl App {
                         Pos2::new(start_x, start_height),
                         Pos2::new(end_x, start_height),
                     ],
-                    Stroke::new(2.0, Color32::from_rgb(255, 51, 0)),
+                    Stroke::new(2.0, colors::INTENSE_RED),
                 );
             }
 
@@ -1297,7 +1289,7 @@ impl App {
                 display_rect,
                 Button::new(name)
                     .truncate()
-                    .fill(Color32::from_rgba_unmultiplied(242, 176, 34, 1)),
+                    .fill(colors::transparent_yellow()),
             );
 
             if span_button.clicked_by(PointerButton::Primary) {
@@ -1610,7 +1602,7 @@ impl App {
             None => return,
         };
 
-        let arrow_color = Color32::from_rgb(50, 150, 220);
+        let arrow_color = colors::INTENSE_BLUE;
         let base_arrow_stroke = Stroke::new(2.0, arrow_color);
 
         for link in links_to_draw.iter() {
@@ -2145,7 +2137,7 @@ fn draw_dependency_arrow(
 
     // Draw the main line
     let line_stroke = if is_hovered {
-        Stroke::new(base_stroke.width + 1.5, Color32::from_rgb(220, 240, 255))
+        Stroke::new(base_stroke.width + 1.5, colors::VERY_LIGHT_BLUE3)
     } else {
         base_stroke
     };
@@ -2165,7 +2157,7 @@ fn draw_dependency_arrow(
     let label_offset = normal * 15.0;
     let label_pos = from + vec * 0.5 + label_offset;
     let font_id = FontId::proportional(12.0);
-    let text_color = Color32::from_rgb(240, 240, 240);
+    let text_color = colors::GRAY_240;
 
     // Measure text for background
     let galley = ui.fonts(|fonts| fonts.layout_no_wrap(label.clone(), font_id.clone(), text_color));
@@ -2176,11 +2168,8 @@ fn draw_dependency_arrow(
     );
 
     // Draw text background for better visibility
-    ui.painter().rect_filled(
-        text_rect,
-        4.0,
-        Color32::from_rgba_premultiplied(30, 30, 30, 230),
-    );
+    ui.painter()
+        .rect_filled(text_rect, 4.0, colors::TRANSPARENT_GRAY);
 
     // Draw the text
     ui.painter()
