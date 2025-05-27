@@ -17,11 +17,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Cargo check
-      run: cargo check --tests --examples
-
     - name: Format check
       run: cargo fmt --all --check
+
+    - name: Cargo check
+      run: cargo check --tests --examples
 
     - name: Clippy check
       run: cargo clippy --all-targets --all-features
