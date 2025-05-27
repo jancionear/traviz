@@ -13,8 +13,8 @@ pub struct StructuredMode {
     /// For each span, the first rule that matches the span will be used to determine how to display it.
     /// If no rule matches, the span will not be visible.
     pub span_rules: Vec<SpanRule>,
-    /// Built-in modes (chain, everything, etc.) are not editable.
-    pub is_editable: bool,
+    /// Built-in modes (chain, everything, etc.) are not editable and are not saved in persistent data.
+    pub is_builtin: bool,
 }
 
 /// A rule that defines how to display a span that matches the selector.
@@ -159,7 +159,7 @@ pub fn chain_structured_mode() -> StructuredMode {
             show_span("on_approval_message"),
             show_span("send_chunk_endorsement"),
         ],
-        is_editable: false,
+        is_builtin: true,
     }
 }
 
@@ -204,7 +204,7 @@ pub fn everything_structured_mode() -> StructuredMode {
                 },
             },
         ],
-        is_editable: false,
+        is_builtin: true,
     }
 }
 

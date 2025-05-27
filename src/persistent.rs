@@ -5,7 +5,8 @@ use crate::node_filter::{builtin_filters, NodeFilter};
 use crate::structured_modes::{builtin_structured_modes, StructuredMode};
 
 /// Persistent data structure that holds user-defined display modes and node filters.
-/// If the data structure changes, it should be versioned to maintain compatibility with data saved using older versions of traviz.
+/// If the data structure changes, it should be versioned to maintain compatibility with data saved
+/// using older versions of traviz.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PersistentData {
     V1(PersistentDataV1),
@@ -28,10 +29,10 @@ pub fn save_persistent_data(
     node_filters: &Vec<NodeFilter>,
 ) -> Result<()> {
     let mut dmodes = display_modes.clone();
-    dmodes.retain(|mode| mode.is_editable);
+    dmodes.retain(|mode| !mode.is_builtin);
 
     let mut filters = node_filters.clone();
-    filters.retain(|filter| filter.is_editable);
+    filters.retain(|filter| !filter.is_builtin);
 
     let data = PersistentData::V1(PersistentDataV1 {
         display_modes: dmodes,

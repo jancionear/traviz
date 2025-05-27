@@ -7,8 +7,8 @@ use crate::structured_modes::{MatchCondition, MatchOperator};
 pub struct NodeFilter {
     pub name: String,
     pub rules: Vec<NodeRule>,
-    /// Built-in filters (everything, etc.) are not editable.
-    pub is_editable: bool,
+    /// Built-in filters (everything, etc.) are not editable and are not saved in persistent data.
+    pub is_builtin: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -31,7 +31,7 @@ impl NodeFilter {
                 condition: MatchCondition::any(),
                 visible: true,
             }],
-            is_editable: false,
+            is_builtin: true,
         }
     }
 
@@ -43,7 +43,7 @@ impl NodeFilter {
                 condition: MatchCondition::any(),
                 visible: false,
             }],
-            is_editable: false,
+            is_builtin: true,
         }
     }
 
@@ -144,10 +144,10 @@ impl EditNodeFilters {
                 .id_salt("node filters")
                 .show(ui, |ui| {
                     for (index, filter) in self.filters.iter().enumerate() {
-                        let filter_name = if filter.is_editable {
-                            filter.name.clone()
-                        } else {
+                        let filter_name = if filter.is_builtin {
                             format!("{} (builtin)", filter.name)
+                        } else {
+                            filter.name.clone()
                         };
 
                         let button = if self.selected_filter_idx == index {
@@ -174,33 +174,33 @@ impl EditNodeFilters {
             }
             if ui.button("Edit Filter").clicked() {
                 if let Some(filter) = self.filters.get(self.selected_filter_idx) {
-                    if filter.is_editable {
-                        self.current_filter = filter.clone();
-                        self.selected_rule_idx = 0;
-                        self.editing_or_adding_filter = AddingOrEditing::Editing;
-                        self.state = EditNodeFiltersState::EditingFilter;
-                    } else {
+                    if filter.is_builtin {
                         self.not_editable_message =
                         "This filter is not editable! Builtin filters that are provided in traviz cannot be changed from the UI. \
                         You can clone this filter to create your own custom one and then edit the custom filter".to_string();
                         self.state = EditNodeFiltersState::NotEditableError;
+                    } else {
+                        self.current_filter = filter.clone();
+                        self.selected_rule_idx = 0;
+                        self.editing_or_adding_filter = AddingOrEditing::Editing;
+                        self.state = EditNodeFiltersState::EditingFilter;
                     }
                 }
             }
             if ui.button("Clone Filter").clicked() {
                 let mut new_filter = self.filters[self.selected_filter_idx].clone();
                 new_filter.name = format!("{} Clone", new_filter.name);
-                new_filter.is_editable = true;
+                new_filter.is_builtin = false;
                 self.filters.push(new_filter);
                 self.selected_filter_idx = self.filters.len() - 1;
             }
             if ui.button("Delete Filter").clicked() {
                 if let Some(filter) = self.filters.get(self.selected_filter_idx) {
-                    if filter.is_editable {
-                        self.state = EditNodeFiltersState::DeleteFilterConfirmation;
-                    } else {
+                    if filter.is_builtin {
                         self.not_editable_message = "Builtin filters can not be deleted".to_string();
                         self.state = EditNodeFiltersState::NotEditableError;
+                    } else {
+                        self.state = EditNodeFiltersState::DeleteFilterConfirmation;
                     }
                 }
             }
@@ -408,7 +408,7 @@ impl EditNodeFilters {
         NodeFilter {
             name: "New Filter".to_string(),
             rules: vec![Self::new_rule()],
-            is_editable: true,
+            is_builtin: false,
         }
     }
 

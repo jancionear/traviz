@@ -96,7 +96,7 @@ impl EditDisplayModes {
         StructuredMode {
             name: "New Mode".to_string(),
             span_rules: vec![Self::new_span_rule()],
-            is_editable: true,
+            is_builtin: false,
         }
     }
 
@@ -138,10 +138,10 @@ impl EditDisplayModes {
             .id_salt("display modes")
             .show(ui, |ui| {
                 for (index, mode) in self.all_modes.iter().enumerate() {
-                    let mode_name = if mode.is_editable {
-                        mode.name.clone()
-                    } else {
+                    let mode_name = if mode.is_builtin {
                         format!("{} (builtin)", mode.name)
+                    } else {
+                        mode.name.clone()
                     };
 
                     let button = if self.selected_mode_idx == index {
@@ -169,33 +169,33 @@ impl EditDisplayModes {
             }
             if ui.button("Edit Mode").clicked() {
                 if let Some(mode) = self.all_modes.get(self.selected_mode_idx) {
-                    if mode.is_editable {
-                        self.current_mode = mode.clone();
-                        self.selected_span_rule_idx = 0;
-                        self.editing_or_adding_mode = AddingOrEditing::Editing;
-                        self.state = EditDisplayModesState::EditingMode;
-                    } else {
+                    if mode.is_builtin {
                         self.not_editable_message = 
                         "This mode is not editable! Builtin modes that are provided in traviz cannot be changed from the UI. \
                         You can clone this mode to create your own custom one and then edit the custom mode".to_string();
                         self.state = EditDisplayModesState::NotEditableError;
+                    } else {
+                        self.current_mode = mode.clone();
+                        self.selected_span_rule_idx = 0;
+                        self.editing_or_adding_mode = AddingOrEditing::Editing;
+                        self.state = EditDisplayModesState::EditingMode;
                     }
                 }
             }
             if ui.button("Clone Mode").clicked() {
                 let mut new_mode = self.all_modes[self.selected_mode_idx].clone();
                 new_mode.name = format!("{} Clone", new_mode.name);
-                new_mode.is_editable = true;
+                new_mode.is_builtin = false;
                 self.all_modes.push(new_mode);
                 self.selected_mode_idx = self.all_modes.len() - 1;
             }
             if ui.button("Delete Mode").clicked() {
                 if let Some(mode) = self.all_modes.get(self.selected_mode_idx) {
-                    if mode.is_editable {
-                        self.state = EditDisplayModesState::DeleteModeConfirmation;
-                    } else {
+                    if mode.is_builtin {
                         self.not_editable_message = "Builtin modes can not be deleted".to_string();
                         self.state = EditDisplayModesState::NotEditableError;
+                    } else {
+                        self.state = EditDisplayModesState::DeleteModeConfirmation;
                     }
                 }
             }
