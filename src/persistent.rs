@@ -25,13 +25,13 @@ pub struct PersistentDataV1 {
 }
 
 pub fn save_persistent_data(
-    display_modes: &Vec<StructuredMode>,
-    node_filters: &Vec<NodeFilter>,
+    display_modes: &[StructuredMode],
+    node_filters: &[NodeFilter],
 ) -> Result<()> {
-    let mut dmodes = display_modes.clone();
+    let mut dmodes = display_modes.to_vec();
     dmodes.retain(|mode| !mode.is_builtin);
 
-    let mut filters = node_filters.clone();
+    let mut filters = node_filters.to_vec();
     filters.retain(|filter| !filter.is_builtin);
 
     let data = PersistentData::V1(PersistentDataV1 {
@@ -54,13 +54,10 @@ pub fn load_persistent_data(
     // Add builtin modes and filters which are not saved in persistent data
     *display_modes = builtin_structured_modes()
         .into_iter()
-        .chain(modes.into_iter())
+        .chain(modes)
         .collect();
 
-    *node_filters = builtin_filters()
-        .into_iter()
-        .chain(filters.into_iter())
-        .collect();
+    *node_filters = builtin_filters().into_iter().chain(filters).collect();
 
     Ok(())
 }
