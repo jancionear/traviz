@@ -684,6 +684,7 @@ impl App {
         self.timeline_bar2_time = self.timeline.selected_end;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_time_points(
         &self,
         start_time: TimePoint,
