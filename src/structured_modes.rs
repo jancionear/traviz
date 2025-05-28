@@ -258,10 +258,10 @@ pub fn block_production_structured_mode() -> StructuredMode {
                     span_name_condition: MatchCondition::any(),
                     node_name_condition: MatchCondition::any(),
                     attribute_conditions: vec![(
-                        "tag".to_string(),
+                        "tag_block_production".to_string(),
                         MatchCondition {
                             operator: MatchOperator::EqualTo,
-                            value: "block_production".to_string(),
+                            value: "true".to_string(),
                         },
                     )],
                 },
