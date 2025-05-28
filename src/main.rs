@@ -299,7 +299,7 @@ impl eframe::App for App {
                         .draw(ctx, window_width - 100.0, window_height - 100.0)
                 {
                     self.display_modes = new_display_modes;
-                    self.save_peristent_data();
+                    self.save_persistent_data();
                     if self.current_display_mode_index >= self.display_modes.len() {
                         self.current_display_mode_index = 0;
                     }
@@ -313,7 +313,7 @@ impl eframe::App for App {
                         .draw(ctx, window_width - 100.0, window_height - 100.0)
                 {
                     self.node_filters = new_node_filters;
-                    self.save_peristent_data();
+                    self.save_persistent_data();
                     if self.current_node_filter_index >= self.node_filters.len() {
                         self.current_node_filter_index = 0;
                     }
@@ -1821,7 +1821,7 @@ impl App {
         }
     }
 
-    fn save_peristent_data(&self) {
+    fn save_persistent_data(&self) {
         if let Err(err) = persistent::save_persistent_data(&self.display_modes, &self.node_filters)
         {
             eprintln!("Failed to save persistent data: {}", err);
