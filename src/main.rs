@@ -155,6 +155,8 @@ struct App {
     // Dependency arrow interactivity
     clicked_arrow_info: Option<ArrowInfo>,
     hovered_arrow_key: Option<ArrowKey>,
+
+    cached_produce_block_starts: Option<Vec<(TimePoint, String)>>,
 }
 
 struct Layout {
@@ -230,6 +232,7 @@ impl Default for App {
             highlighted_spans: Vec::new(),
             clicked_arrow_info: None,
             hovered_arrow_key: None,
+            cached_produce_block_starts: None,
             cached_node_spans: None,
         };
         res.timeline.init(1.0, 3.0);
@@ -474,6 +477,7 @@ impl App {
         self.highlighted_spans.clear();
         self.analyze_span_modal = AnalyzeSpanModal::default();
         self.analyze_dependency_modal = AnalyzeDependencyModal::new();
+        self.cached_produce_block_starts = None;
 
         let everything_mode = self
             .display_modes
@@ -490,6 +494,11 @@ impl App {
             "Stored {} spans from 'Everything' mode for analysis after file load.",
             self.all_spans_for_analysis.len()
         );
+
+        // Populate the cache for produce_block_starts
+        self.cached_produce_block_starts = Some(collect_produce_block_starts_with_nodes(
+            &self.all_spans_for_analysis,
+        ));
 
         self.apply_current_mode()?;
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
@@ -670,7 +679,6 @@ impl App {
             area,
             colors::GRAY_50,
             ui,
-            &self.spans_to_display,
         );
     }
 
@@ -684,7 +692,6 @@ impl App {
         self.timeline_bar2_time = self.timeline.selected_end;
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn draw_time_points(
         &self,
         start_time: TimePoint,
@@ -693,7 +700,6 @@ impl App {
         area: Rect,
         color: Color32,
         ui: &mut Ui,
-        spans: &[Rc<Span>],
     ) {
         for dot in get_time_dots(start_time, end_time) {
             ui.painter().rect_filled(
@@ -737,8 +743,19 @@ impl App {
         }
 
         // Draw red lines for produce_block
-        let produce_block_starts = collect_produce_block_starts_with_nodes(spans);
-        for (t, node_name) in produce_block_starts {
+        let produce_block_starts_data = self
+            .cached_produce_block_starts
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| {
+                println!(
+                    "Reconstructing produce_block_starts in draw_time_points (cache was None)..."
+                );
+                collect_produce_block_starts_with_nodes(&self.all_spans_for_analysis)
+            });
+
+        for (t_ref, node_name) in &produce_block_starts_data {
+            let t = *t_ref;
             if (t >= start_time) && (t <= end_time) {
                 let x = time_to_screen(t, area.min.x, area.max.x, start_time, end_time);
                 let marker_height = 20.0;
@@ -751,7 +768,7 @@ impl App {
                 );
 
                 // Remove "neard:" prefix if present
-                let short_node_name = node_name.strip_prefix("neard:").unwrap_or(&node_name);
+                let short_node_name = node_name.strip_prefix("neard:").unwrap_or(node_name);
 
                 // Draw node name
                 let small_font_id =
@@ -906,7 +923,6 @@ impl App {
             time_points_area,
             colors::GRAY_240,
             ui,
-            spans_to_render,
         );
 
         let under_time_points_area =
