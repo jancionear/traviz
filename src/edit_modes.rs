@@ -134,26 +134,26 @@ impl EditDisplayModes {
 
         ui.label("Modes");
         ui.allocate_ui(self.max_scrollarea_size, |ui| {
-        ScrollArea::vertical()
-            .id_salt("display modes")
-            .show(ui, |ui| {
-                for (index, mode) in self.all_modes.iter().enumerate() {
-                    let mode_name = if mode.is_editable {
-                        mode.name.clone()
-                    } else {
-                        format!("{} (builtin)", mode.name)
-                    };
+            ScrollArea::vertical()
+                .id_salt("display modes")
+                .show(ui, |ui| {
+                    for (index, mode) in self.all_modes.iter().enumerate() {
+                        let mode_name = if mode.is_editable {
+                            mode.name.clone()
+                        } else {
+                            format!("{} (builtin)", mode.name)
+                        };
 
-                    let button = if self.selected_mode_idx == index {
-                        Button::new(mode_name).fill(HIGHLIGHT_COLOR)
-                    } else {
-                        Button::new(mode_name)
-                    };
-                    if button.ui(ui).clicked() {
-                        self.selected_mode_idx = index;
+                        let button = if self.selected_mode_idx == index {
+                            Button::new(mode_name).fill(HIGHLIGHT_COLOR)
+                        } else {
+                            Button::new(mode_name)
+                        };
+                        if button.ui(ui).clicked() {
+                            self.selected_mode_idx = index;
+                        }
                     }
-                }
-            });
+                });
         });
 
         self.draw_short_separator(ui);
@@ -175,7 +175,7 @@ impl EditDisplayModes {
                         self.editing_or_adding_mode = AddingOrEditing::Editing;
                         self.state = EditDisplayModesState::EditingMode;
                     } else {
-                        self.not_editable_message = 
+                        self.not_editable_message =
                         "This mode is not editable! Builtin modes that are provided in traviz cannot be changed from the UI. \
                         You can clone this mode to create your own custom one and then edit the custom mode".to_string();
                         self.state = EditDisplayModesState::NotEditableError;
@@ -256,22 +256,22 @@ impl EditDisplayModes {
             ui.vertical(|ui| {
                 ui.label("Span rules");
                 ui.allocate_ui(self.max_scrollarea_size, |ui| {
-                ScrollArea::vertical().id_salt("span rules").show(ui, |ui| {
-                    for (index, rule) in self.current_mode.span_rules.iter().enumerate() {
-                        let button = if self.selected_span_rule_idx == index {
-                            Button::new(rule.name.to_string()).fill(HIGHLIGHT_COLOR)
-                        } else {
-                            Button::new(rule.name.to_string())
-                        };
-                        if button.ui(ui).clicked() {
-                            self.selected_span_rule_idx = index;
+                    ScrollArea::vertical().id_salt("span rules").show(ui, |ui| {
+                        for (index, rule) in self.current_mode.span_rules.iter().enumerate() {
+                            let button = if self.selected_span_rule_idx == index {
+                                Button::new(rule.name.to_string()).fill(HIGHLIGHT_COLOR)
+                            } else {
+                                Button::new(rule.name.to_string())
+                            };
+                            if button.ui(ui).clicked() {
+                                self.selected_span_rule_idx = index;
+                            }
                         }
-                    }
-                    if self.current_mode.span_rules.is_empty() {
-                        ui.label("<empty>");
-                    }
+                        if self.current_mode.span_rules.is_empty() {
+                            ui.label("<empty>");
+                        }
+                    });
                 });
-            });
             });
         });
         self.draw_short_separator(ui);
@@ -310,7 +310,8 @@ impl EditDisplayModes {
             if ui.button("Clone rule").clicked()
                 && self.selected_span_rule_idx < self.current_mode.span_rules.len()
             {
-                let mut new_rule = self.current_mode.span_rules[self.selected_span_rule_idx].clone();
+                let mut new_rule =
+                    self.current_mode.span_rules[self.selected_span_rule_idx].clone();
                 new_rule.name = format!("{} Clone", new_rule.name);
                 self.current_mode.span_rules.push(new_rule);
                 self.selected_span_rule_idx = self.current_mode.span_rules.len() - 1;
@@ -415,22 +416,20 @@ impl EditDisplayModes {
         ui.label("Decision");
         ui.horizontal(|ui| {
             ui.label("Visibility:");
-            ComboBox::new("span visible or hidden", "").selected_text(if self.current_span_rule.decision.visible {
-                "Show"
-            } else {
-                "Hide"
-            }).show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut self.current_span_rule.decision.visible,
-                    true,
-                    "Show",
-                );
-                ui.selectable_value(
-                    &mut self.current_span_rule.decision.visible,
-                    false,
-                    "Hide",
-                );
-            });
+            ComboBox::new("span visible or hidden", "")
+                .selected_text(if self.current_span_rule.decision.visible {
+                    "Show"
+                } else {
+                    "Hide"
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.current_span_rule.decision.visible, true, "Show");
+                    ui.selectable_value(
+                        &mut self.current_span_rule.decision.visible,
+                        false,
+                        "Hide",
+                    );
+                });
         });
         ui.horizontal(|ui| {
             ui.label("Display length:");

@@ -58,7 +58,7 @@ impl SpanStatistics {
         if self
             .max_span
             .as_ref()
-            .map_or(true, |s| duration > (s.end_time - s.start_time))
+            .is_none_or(|s| duration > (s.end_time - s.start_time))
         {
             self.max_span = Some(span.clone());
         }
@@ -67,7 +67,7 @@ impl SpanStatistics {
         if self
             .min_span
             .as_ref()
-            .map_or(true, |s| duration < (s.end_time - s.start_time))
+            .is_none_or(|s| duration < (s.end_time - s.start_time))
         {
             self.min_span = Some(span.clone());
         }
@@ -100,6 +100,7 @@ enum StatType {
 
 impl AnalyzeSpanModal {
     /// Helper method to draw a right-aligned, clickable statistics cell (for Min/Max).
+    #[allow(clippy::too_many_arguments)]
     fn draw_clickable_stat_cell(
         &self,
         ui: &mut Ui,
