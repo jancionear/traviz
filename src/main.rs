@@ -30,6 +30,7 @@ mod colors;
 mod edit_modes;
 mod modes;
 mod node_filter;
+mod persistent;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod structured_modes;
@@ -216,7 +217,7 @@ impl Default for App {
             timeline_bar2_time: 0.0,
             clicked_span: None,
             include_children_events: true,
-            display_modes: structured_modes::get_all_structured_modes(),
+            display_modes: structured_modes::builtin_structured_modes(),
             current_display_mode_index: 0,
             node_filters: vec![NodeFilter::show_all(), NodeFilter::show_none()],
             current_node_filter_index: 0,
@@ -235,6 +236,9 @@ impl Default for App {
         res.set_timeline_end_bars_to_selected();
         res.search.search_term = "NOT IMPLEMENTED".to_string();
 
+        res.load_peristent_data();
+
+        // If a file path is provided as the first argument, try to load it.
         if let Some(first_arg) = std::env::args().nth(1) {
             println!("Trying to open file: {}", first_arg);
             if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
@@ -295,6 +299,7 @@ impl eframe::App for App {
                         .draw(ctx, window_width - 100.0, window_height - 100.0)
                 {
                     self.display_modes = new_display_modes;
+                    self.save_persistent_data();
                     if self.current_display_mode_index >= self.display_modes.len() {
                         self.current_display_mode_index = 0;
                     }
@@ -308,6 +313,7 @@ impl eframe::App for App {
                         .draw(ctx, window_width - 100.0, window_height - 100.0)
                 {
                     self.node_filters = new_node_filters;
+                    self.save_persistent_data();
                     if self.current_node_filter_index >= self.node_filters.len() {
                         self.current_node_filter_index = 0;
                     }
@@ -405,10 +411,12 @@ impl App {
                 });
 
             if ui.button("Edit display modes").clicked() {
+                self.load_peristent_data();
                 self.edit_display_modes.open(self.display_modes.clone());
             }
 
             if ui.button("Edit node filters").clicked() {
+                self.load_peristent_data();
                 self.edit_node_filters.open(self.node_filters.clone());
             }
 
@@ -1802,6 +1810,21 @@ impl App {
         // Esc closes the popup
         if ctx.input(|i| i.key_down(Key::Escape)) {
             self.clicked_arrow_info = None;
+        }
+    }
+
+    fn load_peristent_data(&mut self) {
+        if let Err(err) =
+            persistent::load_persistent_data(&mut self.display_modes, &mut self.node_filters)
+        {
+            eprintln!("Failed to load persistent data: {}", err);
+        }
+    }
+
+    fn save_persistent_data(&self) {
+        if let Err(err) = persistent::save_persistent_data(&self.display_modes, &self.node_filters)
+        {
+            eprintln!("Failed to save persistent data: {}", err);
         }
     }
 }

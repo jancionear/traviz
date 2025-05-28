@@ -6,19 +6,19 @@
 
 use crate::types::{value_to_text, DisplayLength, Span};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StructuredMode {
     pub name: String,
     /// A list of rules that define how to display spans.
     /// For each span, the first rule that matches the span will be used to determine how to display it.
     /// If no rule matches, the span will not be visible.
     pub span_rules: Vec<SpanRule>,
-    /// Built-in modes (chain, everything, etc.) are not editable.
-    pub is_editable: bool,
+    /// Built-in modes (chain, everything, etc.) are not editable and are not saved in persistent data.
+    pub is_builtin: bool,
 }
 
 /// A rule that defines how to display a span that matches the selector.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpanRule {
     pub name: String,
     /// A span that matches this selector
@@ -28,7 +28,7 @@ pub struct SpanRule {
 }
 
 /// A selector used to determine whether a span matches a rule.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpanSelector {
     /// Span's name must match this condition
     pub span_name_condition: MatchCondition,
@@ -40,7 +40,7 @@ pub struct SpanSelector {
 }
 
 /// Defines how to display a span that matches some rule.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpanDecision {
     /// Whether the span should be visible or not.
     pub visible: bool,
@@ -54,14 +54,13 @@ pub struct SpanDecision {
     pub add_shard_id_to_name: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MatchCondition {
     pub operator: MatchOperator,
     pub value: String,
 }
 
-#[allow(unused)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MatchOperator {
     /// Always matches
     Any,
@@ -160,7 +159,7 @@ pub fn chain_structured_mode() -> StructuredMode {
             show_span("on_approval_message"),
             show_span("send_chunk_endorsement"),
         ],
-        is_editable: false,
+        is_builtin: true,
     }
 }
 
@@ -205,7 +204,7 @@ pub fn everything_structured_mode() -> StructuredMode {
                 },
             },
         ],
-        is_editable: false,
+        is_builtin: true,
     }
 }
 
@@ -231,6 +230,6 @@ fn show_span(name: &str) -> SpanRule {
 }
 
 /// List of all modes
-pub fn get_all_structured_modes() -> Vec<StructuredMode> {
+pub fn builtin_structured_modes() -> Vec<StructuredMode> {
     vec![chain_structured_mode(), everything_structured_mode()]
 }
