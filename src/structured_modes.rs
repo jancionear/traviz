@@ -208,6 +208,76 @@ pub fn everything_structured_mode() -> StructuredMode {
     }
 }
 
+/// Block Production mode
+pub fn block_production_structured_mode() -> StructuredMode {
+    StructuredMode {
+        name: "Block Production".to_string(),
+        span_rules: vec![
+            // Show "validate_chunk_state_witness" as "VCSW", helps with performance and visual clutter.
+            SpanRule {
+                name: "Shorter validate_chunk_state_witness".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "validate_chunk_state_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "VCSW".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            // Show "validate_chunk_endorsement" as "VCE", helps with performance and visual clutter.
+            SpanRule {
+                name: "Shorter validate_chunk_endorsement".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "validate_chunk_endorsement".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "VCE".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            // All spans with 'block_production' tag should be visible.
+            SpanRule {
+                name: "Show block_production spans".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition::any(),
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "tag_block_production".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "true".to_string(),
+                        },
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+        ],
+        is_builtin: true,
+    }
+}
+
 fn show_span(name: &str) -> SpanRule {
     SpanRule {
         name: format!("Show {}", name),
@@ -231,5 +301,9 @@ fn show_span(name: &str) -> SpanRule {
 
 /// List of all modes
 pub fn builtin_structured_modes() -> Vec<StructuredMode> {
-    vec![chain_structured_mode(), everything_structured_mode()]
+    vec![
+        chain_structured_mode(),
+        everything_structured_mode(),
+        block_production_structured_mode(),
+    ]
 }
