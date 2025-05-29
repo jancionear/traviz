@@ -86,6 +86,10 @@ fn structured_mode_transformation_rek(
         modified_span.collapse_children.set(true);
     }
     if !decision.replace_name.is_empty() {
+        modified_span.attributes.insert(
+            "original.span.name".to_string(),
+            Some(Value::StringValue(modified_span.name.clone())),
+        );
         modified_span.name = decision.replace_name;
     }
     if decision.add_height_to_name {
