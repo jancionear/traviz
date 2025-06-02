@@ -19,6 +19,7 @@ use std::time::Instant;
 pub struct DependencyLink {
     pub source_spans: Vec<Rc<Span>>,
     pub target_span: Rc<Span>,
+    pub delay_seconds: f64,
 }
 
 /// Holds statistics and a list of identified dependency links where the target span resides on a specific node.
@@ -92,6 +93,9 @@ pub struct DependencyAnalysisResult {
     pub group_aggregation_strategy: GroupAggregationStrategy,
     pub per_node_results: HashMap<String, NodeDependencyMetrics>,
     pub analysis_duration_ms: u128,
+    pub overall_stats: Statistics,
+    pub overall_min_delay_link: Option<DependencyLink>,
+    pub overall_max_delay_link: Option<DependencyLink>,
 }
 
 /// Information needed to display the dependency link details popup.
@@ -334,7 +338,44 @@ impl AnalyzeDependencyModal {
             group_aggregation_strategy: self.group_aggregation_strategy.clone(),
             per_node_results,
             analysis_duration_ms: analysis_duration,
+            overall_stats: Statistics::new(),
+            overall_min_delay_link: None,
+            overall_max_delay_link: None,
         });
+
+        // Calculate overall statistics if there are results
+        if let Some(res) = &mut self.analysis_result {
+            if !res.per_node_results.is_empty() {
+                let mut temp_overall_stats = Statistics::new();
+                let mut temp_overall_min_link: Option<DependencyLink> = None;
+                let mut temp_overall_max_link: Option<DependencyLink> = None;
+
+                for node_metrics in res.per_node_results.values() {
+                    for link in &node_metrics.links {
+                        let current_delay = link.delay_seconds;
+                        let is_first_overall_value = temp_overall_stats.count == 0;
+
+                        // Update .min, .max, .count
+                        temp_overall_stats.add_value(current_delay);
+
+                        if is_first_overall_value {
+                            temp_overall_min_link = Some(link.clone());
+                            temp_overall_max_link = Some(link.clone());
+                        } else {
+                            if current_delay == temp_overall_stats.min {
+                                temp_overall_min_link = Some(link.clone());
+                            }
+                            if current_delay == temp_overall_stats.max {
+                                temp_overall_max_link = Some(link.clone());
+                            }
+                        }
+                    }
+                }
+                res.overall_stats = temp_overall_stats;
+                res.overall_min_delay_link = temp_overall_min_link;
+                res.overall_max_delay_link = temp_overall_max_link;
+            }
+        }
 
         self.error_message = None;
     }
@@ -554,6 +595,7 @@ impl AnalyzeDependencyModal {
                 let new_formed_link = DependencyLink {
                     source_spans: spans_for_this_grouped_link.clone(),
                     target_span: target_span.clone(),
+                    delay_seconds: link_delay,
                 };
 
                 self.record_formed_link(
@@ -591,6 +633,7 @@ impl AnalyzeDependencyModal {
                     let new_formed_link = DependencyLink {
                         source_spans: selected_source_spans_group.clone(),
                         target_span: target_span.clone(),
+                        delay_seconds: link_distance,
                     };
 
                     self.record_formed_link(
@@ -1036,6 +1079,52 @@ impl AnalyzeDependencyModal {
                                         for &col_width_val in col_widths.iter().skip(1) {
                                             draw_clickable_right_aligned_text_cell(ui_data_grid, col_width_val, "", false, None, false);
                                         }
+                                        ui_data_grid.end_row();
+                                    }
+
+                                    // Overall statistics row
+                                    if result.overall_stats.count > 0 {
+                                        let overall_label_text = RichText::new("All Nodes").strong();
+                                        ui_data_grid.scope(|ui_cell| {
+                                            ui_cell.set_min_width(col_widths[0]);
+                                            ui_cell.label(overall_label_text);
+                                        });
+
+                                        draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[1], &format!("{}", result.overall_stats.count), true, None, false);
+
+                                        let min_val_str = format!("{:.3}", result.overall_stats.min * MILLISECONDS_PER_SECOND);
+                                        if let Some(resp) = draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[2], &min_val_str, true, Some(colors::MILD_BLUE2), result.overall_min_delay_link.is_some()) {
+                                            if resp.clicked() {
+                                                if let Some(link) = &result.overall_min_delay_link {
+                                                    self.show_link_details_popup = Some(LinkDetailsPopupInfo {
+                                                        link: link.clone(),
+                                                        title: format!("Overall Minimum Delay Link Details (Node: {})", link.target_span.node.name),
+                                                        node_name: link.target_span.node.name.clone(),
+                                                        group_by_attribute_name: result.group_by_attribute.clone(),
+                                                        linking_attribute_name: result.linking_attribute.clone(),
+                                                        delay_ms: result.overall_stats.min * MILLISECONDS_PER_SECOND,
+                                                    });
+                                                }
+                                            }
+                                        }
+
+                                        let max_val_str = format!("{:.3}", result.overall_stats.max * MILLISECONDS_PER_SECOND);
+                                        if let Some(resp) = draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[3], &max_val_str, true, Some(colors::MILD_BLUE2), result.overall_max_delay_link.is_some()) {
+                                            if resp.clicked() {
+                                                if let Some(link) = &result.overall_max_delay_link {
+                                                    self.show_link_details_popup = Some(LinkDetailsPopupInfo {
+                                                        link: link.clone(),
+                                                        title: format!("Overall Maximum Delay Link Details (Node: {})", link.target_span.node.name),
+                                                        node_name: link.target_span.node.name.clone(),
+                                                        group_by_attribute_name: result.group_by_attribute.clone(),
+                                                        linking_attribute_name: result.linking_attribute.clone(),
+                                                        delay_ms: result.overall_stats.max * MILLISECONDS_PER_SECOND,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[4], &format!("{:.3}", result.overall_stats.mean() * MILLISECONDS_PER_SECOND), true, None, false);
+                                        draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[5], &format!("{:.3}", result.overall_stats.median() * MILLISECONDS_PER_SECOND), true, None, false);
                                         ui_data_grid.end_row();
                                     }
                                 });
