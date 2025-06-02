@@ -1,6 +1,6 @@
 use crate::analyze_utils::{
-    calculate_table_column_widths, collect_matching_spans, draw_left_aligned_text_cell,
-    draw_right_aligned_text_cell, process_spans_for_analysis, show_span_details, span_search_ui,
+    calculate_table_column_widths, collect_matching_spans, draw_clickable_right_aligned_text_cell,
+    draw_left_aligned_text_cell, process_spans_for_analysis, show_span_details, span_search_ui,
     span_selection_list_ui, Statistics,
 };
 use crate::colors;
@@ -329,40 +329,45 @@ impl AnalyzeSpanModal {
                             draw_left_aligned_text_cell(ui_grid, col_widths[0], "Node", true);
 
                             // Subsequent cells are right-aligned
-                            draw_right_aligned_text_cell(
+                            draw_clickable_right_aligned_text_cell(
                                 ui_grid,
                                 col_widths[1],
                                 "Count",
                                 true,
                                 None,
+                                false,
                             );
-                            draw_right_aligned_text_cell(
+                            draw_clickable_right_aligned_text_cell(
                                 ui_grid,
                                 col_widths[2],
                                 "Min (ms)",
                                 true,
                                 None,
+                                false,
                             );
-                            draw_right_aligned_text_cell(
+                            draw_clickable_right_aligned_text_cell(
                                 ui_grid,
                                 col_widths[3],
                                 "Max (ms)",
                                 true,
                                 None,
+                                false,
                             );
-                            draw_right_aligned_text_cell(
+                            draw_clickable_right_aligned_text_cell(
                                 ui_grid,
                                 col_widths[4],
                                 "Mean (ms)",
                                 true,
                                 None,
+                                false,
                             );
-                            draw_right_aligned_text_cell(
+                            draw_clickable_right_aligned_text_cell(
                                 ui_grid,
                                 col_widths[5],
                                 "Median (ms)",
                                 true,
                                 None,
+                                false,
                             );
 
                             ui_grid.end_row();
@@ -402,12 +407,13 @@ impl AnalyzeSpanModal {
                                                 &node_name,
                                                 false,
                                             );
-                                            draw_right_aligned_text_cell(
+                                            draw_clickable_right_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[1],
                                                 &format!("{}", stats.duration_stats.count),
                                                 false,
                                                 None,
+                                                false,
                                             );
 
                                             let min_text = format!(
@@ -438,7 +444,7 @@ impl AnalyzeSpanModal {
                                                 &mut span_to_view,
                                             );
 
-                                            draw_right_aligned_text_cell(
+                                            draw_clickable_right_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[4],
                                                 &format!(
@@ -448,8 +454,9 @@ impl AnalyzeSpanModal {
                                                 ),
                                                 false,
                                                 None,
+                                                false,
                                             );
-                                            draw_right_aligned_text_cell(
+                                            draw_clickable_right_aligned_text_cell(
                                                 ui_grid,
                                                 col_widths[5],
                                                 &format!(
@@ -459,9 +466,17 @@ impl AnalyzeSpanModal {
                                                 ),
                                                 false,
                                                 None,
+                                                false,
                                             );
 
                                             ui_grid.end_row();
+                                        } else {
+                                            // If no stats (e.g., node had no matching spans), display "-"
+                                            for &width in col_widths.iter().skip(1) {
+                                                draw_clickable_right_aligned_text_cell(
+                                                    ui_grid, width, "-", false, None, false,
+                                                );
+                                            }
                                         }
                                     }
 
@@ -473,12 +488,13 @@ impl AnalyzeSpanModal {
                                         &NodeIdentifier::AllNodes.to_string(),
                                         true,
                                     );
-                                    draw_right_aligned_text_cell(
+                                    draw_clickable_right_aligned_text_cell(
                                         ui_grid,
                                         col_widths[1],
                                         &format!("{}", overall.duration_stats.count),
                                         true,
                                         None,
+                                        false,
                                     );
 
                                     let min_text_overall = format!(
@@ -509,7 +525,7 @@ impl AnalyzeSpanModal {
                                         &mut span_to_view,
                                     );
 
-                                    draw_right_aligned_text_cell(
+                                    draw_clickable_right_aligned_text_cell(
                                         ui_grid,
                                         col_widths[4],
                                         &format!(
@@ -518,8 +534,9 @@ impl AnalyzeSpanModal {
                                         ),
                                         true,
                                         None,
+                                        false,
                                     );
-                                    draw_right_aligned_text_cell(
+                                    draw_clickable_right_aligned_text_cell(
                                         ui_grid,
                                         col_widths[5],
                                         &format!(
@@ -529,6 +546,7 @@ impl AnalyzeSpanModal {
                                         ),
                                         true,
                                         None,
+                                        false,
                                     );
 
                                     ui_grid.end_row();

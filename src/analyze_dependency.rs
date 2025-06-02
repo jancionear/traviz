@@ -1,20 +1,21 @@
 use crate::analyze_utils::{
-    calculate_table_column_widths, collect_matching_spans, draw_left_aligned_text_cell,
-    draw_right_aligned_text_cell, process_spans_for_analysis, span_search_ui,
+    calculate_table_column_widths, collect_matching_spans, draw_clickable_right_aligned_text_cell,
+    draw_left_aligned_text_cell, process_spans_for_analysis, span_search_ui,
     span_selection_list_ui, Statistics,
 };
 use crate::colors;
 use crate::types::Span;
 use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
-    self, Button, ComboBox, Grid, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
+    self, Button, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit, Ui, Vec2,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
 /// Structure to represent a dependency link between spans.
+#[derive(Clone)]
 pub struct DependencyLink {
     pub source_spans: Vec<Rc<Span>>,
     pub target_span: Rc<Span>,
@@ -24,6 +25,8 @@ pub struct DependencyLink {
 pub struct NodeDependencyMetrics {
     pub link_delay_statistics: Statistics,
     pub links: Vec<DependencyLink>,
+    pub min_delay_link: Option<DependencyLink>,
+    pub max_delay_link: Option<DependencyLink>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
@@ -71,6 +74,16 @@ pub struct DependencyAnalysisResult {
     pub analysis_duration_ms: u128,
 }
 
+/// Information needed to display the dependency link details popup.
+pub struct LinkDetailsPopupInfo {
+    pub link: DependencyLink,
+    pub title: String,
+    pub node_name: String,
+    pub group_by_attribute_name: String,
+    pub linking_attribute_name: String,
+    pub delay_ms: f64,
+}
+
 #[derive(Default)]
 pub struct AnalyzeDependencyModal {
     /// Whether the modal window is currently visible.
@@ -107,6 +120,8 @@ pub struct AnalyzeDependencyModal {
     all_spans_for_analysis: Vec<Rc<Span>>,
     /// If set, indicates a specific node to focus on in the trace view after closing the modal.
     pub focus_node: Option<String>,
+    /// If set, shows a popup with details of a specific dependency link.
+    show_link_details_popup: Option<LinkDetailsPopupInfo>,
 }
 
 impl AnalyzeDependencyModal {
@@ -144,6 +159,73 @@ impl AnalyzeDependencyModal {
         let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;
         self.unique_span_names = unique_names;
+    }
+
+    /// Selects a subset of source spans based on the configured timing strategy and threshold.
+    fn select_spans_for_link_formation(&self, available_spans: &[Rc<Span>]) -> Vec<Rc<Span>> {
+        assert!(self.threshold >= 1);
+        let num_to_take = self.threshold;
+
+        match self.source_timing_strategy {
+            SourceTimingStrategy::EarliestFirst => {
+                available_spans.iter().take(num_to_take).cloned().collect()
+            }
+            SourceTimingStrategy::LatestFirst => {
+                let skip_count = available_spans.len().saturating_sub(num_to_take);
+                available_spans.iter().skip(skip_count).cloned().collect()
+            }
+        }
+    }
+
+    /// Records a successfully formed dependency link, updates statistics, and tracks min/max delay links.
+    #[allow(clippy::too_many_arguments)]
+    fn record_formed_link(
+        &self,
+        stats: &mut Statistics,
+        node_links: &mut Vec<DependencyLink>,
+        min_link_for_node: &mut Option<DependencyLink>,
+        max_link_for_node: &mut Option<DependencyLink>,
+        formed_link: &DependencyLink,
+        link_delay: f64,
+        used_target_spans: &mut HashSet<Vec<u8>>,
+        target_span_id: &[u8],
+    ) {
+        stats.add_value(link_delay);
+        node_links.push(formed_link.clone());
+        used_target_spans.insert(target_span_id.to_vec());
+
+        // Update min/max links
+        // stats.count, stats.min, stats.max are updated by stats.add_value()
+        if stats.count == 1 {
+            // This means it's the first link added to these stats
+            *min_link_for_node = Some(formed_link.clone());
+            *max_link_for_node = Some(formed_link.clone());
+        } else {
+            if link_delay == stats.min {
+                *min_link_for_node = Some(formed_link.clone());
+            }
+            // A link can be both min and max if it's the only one, or if multiple links share the same min/max delay.
+            // The original code clones for max independently, so we replicate that.
+            if link_delay == stats.max {
+                *max_link_for_node = Some(formed_link.clone());
+            }
+        }
+    }
+
+    /// Marks the source spans of a formed link as used according to the source scope.
+    fn mark_source_spans_used(
+        &self,
+        source_spans_in_link: &[Rc<Span>],
+        global_used_source_span_ids_for_self_mode: &mut HashSet<Vec<u8>>,
+        used_source_ids_for_current_node_all_scope: &mut HashSet<Vec<u8>>,
+    ) {
+        for linked_s_span in source_spans_in_link {
+            if self.source_scope == SourceScope::SameNode {
+                global_used_source_span_ids_for_self_mode.insert(linked_s_span.span_id.clone());
+            } else {
+                used_source_ids_for_current_node_all_scope.insert(linked_s_span.span_id.clone());
+            }
+        }
     }
 
     fn analyze_dependencies(&mut self) {
@@ -309,13 +391,13 @@ impl AnalyzeDependencyModal {
                 continue;
             }
 
-            // Find valid links
-            let mut node_links = Vec::new();
-            let mut statistics = Statistics::new();
+            // Find valid links for the current node
+            let mut node_links_for_current_node = Vec::new();
+            let mut stats_for_current_node = Statistics::new();
+            let mut min_link_for_current_node: Option<DependencyLink> = None;
+            let mut max_link_for_current_node: Option<DependencyLink> = None;
+
             let mut used_target_spans: HashSet<Vec<u8>> = HashSet::new();
-            // For "all nodes" mode:
-            // tracks source spans that have successfully linked to a target on *this specific target_node*.
-            // Reset for each target_node.
             let mut used_source_ids_for_current_node_all_scope: HashSet<Vec<u8>> = HashSet::new();
 
             for target_span in current_target_node_spans.iter() {
@@ -406,19 +488,8 @@ impl AnalyzeDependencyModal {
                                     if group_spans.len() >= self.threshold
                                         && self.threshold > 0 =>
                                 {
-                                    let num_to_take = self.threshold;
-                                    let selected_from_group: Vec<Rc<Span>> = match self
-                                        .source_timing_strategy
-                                    {
-                                        SourceTimingStrategy::EarliestFirst => {
-                                            group_spans.iter().take(num_to_take).cloned().collect()
-                                        }
-                                        SourceTimingStrategy::LatestFirst => {
-                                            let skip_count =
-                                                group_spans.len().saturating_sub(num_to_take);
-                                            group_spans.iter().skip(skip_count).cloned().collect()
-                                        }
-                                    };
+                                    let selected_from_group =
+                                        self.select_spans_for_link_formation(group_spans);
                                     spans_for_this_grouped_link.extend(selected_from_group);
                                 }
                                 _ => {
@@ -438,22 +509,29 @@ impl AnalyzeDependencyModal {
 
                         if let Some(latest_source_end_time) = latest_source_end_time_opt {
                             if latest_source_end_time < target_span.start_time {
-                                let distance = target_span.start_time - latest_source_end_time;
-                                statistics.add_value(distance);
-                                node_links.push(DependencyLink {
+                                let link_distance = target_span.start_time - latest_source_end_time;
+
+                                let new_formed_link = DependencyLink {
                                     source_spans: spans_for_this_grouped_link.clone(),
                                     target_span: target_span.clone(),
-                                });
-                                used_target_spans.insert(target_span.span_id.clone());
-                                for linked_s_span in &spans_for_this_grouped_link {
-                                    if self.source_scope == SourceScope::SameNode {
-                                        global_used_source_span_ids_for_self_mode
-                                            .insert(linked_s_span.span_id.clone());
-                                    } else {
-                                        used_source_ids_for_current_node_all_scope
-                                            .insert(linked_s_span.span_id.clone());
-                                    }
-                                }
+                                };
+
+                                self.record_formed_link(
+                                    &mut stats_for_current_node,
+                                    &mut node_links_for_current_node,
+                                    &mut min_link_for_current_node,
+                                    &mut max_link_for_current_node,
+                                    &new_formed_link,
+                                    link_distance,
+                                    &mut used_target_spans,
+                                    &target_span.span_id,
+                                );
+
+                                self.mark_source_spans_used(
+                                    &spans_for_this_grouped_link,
+                                    &mut global_used_source_span_ids_for_self_mode,
+                                    &mut used_source_ids_for_current_node_all_scope,
+                                );
                             }
                         }
                     }
@@ -461,47 +539,39 @@ impl AnalyzeDependencyModal {
                     // NON-GROUPING LOGIC (uses eligible_sources_before_target as potential_sources_for_this_target)
                     if eligible_sources_before_target.len() >= self.threshold && self.threshold > 0
                     {
-                        let num_to_take = self.threshold;
-                        let selected_source_spans_group: Vec<Rc<Span>> = match self
-                            .source_timing_strategy
-                        {
-                            SourceTimingStrategy::EarliestFirst => eligible_sources_before_target
-                                .iter()
-                                .take(num_to_take)
-                                .cloned()
-                                .collect(),
-                            SourceTimingStrategy::LatestFirst => {
-                                let skip_count = eligible_sources_before_target
-                                    .len()
-                                    .saturating_sub(num_to_take);
-                                eligible_sources_before_target
-                                    .iter()
-                                    .skip(skip_count)
-                                    .cloned()
-                                    .collect()
-                            }
-                        };
+                        let selected_source_spans_group =
+                            self.select_spans_for_link_formation(&eligible_sources_before_target);
 
                         if !selected_source_spans_group.is_empty() {
-                            let last_source_in_group = selected_source_spans_group.last().unwrap();
-                            if last_source_in_group.end_time < target_span.start_time {
-                                let distance =
-                                    target_span.start_time - last_source_in_group.end_time;
-                                statistics.add_value(distance);
-                                node_links.push(DependencyLink {
+                            let relevant_source_for_timing = selected_source_spans_group
+                                .last()
+                                .expect("selected_source_spans_group should not be empty here");
+
+                            if relevant_source_for_timing.end_time < target_span.start_time {
+                                let link_distance =
+                                    target_span.start_time - relevant_source_for_timing.end_time;
+
+                                let new_formed_link = DependencyLink {
                                     source_spans: selected_source_spans_group.clone(),
                                     target_span: target_span.clone(),
-                                });
-                                used_target_spans.insert(target_span.span_id.clone());
-                                for linked_s_span in &selected_source_spans_group {
-                                    if self.source_scope == SourceScope::SameNode {
-                                        global_used_source_span_ids_for_self_mode
-                                            .insert(linked_s_span.span_id.clone());
-                                    } else {
-                                        used_source_ids_for_current_node_all_scope
-                                            .insert(linked_s_span.span_id.clone());
-                                    }
-                                }
+                                };
+
+                                self.record_formed_link(
+                                    &mut stats_for_current_node,
+                                    &mut node_links_for_current_node,
+                                    &mut min_link_for_current_node,
+                                    &mut max_link_for_current_node,
+                                    &new_formed_link,
+                                    link_distance,
+                                    &mut used_target_spans,
+                                    &target_span.span_id,
+                                );
+
+                                self.mark_source_spans_used(
+                                    &selected_source_spans_group,
+                                    &mut global_used_source_span_ids_for_self_mode,
+                                    &mut used_source_ids_for_current_node_all_scope,
+                                );
                             }
                         }
                     }
@@ -518,12 +588,14 @@ impl AnalyzeDependencyModal {
             }
 
             // Add result for this node if any links were formed
-            if !node_links.is_empty() || statistics.count > 0 {
+            if !node_links_for_current_node.is_empty() || stats_for_current_node.count > 0 {
                 per_node_results.insert(
                     node_name.clone(),
                     NodeDependencyMetrics {
-                        link_delay_statistics: statistics,
-                        links: node_links,
+                        link_delay_statistics: stats_for_current_node,
+                        links: node_links_for_current_node,
+                        min_delay_link: min_link_for_current_node,
+                        max_delay_link: max_link_for_current_node,
                     },
                 );
             }
@@ -658,7 +730,7 @@ impl AnalyzeDependencyModal {
                             }
 
                             if response.hovered() {
-                                response.on_hover_text("Specifies which source span to use (e.g., 2 means use every second source span)");
+                                response.on_hover_text("Minimum number of source spans required to form a link. This count of spans (per group, if grouping is active) will be selected based on the chosen timing strategy.");
                             }
                         });
                     });
@@ -829,11 +901,11 @@ impl AnalyzeDependencyModal {
                         .min_col_width(0.0)
                         .show(ui, |ui_grid| {
                             draw_left_aligned_text_cell(ui_grid, col_widths[0], "Node", true);
-                            draw_right_aligned_text_cell(ui_grid, col_widths[1], "Count", true, None);
-                            draw_right_aligned_text_cell(ui_grid, col_widths[2], "Min (ms)", true, None);
-                            draw_right_aligned_text_cell(ui_grid, col_widths[3], "Max (ms)", true, None);
-                            draw_right_aligned_text_cell(ui_grid, col_widths[4], "Mean (ms)", true, None);
-                            draw_right_aligned_text_cell(ui_grid, col_widths[5], "Median (ms)", true, None);
+                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[1], "Count", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[2], "Min (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[3], "Max (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[4], "Mean (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[5], "Median (ms)", true, None, false);
                             ui_grid.end_row();
                         });
 
@@ -893,54 +965,90 @@ impl AnalyzeDependencyModal {
                                             // Stats columns
                                             if stats.count > 0 {
                                                 // Count
-                                                draw_right_aligned_text_cell(
+                                                draw_clickable_right_aligned_text_cell(
                                                     ui,
                                                     col_widths[1],
                                                     &format!("{}", stats.count),
                                                     false,
-                                                    None
+                                                    None,
+                                                    false
                                                 );
                                                 // Min
-                                                draw_right_aligned_text_cell(
+                                                let min_val_str = format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND);
+                                                if let Some(response) = draw_clickable_right_aligned_text_cell(
                                                     ui,
                                                     col_widths[2],
-                                                    &format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND),
+                                                    &min_val_str,
                                                     false,
-                                                    Some(colors::MILD_BLUE2)
-                                                );
+                                                    Some(colors::MILD_BLUE2),
+                                                    node_result.min_delay_link.is_some()
+                                                ) {
+                                                    if response.clicked() {
+                                                        if let Some(link) = &node_result.min_delay_link {
+                                                            self.show_link_details_popup = Some(LinkDetailsPopupInfo {
+                                                                link: link.clone(),
+                                                                title: format!("Minimum Delay Link Details ({})", node_name),
+                                                                node_name: node_name.clone(),
+                                                                group_by_attribute_name: result.group_by_attribute.clone(),
+                                                                linking_attribute_name: result.linking_attribute.clone(),
+                                                                delay_ms: stats.min * MILLISECONDS_PER_SECOND,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+
                                                 // Max
-                                                draw_right_aligned_text_cell(
+                                                let max_val_str = format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND);
+                                                if let Some(response) = draw_clickable_right_aligned_text_cell(
                                                     ui,
                                                     col_widths[3],
-                                                    &format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND),
+                                                    &max_val_str,
                                                     false,
-                                                    Some(colors::MILD_BLUE2)
-                                                );
+                                                    Some(colors::MILD_BLUE2),
+                                                    node_result.max_delay_link.is_some()
+                                                ) {
+                                                    if response.clicked() {
+                                                        if let Some(link) = &node_result.max_delay_link {
+                                                            self.show_link_details_popup = Some(LinkDetailsPopupInfo {
+                                                                link: link.clone(),
+                                                                title: format!("Maximum Delay Link Details ({})", node_name),
+                                                                node_name: node_name.clone(),
+                                                                group_by_attribute_name: result.group_by_attribute.clone(),
+                                                                linking_attribute_name: result.linking_attribute.clone(),
+                                                                delay_ms: stats.max * MILLISECONDS_PER_SECOND,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+
                                                 // Mean
-                                                draw_right_aligned_text_cell(
+                                                draw_clickable_right_aligned_text_cell(
                                                     ui,
                                                     col_widths[4],
                                                     &format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND),
                                                     false,
-                                                    None
+                                                    None,
+                                                    false
                                                 );
                                                 // Median
-                                                draw_right_aligned_text_cell(
+                                                draw_clickable_right_aligned_text_cell(
                                                     ui,
                                                     col_widths[5],
                                                     &format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND),
                                                     false,
-                                                    None
+                                                    None,
+                                                    false
                                                 );
                                             } else {
                                                 // No links for this node, display "-" for all stat columns (Count, Min, Max, Mean, Median)
                                                 for width in col_widths.iter().skip(1) {
-                                                    draw_right_aligned_text_cell(
+                                                    draw_clickable_right_aligned_text_cell(
                                                         ui,
                                                         *width,
                                                         "-",
                                                         false,
-                                                        None
+                                                        None,
+                                                        false
                                                     );
                                                 }
                                             }
@@ -952,7 +1060,7 @@ impl AnalyzeDependencyModal {
                                     if result.per_node_results.is_empty() {
                                         draw_left_aligned_text_cell(ui, col_widths[0], "No matching dependencies found", false);
                                         for width in col_widths.iter().skip(1) {
-                                             draw_right_aligned_text_cell(ui, *width, "", false, None);
+                                             draw_clickable_right_aligned_text_cell(ui, *width, "", false, None, false);
                                         }
                                         ui.end_row();
                                     }
@@ -989,5 +1097,208 @@ impl AnalyzeDependencyModal {
             self.source_timing_strategy = SourceTimingStrategy::default();
             self.error_message = None;
         }
+
+        // Show the link details popup if requested
+        self.show_dependency_link_details_modal_ui(ctx, max_width * 0.92, max_height * 0.8);
     }
+
+    // Method to show the dependency link details modal
+    fn show_dependency_link_details_modal_ui(
+        &mut self,
+        ctx: &egui::Context,
+        max_width: f32,
+        max_height: f32,
+    ) {
+        let mut close_requested = false;
+
+        if let Some(details_info) = &self.show_link_details_popup {
+            let popup_id = Id::new(&details_info.title);
+
+            Modal::new(popup_id).show(ctx, |ui| {
+                // We use `details_info` (the reference to the data in `self.show_link_details_popup`)
+                // directly for rendering the UI content.
+
+                ui.set_max_width(max_width);
+                ui.set_max_height(max_height);
+                ui.set_min_size(Vec2::new(max_width * 0.5, max_height * 0.5));
+
+                ui.heading(&details_info.title);
+                ui.add_space(5.0);
+                ui.label(format!("Node: {}", details_info.node_name));
+                ui.label(format!("Delay: {:.3} ms", details_info.delay_ms));
+                if !details_info.linking_attribute_name.is_empty() {
+                    ui.label(format!(
+                        "Linked by attribute: {}",
+                        details_info.linking_attribute_name
+                    ));
+                }
+                if !details_info.group_by_attribute_name.is_empty() {
+                    ui.label(format!(
+                        "Grouped by attribute: {}",
+                        details_info.group_by_attribute_name
+                    ));
+                }
+                ui.separator();
+
+                draw_link_visualization_ui_impl(ui, details_info);
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(10.0);
+                if ui.button("Close").clicked() {
+                    close_requested = true;
+                }
+                // Check for Esc key press to also close the modal
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close_requested = true;
+                }
+            });
+        }
+
+        if close_requested {
+            self.show_link_details_popup = None;
+        }
+    }
+}
+
+/// Draws the visualization for a dependency link, including source and target spans.
+fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) {
+    let mut sorted_source_spans = details.link.source_spans.clone();
+    // Sort by end time primarily, then by name as a secondary criterion for stable sort
+    sorted_source_spans.sort_by(|a, b| {
+        a.end_time
+            .partial_cmp(&b.end_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    let target_start_time_abs = details.link.target_span.start_time;
+
+    ScrollArea::vertical()
+        .id_salt("link_details_scroll_area")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.strong("Source Spans:");
+            ui.add_space(2.0);
+
+            if !details.group_by_attribute_name.is_empty() {
+                let mut grouped_sources_map: BTreeMap<String, Vec<Rc<Span>>> = BTreeMap::new();
+                let ungrouped_key = "(Ungrouped/N/A)".to_string();
+
+                for s_span in &sorted_source_spans {
+                    if let Some(Some(Value::StringValue(group_val))) =
+                        s_span.attributes.get(&details.group_by_attribute_name)
+                    {
+                        grouped_sources_map
+                            .entry(group_val.clone())
+                            .or_default()
+                            .push(s_span.clone());
+                    } else {
+                        grouped_sources_map
+                            .entry(ungrouped_key.clone())
+                            .or_default()
+                            .push(s_span.clone());
+                    }
+                }
+
+                let mut sorted_groups: Vec<(String, Vec<Rc<Span>>, f64)> = Vec::new();
+                for (group_name, spans_in_group) in grouped_sources_map {
+                    let latest_end_time_in_group = spans_in_group
+                        .iter()
+                        .map(|s| s.end_time)
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    let time_to_target_group_ms = (target_start_time_abs
+                        - latest_end_time_in_group)
+                        * MILLISECONDS_PER_SECOND;
+                    sorted_groups.push((group_name, spans_in_group, time_to_target_group_ms));
+                }
+
+                sorted_groups
+                    .sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+                for (group_name, spans_in_group, time_to_target_group_ms) in sorted_groups {
+                    ui.horizontal(|ui| {
+                        ui.strong(format!(
+                            "  Group ({}): {}",
+                            details.group_by_attribute_name, group_name
+                        ));
+                        if time_to_target_group_ms.is_finite() {
+                            ui.strong(format!(
+                                " (Time to Target: {:.3}ms)",
+                                time_to_target_group_ms.max(0.0)
+                            ));
+                        }
+                    });
+
+                    for s_span in spans_in_group {
+                        ui.indent("source_span_indent_group", |ui| {
+                            ui.horizontal(|ui| {
+                                let distance_to_target_ms = (target_start_time_abs
+                                    - s_span.end_time)
+                                    * MILLISECONDS_PER_SECOND;
+                                let time_to_target_display =
+                                    format!("{:.3}ms", distance_to_target_ms.max(0.0));
+                                let end_timestamp_str =
+                                    crate::types::time_point_to_utc_string(s_span.end_time);
+
+                                ui.strong("Time to Target: ");
+                                let ttt_label_response = ui.monospace(time_to_target_display);
+                                ttt_label_response
+                                    .on_hover_text(format!("End: {}", end_timestamp_str));
+
+                                ui.strong(" Node: ");
+                                ui.monospace(&s_span.node.name);
+                                ui.strong(" Name: ");
+                                ui.monospace(&s_span.name);
+                                ui.strong(" ID: ");
+                                ui.monospace(hex::encode(&s_span.span_id));
+                            });
+                        });
+                        ui.add_space(1.0);
+                    }
+                    ui.add_space(4.0);
+                }
+            } else {
+                for (idx, s_span) in sorted_source_spans.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}. ", idx + 1));
+
+                        let distance_to_target_ms =
+                            (target_start_time_abs - s_span.end_time) * MILLISECONDS_PER_SECOND;
+                        let time_to_target_display =
+                            format!("{:.3}ms", distance_to_target_ms.max(0.0));
+                        let end_timestamp_str =
+                            crate::types::time_point_to_utc_string(s_span.end_time);
+
+                        ui.strong("Time to Target: ");
+                        let ttt_label_response = ui.monospace(time_to_target_display);
+                        ttt_label_response.on_hover_text(format!("End: {}", end_timestamp_str));
+
+                        ui.strong(" Node: ");
+                        ui.monospace(&s_span.node.name);
+                        ui.strong(" Name: ");
+                        ui.monospace(&s_span.name);
+                        ui.strong(" ID: ");
+                        ui.monospace(hex::encode(&s_span.span_id));
+                    });
+                    ui.add_space(1.0);
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.strong("Target Span:");
+            ui.add_space(2.0);
+            let t_span = &details.link.target_span;
+            ui.horizontal(|ui| {
+                ui.strong("Start: ");
+                ui.monospace(crate::types::time_point_to_utc_string(t_span.start_time));
+                ui.strong(" Node: ");
+                ui.monospace(&t_span.node.name);
+                ui.strong(" Name: ");
+                ui.monospace(&t_span.name);
+                let id_label_response = ui.strong(" ID: ");
+                ui.monospace(hex::encode(&t_span.span_id));
+                id_label_response.on_hover_text("This is the Target Span");
+            });
+        });
 }

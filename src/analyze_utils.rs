@@ -215,14 +215,17 @@ pub fn draw_left_aligned_text_cell(ui: &mut Ui, width: f32, text: &str, is_stron
     });
 }
 
-/// Helper function to draw a right-aligned text cell, often used for numerical statistics.
-pub fn draw_right_aligned_text_cell(
+/// Helper function to draw a right-aligned text cell, often used for numerical statistics,
+/// optionally making it clickable.
+pub fn draw_clickable_right_aligned_text_cell(
     ui: &mut Ui,
     width: f32,
     text: &str,
     is_strong: bool,
     color: Option<Color32>,
-) {
+    is_clickable: bool,
+) -> Option<egui::Response> {
+    let mut response_opt = None;
     ui.scope(|cell_ui| {
         cell_ui.set_min_width(width);
         cell_ui.with_layout(Layout::right_to_left(Align::Center), |inner_ui| {
@@ -231,12 +234,24 @@ pub fn draw_right_aligned_text_cell(
                 rich_text = rich_text.color(c);
             }
             if is_strong {
+                rich_text = rich_text.strong();
+            }
+
+            if is_clickable {
+                let label = egui::Label::new(rich_text).sense(egui::Sense::click());
+                let response = inner_ui.add(label);
+                if response.hovered() {
+                    inner_ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                }
+                response_opt = Some(response);
+            } else if is_strong {
                 inner_ui.strong(rich_text);
             } else {
                 inner_ui.label(rich_text);
             }
         });
     });
+    response_opt
 }
 
 /// Show details of a specific span in a new window.
