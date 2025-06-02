@@ -9,6 +9,7 @@ use crate::types::MILLISECONDS_PER_SECOND;
 use eframe::egui::{
     self, Button, ComboBox, Grid, Layout, Modal, RichText, ScrollArea, TextEdit, Vec2,
 };
+use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
@@ -62,9 +63,10 @@ pub struct DependencyAnalysisResult {
     pub source_span_name: String,
     pub target_span_name: String,
     pub threshold: usize,
-    pub metadata_field: String,
+    pub linking_attribute: String,
     pub source_scope: SourceScope,
     pub source_timing_strategy: SourceTimingStrategy,
+    pub group_by_attribute: String,
     pub per_node_results: HashMap<String, NodeDependencyMetrics>,
     pub analysis_duration_ms: u128,
 }
@@ -85,12 +87,14 @@ pub struct AnalyzeDependencyModal {
     threshold: usize,
     /// String representation of the threshold for editing in the UI.
     threshold_edit_str: String,
-    /// Optional metadata field name used to match source and target spans.
-    metadata_field: String,
+    /// Optional attribute name used to match source and target spans for linking.
+    linking_attribute: String,
     /// Scope for selecting source spans: "self" (same node as target) or "all nodes".
     source_scope: SourceScope,
     /// Strategy for selecting source spans (earliest or latest).
     source_timing_strategy: SourceTimingStrategy,
+    /// Attribute to group source spans by.
+    group_by_attribute: String,
     /// A sorted list of unique span names found in the current trace data.
     unique_span_names: Vec<String>,
     /// Flag indicating if the span list for the modal has been processed from the current trace data.
@@ -195,6 +199,30 @@ impl AnalyzeDependencyModal {
             return;
         }
 
+        // Determine expected_group_keys_set if grouping is active
+        let mut expected_group_keys_set: Option<HashSet<String>> = None;
+        if !self.group_by_attribute.is_empty() {
+            let mut keys_found = HashSet::new();
+            for s_span in &source_spans {
+                if let Some(Some(Value::StringValue(s_val))) =
+                    s_span.attributes.get(&self.group_by_attribute)
+                {
+                    keys_found.insert(s_val.clone());
+                }
+            }
+
+            if keys_found.is_empty() {
+                self.error_message = Some(format!(
+                    "The 'Group By Attribute' ('{}') was not found in any source spans named '{}', or no such source spans have this attribute.",
+                    self.group_by_attribute, source_name
+                ));
+                // If grouping is specified but cannot be performed, it's an invalid setup.
+                // We could also choose to let it proceed and find no grouped links, but an error is clearer.
+                return;
+            }
+            expected_group_keys_set = Some(keys_found);
+        }
+
         // Sort spans by start time
         source_spans.sort_by(|a, b| {
             a.start_time
@@ -296,17 +324,18 @@ impl AnalyzeDependencyModal {
                     continue;
                 }
 
-                // Check metadata for target_span if specified
-                if !self.metadata_field.is_empty()
-                    && !target_span.attributes.contains_key(&self.metadata_field)
+                // Check linking attribute for target_span if specified
+                if !self.linking_attribute.is_empty()
+                    && !target_span.attributes.contains_key(&self.linking_attribute)
                 {
-                    // Target itself must have the metadata field to be a candidate
+                    // Target itself must have the linking attribute to be a candidate
                     continue;
                 }
 
-                let mut potential_sources_for_this_target: Vec<Rc<Span>> = Vec::new();
+                // Common logic to find all temporally valid, attribute-matching, and not-yet-used source spans
+                // for the current target_span, regardless of grouping.
+                let mut eligible_sources_before_target: Vec<Rc<Span>> = Vec::new();
                 for s_span in current_source_node_spans.iter() {
-                    // Check if source span already used based on mode
                     let mut skip_source = false;
                     if self.source_scope == SourceScope::SameNode {
                         if global_used_source_span_ids_for_self_mode.contains(&s_span.span_id) {
@@ -324,84 +353,166 @@ impl AnalyzeDependencyModal {
 
                     // Basic time validity
                     if s_span.end_time < target_span.start_time {
-                        // Check metadata compatibility if field is specified
-                        if !self.metadata_field.is_empty() {
-                            // Source must also have the metadata field
-                            if !s_span.attributes.contains_key(&self.metadata_field) {
+                        // Check linking attribute compatibility if field is specified
+                        if !self.linking_attribute.is_empty() {
+                            // Source must also have the linking attribute
+                            if !s_span.attributes.contains_key(&self.linking_attribute) {
                                 continue;
                             }
-                            // Values must match (target_span's field existence already checked)
-                            let source_value = &s_span.attributes[&self.metadata_field];
-                            let target_value = &target_span.attributes[&self.metadata_field];
+                            // Values must match (target_span's linking attribute existence already checked)
+                            let source_value = &s_span.attributes[&self.linking_attribute];
+                            let target_value = &target_span.attributes[&self.linking_attribute];
                             if source_value != target_value {
                                 continue;
                             }
                         }
-                        potential_sources_for_this_target.push(s_span.clone());
+                        eligible_sources_before_target.push(s_span.clone());
                     }
                 }
 
-                if potential_sources_for_this_target.len() >= self.threshold && self.threshold > 0 {
-                    let num_to_take = self.threshold;
-                    let selected_source_spans_group: Vec<Rc<Span>> = match self
-                        .source_timing_strategy
-                    {
-                        SourceTimingStrategy::EarliestFirst => potential_sources_for_this_target
-                            .iter()
-                            .take(num_to_take)
-                            .cloned()
-                            .collect(),
-                        SourceTimingStrategy::LatestFirst => {
-                            let skip_count = potential_sources_for_this_target
-                                .len()
-                                .saturating_sub(num_to_take);
-                            potential_sources_for_this_target
-                                .iter()
-                                .skip(skip_count)
-                                .cloned()
-                                .collect()
+                // Branch based on grouping
+                if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
+                    // GROUPING LOGIC
+                    let current_expected_group_attribute_keys =
+                        expected_group_keys_set.as_ref().unwrap();
+                    if current_expected_group_attribute_keys.is_empty() {
+                        continue;
+                    }
+
+                    let mut grouped_potential_sources: HashMap<String, Vec<Rc<Span>>> =
+                        HashMap::new();
+                    for s_span in &eligible_sources_before_target {
+                        if let Some(Some(Value::StringValue(s_val))) =
+                            s_span.attributes.get(&self.group_by_attribute)
+                        {
+                            grouped_potential_sources
+                                .entry(s_val.clone())
+                                .or_default()
+                                .push(s_span.clone());
                         }
-                    };
+                    }
 
-                    if !selected_source_spans_group.is_empty() {
-                        // Should always be Some() if num_to_take > 0 and len >= threshold
-                        let last_source_in_group = selected_source_spans_group.last().unwrap();
+                    let mut all_groups_meet_threshold = true;
+                    let mut spans_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
 
-                        if last_source_in_group.end_time < target_span.start_time {
-                            let distance = target_span.start_time - last_source_in_group.end_time;
-
-                            statistics.add_value(distance);
-                            node_links.push(DependencyLink {
-                                source_spans: selected_source_spans_group.clone(),
-                                target_span: target_span.clone(),
-                            });
-
-                            used_target_spans.insert(target_span.span_id.clone());
-
-                            // Mark the *actually linked* source spans as used for the appropriate scope
-                            for linked_s_span in &selected_source_spans_group {
-                                if self.source_scope == SourceScope::SameNode {
-                                    // In 'self' mode, linked spans are added to the global set.
-                                    // Note: potential_sources are also added below, preserving original broader consumption.
-                                    global_used_source_span_ids_for_self_mode
-                                        .insert(linked_s_span.span_id.clone());
-                                } else {
-                                    // "all nodes" mode
-                                    // In 'all nodes' mode, mark this source as used for this specific target node.
-                                    used_source_ids_for_current_node_all_scope
-                                        .insert(linked_s_span.span_id.clone());
+                    // Check if all expected groups are present in the potential sources for this target
+                    if grouped_potential_sources.len() < current_expected_group_attribute_keys.len()
+                    {
+                        all_groups_meet_threshold = false;
+                    } else {
+                        for expected_key_val in current_expected_group_attribute_keys {
+                            match grouped_potential_sources.get(expected_key_val) {
+                                Some(group_spans)
+                                    if group_spans.len() >= self.threshold
+                                        && self.threshold > 0 =>
+                                {
+                                    let num_to_take = self.threshold;
+                                    let selected_from_group: Vec<Rc<Span>> = match self
+                                        .source_timing_strategy
+                                    {
+                                        SourceTimingStrategy::EarliestFirst => {
+                                            group_spans.iter().take(num_to_take).cloned().collect()
+                                        }
+                                        SourceTimingStrategy::LatestFirst => {
+                                            let skip_count =
+                                                group_spans.len().saturating_sub(num_to_take);
+                                            group_spans.iter().skip(skip_count).cloned().collect()
+                                        }
+                                    };
+                                    spans_for_this_grouped_link.extend(selected_from_group);
+                                }
+                                _ => {
+                                    all_groups_meet_threshold = false;
+                                    break;
                                 }
                             }
                         }
                     }
-                }
 
-                // For "self" mode: *all potential* sources for this target are marked globally used.
-                // This runs after link formation attempt for the current target_span.
-                if self.source_scope == SourceScope::SameNode {
-                    for s_potential_for_this_target in &potential_sources_for_this_target {
-                        global_used_source_span_ids_for_self_mode
-                            .insert(s_potential_for_this_target.span_id.clone());
+                    if all_groups_meet_threshold && !spans_for_this_grouped_link.is_empty() {
+                        // Determine the end_time of the latest *ending* source span in the entire group link
+                        let latest_source_end_time_opt = spans_for_this_grouped_link
+                            .iter()
+                            .map(|s| s.end_time)
+                            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+                        if let Some(latest_source_end_time) = latest_source_end_time_opt {
+                            if latest_source_end_time < target_span.start_time {
+                                let distance = target_span.start_time - latest_source_end_time;
+                                statistics.add_value(distance);
+                                node_links.push(DependencyLink {
+                                    source_spans: spans_for_this_grouped_link.clone(),
+                                    target_span: target_span.clone(),
+                                });
+                                used_target_spans.insert(target_span.span_id.clone());
+                                for linked_s_span in &spans_for_this_grouped_link {
+                                    if self.source_scope == SourceScope::SameNode {
+                                        global_used_source_span_ids_for_self_mode
+                                            .insert(linked_s_span.span_id.clone());
+                                    } else {
+                                        used_source_ids_for_current_node_all_scope
+                                            .insert(linked_s_span.span_id.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // NON-GROUPING LOGIC (uses eligible_sources_before_target as potential_sources_for_this_target)
+                    if eligible_sources_before_target.len() >= self.threshold && self.threshold > 0
+                    {
+                        let num_to_take = self.threshold;
+                        let selected_source_spans_group: Vec<Rc<Span>> = match self
+                            .source_timing_strategy
+                        {
+                            SourceTimingStrategy::EarliestFirst => eligible_sources_before_target
+                                .iter()
+                                .take(num_to_take)
+                                .cloned()
+                                .collect(),
+                            SourceTimingStrategy::LatestFirst => {
+                                let skip_count = eligible_sources_before_target
+                                    .len()
+                                    .saturating_sub(num_to_take);
+                                eligible_sources_before_target
+                                    .iter()
+                                    .skip(skip_count)
+                                    .cloned()
+                                    .collect()
+                            }
+                        };
+
+                        if !selected_source_spans_group.is_empty() {
+                            let last_source_in_group = selected_source_spans_group.last().unwrap();
+                            if last_source_in_group.end_time < target_span.start_time {
+                                let distance =
+                                    target_span.start_time - last_source_in_group.end_time;
+                                statistics.add_value(distance);
+                                node_links.push(DependencyLink {
+                                    source_spans: selected_source_spans_group.clone(),
+                                    target_span: target_span.clone(),
+                                });
+                                used_target_spans.insert(target_span.span_id.clone());
+                                for linked_s_span in &selected_source_spans_group {
+                                    if self.source_scope == SourceScope::SameNode {
+                                        global_used_source_span_ids_for_self_mode
+                                            .insert(linked_s_span.span_id.clone());
+                                    } else {
+                                        used_source_ids_for_current_node_all_scope
+                                            .insert(linked_s_span.span_id.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // For "self" mode without grouping: *all potential* sources for this target are marked globally used.
+                    // This runs after link formation attempt for the current target_span.
+                    if self.source_scope == SourceScope::SameNode {
+                        for s_potential_for_this_target in &eligible_sources_before_target {
+                            global_used_source_span_ids_for_self_mode
+                                .insert(s_potential_for_this_target.span_id.clone());
+                        }
                     }
                 }
             }
@@ -426,9 +537,10 @@ impl AnalyzeDependencyModal {
             source_span_name: source_name,
             target_span_name: target_name,
             threshold: self.threshold,
-            metadata_field: self.metadata_field.clone(),
+            linking_attribute: self.linking_attribute.clone(),
             source_scope: self.source_scope.clone(),
             source_timing_strategy: self.source_timing_strategy.clone(),
+            group_by_attribute: self.group_by_attribute.clone(),
             per_node_results,
             analysis_duration_ms: analysis_duration,
         });
@@ -553,20 +665,42 @@ impl AnalyzeDependencyModal {
 
                     ui.add_space(10.0);
 
-                    // Link Metadata Matcher input
+                    // Link by Attribute input
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            ui.label("Link Metadata Matcher:");
+                            ui.label("Link by Attribute:");
                             let response = ui.add(
-                                TextEdit::singleline(&mut self.metadata_field)
-                                    .desired_width(120.0)
+                                TextEdit::singleline(&mut self.linking_attribute)
+                                    .desired_width(100.0)
                                     .hint_text("field name")
                             );
 
                             if response.hovered() {
                                 response.on_hover_text(
-                                    "Optional. If provided, only spans with matching values for this metadata field can form links. \
-                                    Leave empty to ignore metadata matching."
+                                    "Optional. If provided, only spans with matching values for this attribute field can form links. \
+                                    Leave empty to ignore attribute matching."
+                                );
+                            }
+                        });
+                    });
+
+                    ui.add_space(10.0);
+
+                    // Group By Attribute input
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Group By Attribute:");
+                            let group_by_response = ui.add(
+                                TextEdit::singleline(&mut self.group_by_attribute)
+                                    .desired_width(100.0)
+                                    .hint_text("field name")
+                            );
+
+                            if group_by_response.hovered() {
+                                group_by_response.on_hover_text(
+                                    "Optional. If provided, source spans will be grouped by this attribute, \
+                                    and the threshold will be applied per group. \
+                                    Leave empty to disable grouping."
                                 );
                             }
                         });
@@ -665,11 +799,12 @@ impl AnalyzeDependencyModal {
                 if let Some(result) = &self.analysis_result {
                     ui.horizontal(|ui| {
                         ui.label(format!(
-                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, metadata: {}, scope: {}, timing: {})",
+                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, matching by: {}, group by: {}, scope: {}, timing: {})",
                             result.source_span_name,
                             result.target_span_name,
                             result.threshold,
-                            if result.metadata_field.is_empty() { "none" } else { &result.metadata_field },
+                            if result.linking_attribute.is_empty() { "none" } else { &result.linking_attribute },
+                            if result.group_by_attribute.is_empty() { "none" } else { &result.group_by_attribute },
                             result.source_scope,
                             result.source_timing_strategy
                         ));
@@ -848,7 +983,8 @@ impl AnalyzeDependencyModal {
             self.target_search_text = String::new();
             self.threshold = 1;
             self.threshold_edit_str = self.threshold.to_string();
-            self.metadata_field = String::new();
+            self.linking_attribute = String::new();
+            self.group_by_attribute = String::new();
             self.source_scope = SourceScope::default();
             self.source_timing_strategy = SourceTimingStrategy::default();
             self.error_message = None;
