@@ -405,7 +405,7 @@ impl EditDisplayModes {
         }
         if ui.button("New Attribute Condition").clicked() {
             self.current_span_rule.selector.attribute_conditions.push((
-                "attr".to_string(),
+                "<attribute name>".to_string(),
                 MatchCondition {
                     operator: MatchOperator::EqualTo,
                     value: "val".to_string(),
