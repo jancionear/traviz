@@ -85,6 +85,12 @@ impl SpanSelector {
         }
 
         for (attr_name, attr_condition) in &self.attribute_conditions {
+            if attr_name.is_empty() || attr_name == "<attribute name>" {
+                // Ignore empty attribute conditions that have an empty or default name.
+                // They were probably added accidentally, it doesn't make much sense to enforce them.
+                continue;
+            }
+
             if let Some(attr_value) = span.attributes.get(attr_name) {
                 if !attr_condition.matches(&value_to_text(attr_value)) {
                     return false;
