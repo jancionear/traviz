@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::node_filter::{builtin_filters, NodeFilter};
+use crate::relation::{builtin_relation_views, builtin_relations, Relation, RelationView};
 use crate::structured_modes::{builtin_structured_modes, StructuredMode};
 
 /// Persistent data structure that holds user-defined display modes and node filters.
@@ -10,11 +11,12 @@ use crate::structured_modes::{builtin_structured_modes, StructuredMode};
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PersistentData {
     V1(PersistentDataV1),
+    V2(PersistentDataV2),
 }
 
 impl Default for PersistentData {
     fn default() -> Self {
-        PersistentData::V1(PersistentDataV1::default())
+        PersistentData::V2(PersistentDataV2::default())
     }
 }
 
@@ -24,9 +26,19 @@ pub struct PersistentDataV1 {
     node_filters: Vec<NodeFilter>,
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PersistentDataV2 {
+    display_modes: Vec<StructuredMode>,
+    node_filters: Vec<NodeFilter>,
+    relations: Vec<Relation>,
+    relation_views: Vec<RelationView>,
+}
+
 pub fn save_persistent_data(
     display_modes: &[StructuredMode],
     node_filters: &[NodeFilter],
+    relations: &[Relation],
+    relation_views: &[RelationView],
 ) -> Result<()> {
     let mut dmodes = display_modes.to_vec();
     dmodes.retain(|mode| !mode.is_builtin);
@@ -34,9 +46,17 @@ pub fn save_persistent_data(
     let mut filters = node_filters.to_vec();
     filters.retain(|filter| !filter.is_builtin);
 
-    let data = PersistentData::V1(PersistentDataV1 {
+    let mut relations = relations.to_vec();
+    relations.retain(|relation| !relation.is_builtin);
+
+    let mut relation_views = relation_views.to_vec();
+    relation_views.retain(|view| !view.is_builtin);
+
+    let data = PersistentData::V2(PersistentDataV2 {
         display_modes: dmodes,
         node_filters: filters,
+        relations,
+        relation_views,
     });
 
     write_data(&data)
@@ -45,10 +65,23 @@ pub fn save_persistent_data(
 pub fn load_persistent_data(
     display_modes: &mut Vec<StructuredMode>,
     node_filters: &mut Vec<NodeFilter>,
+    relations: &mut Vec<Relation>,
+    relation_views: &mut Vec<RelationView>,
 ) -> Result<()> {
     let data = read_data()?;
-    let (modes, filters) = match data {
-        PersistentData::V1(data) => (data.display_modes, data.node_filters),
+    let (modes, filters, read_relations, views) = match data {
+        PersistentData::V1(data) => (
+            data.display_modes,
+            data.node_filters,
+            Vec::new(),
+            Vec::new(),
+        ),
+        PersistentData::V2(data) => (
+            data.display_modes,
+            data.node_filters,
+            data.relations,
+            data.relation_views,
+        ),
     };
 
     // Add builtin modes and filters which are not saved in persistent data
@@ -58,6 +91,12 @@ pub fn load_persistent_data(
         .collect();
 
     *node_filters = builtin_filters().into_iter().chain(filters).collect();
+
+    *relations = builtin_relations()
+        .into_iter()
+        .chain(read_relations)
+        .collect();
+    *relation_views = builtin_relation_views().into_iter().chain(views).collect();
 
     Ok(())
 }

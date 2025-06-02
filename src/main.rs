@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use anyhow::Result;
 use edit_modes::EditDisplayModes;
+use edit_relations::{EditRelationViews, EditRelations};
 use eframe::egui::scroll_area::ScrollBarVisibility;
 use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
@@ -16,6 +17,10 @@ use eframe::epaint::PathShape;
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use relation::{
+    builtin_relation_views, builtin_relations, find_relations, Relation, RelationInstance,
+    RelationView,
+};
 use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
 use types::{
@@ -28,11 +33,13 @@ mod analyze_span;
 mod analyze_utils;
 mod colors;
 mod edit_modes;
+mod edit_relations;
 mod modes;
 mod node_filter;
 mod persistent;
 #[cfg(feature = "profiling")]
 mod profiling;
+mod relation;
 mod structured_modes;
 mod task_timer;
 mod types;
@@ -143,6 +150,8 @@ struct App {
     search: Search,
     edit_display_modes: EditDisplayModes,
     edit_node_filters: EditNodeFilters,
+    edit_relations: EditRelations,
+    edit_relation_views: EditRelationViews,
 
     // Analyze 'features'
     all_spans_for_analysis: Vec<Rc<Span>>,
@@ -157,6 +166,11 @@ struct App {
     hovered_arrow_key: Option<ArrowKey>,
 
     cached_produce_block_starts: Option<Vec<(TimePoint, String)>>,
+
+    defined_relations: Vec<Relation>,
+    relation_views: Vec<RelationView>,
+    current_relation_view_index: usize,
+    active_relations: Vec<RelationInstance>,
 }
 
 struct Layout {
@@ -226,6 +240,8 @@ impl Default for App {
             search: Search::default(),
             edit_display_modes: EditDisplayModes::new(),
             edit_node_filters: EditNodeFilters::new(),
+            edit_relations: EditRelations::new(),
+            edit_relation_views: EditRelationViews::new(),
             all_spans_for_analysis: vec![],
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
@@ -234,6 +250,10 @@ impl Default for App {
             hovered_arrow_key: None,
             cached_produce_block_starts: None,
             cached_node_spans: None,
+            defined_relations: builtin_relations(),
+            relation_views: builtin_relation_views(),
+            current_relation_view_index: 0,
+            active_relations: vec![],
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
@@ -321,6 +341,29 @@ impl eframe::App for App {
                         self.current_node_filter_index = 0;
                     }
                 }
+
+                if let Some((new_relations, new_relation_views)) =
+                    self.edit_relations
+                        .draw(window_width - 100.0, window_height - 100.0, ctx)
+                {
+                    self.defined_relations = new_relations;
+                    self.relation_views = new_relation_views;
+                    self.save_persistent_data();
+                    self.apply_current_relations_view();
+                }
+
+                if let Some(new_relation_views) =
+                    self.edit_relation_views
+                        .draw(window_width - 100.0, window_height - 100.0, ctx)
+                {
+                    self.relation_views = new_relation_views;
+                    self.save_persistent_data();
+                    if self.current_relation_view_index >= self.relation_views.len() {
+                        self.current_relation_view_index = 0;
+                    }
+                    self.apply_current_relations_view();
+                }
+
                 self.draw_analyze_span_modal(ctx, window_width - 200.0, window_height - 200.0);
 
                 self.draw_analyze_dependency_modal(
@@ -413,6 +456,26 @@ impl App {
                     }
                 });
 
+            let previous_relations_view_idx = self.current_relation_view_index;
+            let current_relations_view_name = self
+                .relation_views
+                .get(self.current_relation_view_index)
+                .map_or("Deleted".to_string(), |view| view.name.clone());
+            ComboBox::new("relation view chooser", "")
+                .selected_text(format!("Relation view: {}", current_relations_view_name))
+                .show_ui(ui, |ui| {
+                    for (i, view) in self.relation_views.iter().enumerate() {
+                        ui.selectable_value(
+                            &mut self.current_relation_view_index,
+                            i,
+                            view.name.to_string(),
+                        );
+                    }
+                });
+            if previous_relations_view_idx != self.current_relation_view_index {
+                self.apply_current_relations_view();
+            }
+
             if ui.button("Edit display modes").clicked() {
                 self.load_peristent_data();
                 self.edit_display_modes.open(self.display_modes.clone());
@@ -421,6 +484,18 @@ impl App {
             if ui.button("Edit node filters").clicked() {
                 self.load_peristent_data();
                 self.edit_node_filters.open(self.node_filters.clone());
+            }
+
+            if ui.button("Edit relations").clicked() {
+                self.load_peristent_data();
+                self.edit_relations
+                    .open(self.defined_relations.clone(), self.relation_views.clone());
+            }
+
+            if ui.button("Edit relation views").clicked() {
+                self.load_peristent_data();
+                self.edit_relation_views
+                    .open(self.defined_relations.clone(), self.relation_views.clone());
             }
 
             // Analyze Span button, disabled if no spans are loaded
@@ -518,7 +593,22 @@ impl App {
         set_min_max_time(&self.spans_to_display);
         self.cached_node_spans = None;
 
+        self.apply_current_relations_view();
+
         Ok(())
+    }
+
+    fn apply_current_relations_view(&mut self) {
+        let Some(view) = self.relation_views.get(self.current_relation_view_index) else {
+            println!(
+                "WARN: No relation view found at index {}",
+                self.current_relation_view_index
+            );
+            return;
+        };
+
+        self.active_relations =
+            find_relations(&self.defined_relations, view, &self.spans_to_display);
     }
 
     // TODO - make this better. Time points should shift when the timeline is moved, not stay in place.
@@ -996,6 +1086,12 @@ impl App {
                             HashSet::new()
                         };
 
+                    let time_params = TimeToScreenParams {
+                        selected_start_time: self.timeline.selected_start,
+                        selected_end_time: self.timeline.selected_end,
+                        visual_start_x: under_time_points_area.min.x + self.layout.node_name_width,
+                        visual_end_x: under_time_points_area.max.x,
+                    };
                     for (node_name, (_node, spans)) in node_spans_items_for_loop {
                         // TODO - filter spans before displaying, like display modes. It'd work better with search etc.
                         if let Some(current_node_filter) =
@@ -1034,15 +1130,12 @@ impl App {
                         );
                         let bbox = arrange_spans(&spans_in_range, true);
 
-                        if !highlighted_span_ids_set.is_empty() {
-                            self.collect_span_positions(
-                                &spans_in_range,
-                                cur_height,
-                                span_height,
-                                &mut span_positions,
-                                &highlighted_span_ids_set,
-                            );
-                        }
+                        self.collect_span_positions(
+                            &spans_in_range,
+                            cur_height,
+                            span_height,
+                            &mut span_positions,
+                        );
 
                         ui.style_mut().visuals.override_text_color = Some(colors::BLACK);
                         self.draw_arranged_spans(
@@ -1080,15 +1173,10 @@ impl App {
 
                     // Draw dependency arrows if needed
                     if !highlighted_span_ids_set.is_empty() {
-                        let time_params = TimeToScreenParams {
-                            selected_start_time: self.timeline.selected_start,
-                            selected_end_time: self.timeline.selected_end,
-                            visual_start_x: under_time_points_area.min.x
-                                + self.layout.node_name_width,
-                            visual_end_x: under_time_points_area.max.x,
-                        };
                         self.draw_dependency_links(ui, &span_positions, &time_params, ctx);
                     }
+
+                    self.draw_relation_links(&span_positions, &time_params, ui, ctx);
 
                     ui.input(|i| {
                         if i.zoom_delta() != 1.0 {
@@ -1569,7 +1657,6 @@ impl App {
         start_height_param: f32,
         span_height: f32,
         positions: &mut HashMap<Vec<u8>, f32>,
-        highlighted_ids_to_store: &HashSet<Vec<u8>>,
     ) {
         for span in spans {
             let y_pos = start_height_param
@@ -1577,9 +1664,7 @@ impl App {
                 + span_height / 2.0;
 
             // Only store position if this span's ID is in the highlighted set
-            if highlighted_ids_to_store.contains(&span.span_id) {
-                positions.insert(span.span_id.clone(), y_pos);
-            }
+            positions.insert(span.span_id.clone(), y_pos);
 
             let children = span.display_children.borrow();
             if !children.is_empty() {
@@ -1594,7 +1679,6 @@ impl App {
                     children_area_start_y,
                     span_height,
                     positions,
-                    highlighted_ids_to_store,
                 );
             }
         }
@@ -1730,6 +1814,74 @@ impl App {
         }
     }
 
+    fn draw_relation_links(
+        &mut self,
+        span_positions: &HashMap<Vec<u8>, f32>,
+        time_params: &TimeToScreenParams,
+        ui: &mut Ui,
+        _ctx: &egui::Context,
+    ) {
+        let arrow_color = colors::INTENSE_BLUE;
+        let base_arrow_stroke = Stroke::new(2.0, arrow_color);
+
+        for relation in &self.active_relations {
+            let from_span = relation.from_span.upgrade().unwrap();
+            let to_span = relation.to_span.upgrade().unwrap();
+
+            let from_span_x_position = time_to_screen(
+                from_span.end_time,
+                time_params.visual_start_x,
+                time_params.visual_end_x,
+                time_params.selected_start_time,
+                time_params.selected_end_time,
+            );
+
+            let from_span_y_position = match span_positions.get(&from_span.span_id) {
+                Some(&pos) => pos,
+                None => {
+                    continue; // Skip if the span position is not found
+                }
+            };
+
+            let to_span_x_position = time_to_screen(
+                to_span.start_time,
+                time_params.visual_start_x,
+                time_params.visual_end_x,
+                time_params.selected_start_time,
+                time_params.selected_end_time,
+            );
+
+            let to_span_y_position = match span_positions.get(&to_span.span_id) {
+                Some(&pos) => pos,
+                None => continue, // Skip if the span position is not found
+            };
+
+            let distance_ms = (to_span.end_time - from_span.start_time) * MILLISECONDS_PER_SECOND;
+
+            let arrow_key = ArrowKey {
+                source_span_id: from_span.span_id.clone(),
+                source_node_name: from_span.node.name.clone(),
+                target_span_id: to_span.span_id.clone(),
+                target_node_name: to_span.node.name.clone(),
+            };
+
+            let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+
+            let from_pos = Pos2::new(from_span_x_position, from_span_y_position);
+            let to_pos = Pos2::new(to_span_x_position, to_span_y_position);
+
+            draw_dependency_arrow(
+                ui,
+                from_pos,
+                to_pos,
+                base_arrow_stroke,
+                format!("{:.2} ms", distance_ms),
+                should_draw_highlighted,
+                &arrow_key,
+            );
+        }
+    }
+
     fn draw_clicked_arrow_popup(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
         if self.clicked_arrow_info.is_none() {
             return;
@@ -1830,16 +1982,23 @@ impl App {
     }
 
     fn load_peristent_data(&mut self) {
-        if let Err(err) =
-            persistent::load_persistent_data(&mut self.display_modes, &mut self.node_filters)
-        {
+        if let Err(err) = persistent::load_persistent_data(
+            &mut self.display_modes,
+            &mut self.node_filters,
+            &mut self.defined_relations,
+            &mut self.relation_views,
+        ) {
             eprintln!("Failed to load persistent data: {}", err);
         }
     }
 
     fn save_persistent_data(&self) {
-        if let Err(err) = persistent::save_persistent_data(&self.display_modes, &self.node_filters)
-        {
+        if let Err(err) = persistent::save_persistent_data(
+            &self.display_modes,
+            &self.node_filters,
+            &self.defined_relations,
+            &self.relation_views,
+        ) {
             eprintln!("Failed to save persistent data: {}", err);
         }
     }
