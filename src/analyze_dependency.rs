@@ -62,6 +62,25 @@ impl std::fmt::Display for SourceTimingStrategy {
     }
 }
 
+/// Defines how the link delay is calculated when source spans are grouped.
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub enum GroupAggregationStrategy {
+    /// Link delay is based on the latest end time among all selected source spans from all groups.
+    WaitForLastGroup,
+    /// Link delay is based on the earliest end time among the latest selected source spans from each respective group.
+    #[default]
+    FirstCompletedGroup,
+}
+
+impl std::fmt::Display for GroupAggregationStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GroupAggregationStrategy::WaitForLastGroup => write!(f, "Wait For Last Group"),
+            GroupAggregationStrategy::FirstCompletedGroup => write!(f, "First Completed Group"),
+        }
+    }
+}
+
 pub struct DependencyAnalysisResult {
     pub source_span_name: String,
     pub target_span_name: String,
@@ -70,6 +89,7 @@ pub struct DependencyAnalysisResult {
     pub source_scope: SourceScope,
     pub source_timing_strategy: SourceTimingStrategy,
     pub group_by_attribute: String,
+    pub group_aggregation_strategy: GroupAggregationStrategy,
     pub per_node_results: HashMap<String, NodeDependencyMetrics>,
     pub analysis_duration_ms: u128,
 }
@@ -108,6 +128,8 @@ pub struct AnalyzeDependencyModal {
     source_timing_strategy: SourceTimingStrategy,
     /// Attribute to group source spans by.
     group_by_attribute: String,
+    /// How to aggregate timings from multiple groups for link delay calculation.
+    group_aggregation_strategy: GroupAggregationStrategy,
     /// A sorted list of unique span names found in the current trace data.
     unique_span_names: Vec<String>,
     /// Flag indicating if the span list for the modal has been processed from the current trace data.
@@ -130,6 +152,7 @@ impl AnalyzeDependencyModal {
         Self {
             threshold: initial_threshold,
             threshold_edit_str: initial_threshold.to_string(),
+            group_aggregation_strategy: GroupAggregationStrategy::default(),
             ..Default::default()
         }
     }
@@ -501,15 +524,66 @@ impl AnalyzeDependencyModal {
                     }
 
                     if all_groups_meet_threshold && !spans_for_this_grouped_link.is_empty() {
-                        // Determine the end_time of the latest *ending* source span in the entire group link
-                        let latest_source_end_time_opt = spans_for_this_grouped_link
-                            .iter()
-                            .map(|s| s.end_time)
-                            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                        // Determine the effective end_time for the source side of the link
+                        // based on the chosen group aggregation strategy.
+                        let effective_link_source_end_time_opt: Option<f64> = match self
+                            .group_aggregation_strategy
+                        {
+                            GroupAggregationStrategy::WaitForLastGroup => {
+                                // Uses the end_time of the latest *ending* source span in the entire group link
+                                spans_for_this_grouped_link
+                                    .iter()
+                                    .map(|s| s.end_time)
+                                    .max_by(|a, b| {
+                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                            }
+                            GroupAggregationStrategy::FirstCompletedGroup => {
+                                let mut group_completion_times: Vec<f64> = Vec::new();
+                                for expected_key_val in current_expected_group_attribute_keys {
+                                    if grouped_potential_sources.contains_key(expected_key_val) {
+                                        let mut latest_end_time_for_this_group = None;
+                                        for s_span in &spans_for_this_grouped_link {
+                                            if let Some(Some(Value::StringValue(s_val))) =
+                                                s_span.attributes.get(&self.group_by_attribute)
+                                            {
+                                                if s_val == expected_key_val {
+                                                    match latest_end_time_for_this_group {
+                                                        Some(current_max) => {
+                                                            if s_span.end_time > current_max {
+                                                                latest_end_time_for_this_group =
+                                                                    Some(s_span.end_time);
+                                                            }
+                                                        }
+                                                        None => {
+                                                            latest_end_time_for_this_group =
+                                                                Some(s_span.end_time);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(time) = latest_end_time_for_this_group {
+                                            group_completion_times.push(time);
+                                        }
+                                    }
+                                }
+                                // The link forms only if ALL groups met threshold, so group_completion_times should not be empty.
+                                group_completion_times
+                                    .iter()
+                                    .min_by(|a, b| {
+                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .cloned()
+                            }
+                        };
 
-                        if let Some(latest_source_end_time) = latest_source_end_time_opt {
-                            if latest_source_end_time < target_span.start_time {
-                                let link_distance = target_span.start_time - latest_source_end_time;
+                        if let Some(effective_link_source_end_time) =
+                            effective_link_source_end_time_opt
+                        {
+                            if effective_link_source_end_time < target_span.start_time {
+                                let link_distance =
+                                    target_span.start_time - effective_link_source_end_time;
 
                                 let new_formed_link = DependencyLink {
                                     source_spans: spans_for_this_grouped_link.clone(),
@@ -613,6 +687,7 @@ impl AnalyzeDependencyModal {
             source_scope: self.source_scope.clone(),
             source_timing_strategy: self.source_timing_strategy.clone(),
             group_by_attribute: self.group_by_attribute.clone(),
+            group_aggregation_strategy: self.group_aggregation_strategy.clone(),
             per_node_results,
             analysis_duration_ms: analysis_duration,
         });
@@ -628,22 +703,20 @@ impl AnalyzeDependencyModal {
 
         let mut modal_closed = false;
 
-        Modal::new("analyze dependency".into()).show(ctx, |ui| {
-            ui.vertical(|ui| {
-                ui.set_max_width(max_width);
-                ui.set_max_height(max_height);
+        Modal::new("analyze dependency".into()).show(ctx, |ui_modal_area| {
+            ui_modal_area.vertical(|ui_main_column| {
+                ui_main_column.set_max_width(max_width);
+                ui_main_column.set_max_height(max_height);
 
-                ui.heading("Analyze Dependency");
-                ui.add_space(10.0);
+                ui_main_column.heading("Analyze Dependency");
+                ui_main_column.add_space(10.0);
 
                 Grid::new("source_target_grid")
                     .num_columns(2)
                     .spacing([20.0, 10.0])
                     .striped(true)
-                    .show(ui, |ui| {
-                        // --- Row 1: Search Boxes ---
-                        // Source span search
-                        ui.vertical(|ui| {
+                    .show(ui_main_column, |ui_grid_for_search| {
+                        ui_grid_for_search.vertical(|ui| {
                             ui.set_width(max_width * 0.45);
                             span_search_ui(
                                 ui,
@@ -653,8 +726,7 @@ impl AnalyzeDependencyModal {
                                 ui.available_width()
                             );
                         });
-                        // Target span search
-                        ui.vertical(|ui| {
+                        ui_grid_for_search.vertical(|ui| {
                             ui.set_width(max_width * 0.45);
                             span_search_ui(
                                 ui,
@@ -664,12 +736,9 @@ impl AnalyzeDependencyModal {
                                 ui.available_width()
                             );
                         });
-                        ui.end_row();
-
-                        // --- Row 2: Span Lists ---
+                        ui_grid_for_search.end_row();
                         let list_height = 150.0;
-                        // Source span list
-                        ui.vertical(|ui| {
+                        ui_grid_for_search.vertical(|ui| {
                             ui.set_width(max_width * 0.45);
                             span_selection_list_ui(
                                 ui,
@@ -680,8 +749,7 @@ impl AnalyzeDependencyModal {
                                 "source_spans_list"
                             );
                         });
-                        // Target span list
-                        ui.vertical(|ui| {
+                        ui_grid_for_search.vertical(|ui| {
                             ui.set_width(max_width * 0.45);
                             span_selection_list_ui(
                                 ui,
@@ -692,264 +760,222 @@ impl AnalyzeDependencyModal {
                                 "target_spans_list"
                             );
                         });
-                        ui.end_row();
+                        ui_grid_for_search.end_row();
                     });
 
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
+                ui_main_column.add_space(10.0);
+                ui_main_column.separator();
+                ui_main_column.add_space(10.0);
 
-                // Configuration row
-                ui.horizontal(|ui| {
-                    // Threshold input
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Threshold:");
-                            let response = ui.add(
-                                TextEdit::singleline(&mut self.threshold_edit_str)
-                                    .desired_width(50.0)
-                            );
-
-                            let mut commit_valid_input = false;
-                            if response.lost_focus() {
-                                commit_valid_input = true;
-                            }
-
-                            if commit_valid_input {
-                                if let Ok(value) = self.threshold_edit_str.parse::<usize>() {
-                                    // Ensure minimum of 1
-                                    self.threshold = value.max(1);
+                ui_main_column.vertical(|ui_config_rows_container| {
+                    ui_config_rows_container.horizontal(|ui_row1| {
+                        ui_row1.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Threshold:");
+                                let response = ui.add(
+                                    TextEdit::singleline(&mut self.threshold_edit_str)
+                                        .desired_width(50.0)
+                                );
+                                let mut commit_valid_input = false;
+                                if response.lost_focus() {
+                                    commit_valid_input = true;
                                 }
-                                // Always reset edit string from the (potentially updated) numeric value after commit attempt
-                                self.threshold_edit_str = self.threshold.to_string();
-                            } else if response.changed() {
-                                // User is typing. If they type something invalid, allow it in the text box for now.
-                                // It will be validated/reverted on commit (lost_focus/enter).
-                                // Optionally, we could try to parse here and give immediate feedback (e.g. red text box)
-                                // but the current approach is simpler: validate on commit.
-                            }
-
-                            if response.hovered() {
-                                response.on_hover_text("Minimum number of source spans required to form a link. This count of spans (per group, if grouping is active) will be selected based on the chosen timing strategy.");
-                            }
+                                if commit_valid_input {
+                                    if let Ok(value) = self.threshold_edit_str.parse::<usize>() {
+                                        self.threshold = value.max(1);
+                                    }
+                                    self.threshold_edit_str = self.threshold.to_string();
+                                }
+                                if response.hovered() {
+                                    response.on_hover_text(concat!(
+                                        "Minimum number of source spans required to form a link. ",
+                                        "This count of spans (per group, if grouping is active) will be selected ",
+                                        "based on the chosen timing strategy."
+                                    ));
+                                }
+                            });
                         });
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Link by Attribute input
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Link by Attribute:");
-                            let response = ui.add(
-                                TextEdit::singleline(&mut self.linking_attribute)
-                                    .desired_width(100.0)
-                                    .hint_text("field name")
-                            );
-
-                            if response.hovered() {
-                                response.on_hover_text(
-                                    "Optional. If provided, only spans with matching values for this attribute field can form links. \
-                                    Leave empty to ignore attribute matching."
+                        ui_row1.add_space(10.0);
+                        ui_row1.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Link by Attribute:");
+                                let response = ui.add(
+                                    TextEdit::singleline(&mut self.linking_attribute)
+                                        .desired_width(100.0)
+                                        .hint_text("field name")
                                 );
-                            }
+                                if response.hovered() {
+                                    response.on_hover_text(concat!(
+                                        "Optional. If provided, only spans with matching values for this ",
+                                        "attribute field can form links. Leave empty to ignore attribute matching."
+                                    ));
+                                }
+                            });
                         });
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Group By Attribute input
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Group By Attribute:");
-                            let group_by_response = ui.add(
-                                TextEdit::singleline(&mut self.group_by_attribute)
-                                    .desired_width(100.0)
-                                    .hint_text("field name")
-                            );
-
-                            if group_by_response.hovered() {
-                                group_by_response.on_hover_text(
-                                    "Optional. If provided, source spans will be grouped by this attribute, \
-                                    and the threshold will be applied per group. \
-                                    Leave empty to disable grouping."
+                        ui_row1.add_space(10.0);
+                        ui_row1.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Group By Attribute:");
+                                let group_by_response = ui.add(
+                                    TextEdit::singleline(&mut self.group_by_attribute)
+                                        .desired_width(100.0)
+                                        .hint_text("field name")
                                 );
-                            }
+                                if group_by_response.hovered() {
+                                    group_by_response.on_hover_text(concat!(
+                                        "Optional. If provided, source spans will be grouped by this attribute, ",
+                                        "and the threshold will be applied per group. Leave empty to disable grouping."
+                                    ));
+                                }
+                            });
                         });
                     });
 
-                    ui.add_space(10.0);
+                    ui_config_rows_container.add_space(8.0);
 
-                    // Source toggle dropdown
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Source:");
-                            let combo_box_response = ComboBox::new(ui.id().with("source_scope"), "")
-                                .selected_text(self.source_scope.to_string())
-                                .width(80.0)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.source_scope,
-                                        SourceScope::SameNode, SourceScope::SameNode.to_string());
-                                    ui.selectable_value(&mut self.source_scope,
-                                        SourceScope::AllNodes, SourceScope::AllNodes.to_string());
+                    ui_config_rows_container.horizontal(|ui_row2| {
+                        ui_row2.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Source Scope:");
+                                let resp = ComboBox::new(ui.id().with("source_scope"), "")
+                                    .selected_text(self.source_scope.to_string())
+                                    .width(80.0)
+                                    .show_ui(ui, |ui_combo_scope| {
+                                        ui_combo_scope.selectable_value(&mut self.source_scope, SourceScope::SameNode, SourceScope::SameNode.to_string());
+                                        ui_combo_scope.selectable_value(&mut self.source_scope, SourceScope::AllNodes, SourceScope::AllNodes.to_string());
+                                    });
+                                resp.response.on_hover_text(concat!(
+                                    "'self' only considers sources from the same node as target. ",
+                                    "'all nodes' considers sources from any node."
+                                ));
+                            });
+                        });
+                        ui_row2.add_space(10.0);
+                        ui_row2.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Source Timing:");
+                                let resp = ComboBox::new(ui.id().with("source_timing_strategy"), "")
+                                    .selected_text(self.source_timing_strategy.to_string())
+                                    .width(120.0)
+                                    .show_ui(ui, |ui_combo_timing| {
+                                        ui_combo_timing.selectable_value(&mut self.source_timing_strategy, SourceTimingStrategy::EarliestFirst, SourceTimingStrategy::EarliestFirst.to_string());
+                                        ui_combo_timing.selectable_value(&mut self.source_timing_strategy, SourceTimingStrategy::LatestFirst, SourceTimingStrategy::LatestFirst.to_string());
+                                    });
+                                if resp.response.hovered() {
+                                    resp.response.on_hover_text(concat!(
+                                        "Determines which source spans are selected if multiple are available ",
+                                        "before the target: 'Earliest First' picks the oldest preceding source spans. ",
+                                        "'Latest First' picks the most recent preceding source spans."
+                                    ));
+                                }
+                            });
+                        });
+                        ui_row2.add_space(10.0);
+                        ui_row2.vertical(|ui| {
+                            let is_grouping_active = !self.group_by_attribute.is_empty();
+                            ui.add_enabled_ui(is_grouping_active, |ui_enabled_agg| {
+                                ui_enabled_agg.horizontal(|ui_agg_horiz| {
+                                    ui_agg_horiz.label("Group Aggregation:");
+                                    let agg_resp = ComboBox::new(ui_agg_horiz.id().with("group_aggregation_strategy"), "")
+                                        .selected_text(self.group_aggregation_strategy.to_string())
+                                        .width(160.0)
+                                        .show_ui(ui_agg_horiz, |ui_combo_agg| {
+                                            ui_combo_agg.selectable_value(&mut self.group_aggregation_strategy, GroupAggregationStrategy::WaitForLastGroup, GroupAggregationStrategy::WaitForLastGroup.to_string());
+                                            ui_combo_agg.selectable_value(&mut self.group_aggregation_strategy, GroupAggregationStrategy::FirstCompletedGroup, GroupAggregationStrategy::FirstCompletedGroup.to_string());
+                                        });
+                                    if agg_resp.response.hovered() {
+                                        let hover_text = if is_grouping_active {
+                                            match self.group_aggregation_strategy {
+                                                GroupAggregationStrategy::WaitForLastGroup =>
+                                                    concat!("Link delay is based on the latest end time among all selected source spans ",
+                                                            "from all groups."), 
+                                                GroupAggregationStrategy::FirstCompletedGroup =>
+                                                    concat!("Link delay is based on the earliest end time among the latest selected ",
+                                                            "source spans from each respective group."),
+                                            }
+                                        } else { "Only applicable when 'Group By Attribute' is used." };
+                                        agg_resp.response.on_hover_text(hover_text);
+                                    }
                                 });
-
-                            combo_box_response.response.on_hover_text("'self' only considers sources from the same node as target. 'all nodes' considers sources from any node.");
+                            });
                         });
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Source Timing Strategy dropdown
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Timing:");
-                            let timing_combo_response = ComboBox::new(ui.id().with("source_timing_strategy"), "")
-                                .selected_text(self.source_timing_strategy.to_string())
-                                .width(120.0)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut self.source_timing_strategy,
-                                        SourceTimingStrategy::EarliestFirst,
-                                        SourceTimingStrategy::EarliestFirst.to_string()
-                                    );
-                                    ui.selectable_value(
-                                        &mut self.source_timing_strategy,
-                                        SourceTimingStrategy::LatestFirst,
-                                        SourceTimingStrategy::LatestFirst.to_string()
-                                    );
-                                });
-
-                            if timing_combo_response.response.hovered() {
-                                timing_combo_response.response.on_hover_text(
-                                    "Determines which source spans are selected if multiple are available before the target: \
-                                    'Earliest First' picks the oldest preceding source spans. \
-                                    'Latest First' picks the most recent preceding source spans."
-                                );
+                        ui_row2.add_space(20.0);
+                        ui_row2.with_layout(Layout::right_to_left(eframe::emath::Align::Center), |ui_analyze_button_area| {
+                            if ui_analyze_button_area.add_enabled(self.source_span_name.is_some() && self.target_span_name.is_some(), Button::new("Analyze").min_size(Vec2::new(100.0, 30.0))).clicked() {
+                                self.analyze_dependencies();
                             }
                         });
-                    });
-
-                    ui.add_space(20.0);
-
-                    // Analyze button (right side)
-                    ui.with_layout(Layout::right_to_left(eframe::emath::Align::Center), |ui| {
-                        let is_ready = self.source_span_name.is_some() && self.target_span_name.is_some();
-                        if ui
-                            .add_enabled(
-                                is_ready,
-                                Button::new("Analyze").min_size(Vec2::new(100.0, 30.0)),
-                            )
-                            .clicked()
-                        {
-                            self.analyze_dependencies();
-                        }
                     });
                 });
 
-                ui.add_space(10.0);
-
-                // Display error message if any
+                ui_main_column.add_space(10.0);
                 if let Some(error) = &self.error_message {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(colors::MILD_RED, error);
+                    ui_main_column.horizontal(|ui_err_msg| {
+                        ui_err_msg.colored_label(colors::MILD_RED, error);
                     });
                 }
+                ui_main_column.separator();
+                ui_main_column.label("Dependency Analysis Results:");
 
-                ui.separator();
-
-                // Results area
-                ui.label("Dependency Analysis Results:");
-
-                // Initialize grid_width and col_percentages with defaults
-                // These will be properly set if analysis_result is Some,
-                // and the ScrollArea that uses them is only shown in that case.
                 let mut grid_width = 0.0;
-                // Define percentage-based column widths
-                let col_percentages = [0.25, 0.14, 0.14, 0.14, 0.14, 0.14]; // Node, Count, Min, Max, Mean, Median
+                let col_percentages = [0.25, 0.14, 0.14, 0.14, 0.14, 0.14];
 
                 if let Some(result) = &self.analysis_result {
-                    ui.horizontal(|ui| {
-                        ui.label(format!(
-                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, matching by: {}, group by: {}, scope: {}, timing: {})",
-                            result.source_span_name,
-                            result.target_span_name,
-                            result.threshold,
+                    ui_main_column.horizontal_wrapped(|ui_summary_wrap| {
+                        ui_summary_wrap.label(format!(
+                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, linking by: {}, group by: {}, scope: {}, timing: {}, group aggregation: {})",
+                            result.source_span_name, result.target_span_name, result.threshold,
                             if result.linking_attribute.is_empty() { "none" } else { &result.linking_attribute },
                             if result.group_by_attribute.is_empty() { "none" } else { &result.group_by_attribute },
-                            result.source_scope,
-                            result.source_timing_strategy
+                            result.source_scope, result.source_timing_strategy, result.group_aggregation_strategy
                         ));
-
-                        ui.label(format!("(Analysis took {} ms)", result.analysis_duration_ms));
+                        ui_summary_wrap.label(format!("(Analysis took {} ms)", result.analysis_duration_ms));
                     });
                 }
 
-                // Create the grid headers outside the scroll area (to keep them visible)
                 if self.analysis_result.is_some() {
-                    ui.add_space(10.0);
-                    grid_width = ui.available_width();
-
-                    // Calculate pixel widths for columns based on percentages
+                    ui_main_column.add_space(10.0);
+                    grid_width = ui_main_column.available_width();
                     let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
-
-                    // Header row - outside scrollable area to make it sticky
                     Grid::new("dependency_analysis_header_grid")
                         .num_columns(6)
                         .spacing([10.0, 6.0])
                         .striped(true)
                         .min_col_width(0.0)
-                        .show(ui, |ui_grid| {
-                            draw_left_aligned_text_cell(ui_grid, col_widths[0], "Node", true);
-                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[1], "Count", true, None, false);
-                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[2], "Min (ms)", true, None, false);
-                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[3], "Max (ms)", true, None, false);
-                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[4], "Mean (ms)", true, None, false);
-                            draw_clickable_right_aligned_text_cell(ui_grid, col_widths[5], "Median (ms)", true, None, false);
-                            ui_grid.end_row();
+                        .show(ui_main_column, |ui_header_grid| {
+                            draw_left_aligned_text_cell(ui_header_grid, col_widths[0], "Node", true);
+                            draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[1], "Count", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[2], "Min (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[3], "Max (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[4], "Mean (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[5], "Median (ms)", true, None, false);
+                            ui_header_grid.end_row();
                         });
-
-                    // Add a horizontal separator line
-                    ui.separator();
+                    ui_main_column.separator();
                 }
 
-                // Grid contents in a scrollable area
-                let results_height = if self.analysis_result.is_some() {
-                    (max_height - 400.0).max(200.0)
-                } else {
-                    100.0
-                };
+                let results_height = if self.analysis_result.is_some() { (max_height - 340.0).max(230.0) } else { 115.0 };
                 ScrollArea::vertical()
                     .max_height(results_height)
                     .id_salt("dependency_results_scroll_area")
-                    .show_viewport(ui, |ui, _viewport| {
+                    .show_viewport(ui_main_column, |ui_scroll_content, _viewport| {
                         if let Some(result) = &self.analysis_result {
-                            // Calculate column widths using the same grid width and percentages
                             let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
-
                             Grid::new("dependency_analysis_grid")
                                 .num_columns(6)
                                 .spacing([10.0, 6.0])
                                 .striped(true)
                                 .min_col_width(0.0)
-                                .show(ui, |ui| {
-                                    // Get nodes and sort them alphabetically
-                                    let mut node_names: Vec<String> =
-                                        result.per_node_results.keys().cloned().collect();
+                                .show(ui_scroll_content, |ui_data_grid| {
+                                    let mut node_names: Vec<String> = result.per_node_results.keys().cloned().collect();
                                     node_names.sort();
-
-                                    // Rows for each node
                                     for node_name in node_names {
                                         if let Some(node_result) = result.per_node_results.get(&node_name) {
                                             let stats = &node_result.link_delay_statistics;
-
-                                            // Node Name + Focus Button Column
-                                            ui.scope(|ui_cell| {
+                                            ui_data_grid.scope(|ui_cell| {
                                                 ui_cell.set_min_width(col_widths[0]);
                                                 ui_cell.horizontal(|ui_horiz| {
-                                                    ui_horiz.label(
-                                                        RichText::new(&node_name).monospace(),
-                                                    );
+                                                    ui_horiz.label(RichText::new(&node_name).monospace());
                                                     ui_horiz.add_space(5.0);
                                                     let focus_response = ui_horiz.button("🔍");
                                                     if focus_response.clicked() {
@@ -961,29 +987,11 @@ impl AnalyzeDependencyModal {
                                                     }
                                                 });
                                             });
-
-                                            // Stats columns
                                             if stats.count > 0 {
-                                                // Count
-                                                draw_clickable_right_aligned_text_cell(
-                                                    ui,
-                                                    col_widths[1],
-                                                    &format!("{}", stats.count),
-                                                    false,
-                                                    None,
-                                                    false
-                                                );
-                                                // Min
+                                                draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[1], &format!("{}", stats.count), false, None, false);
                                                 let min_val_str = format!("{:.3}", stats.min * MILLISECONDS_PER_SECOND);
-                                                if let Some(response) = draw_clickable_right_aligned_text_cell(
-                                                    ui,
-                                                    col_widths[2],
-                                                    &min_val_str,
-                                                    false,
-                                                    Some(colors::MILD_BLUE2),
-                                                    node_result.min_delay_link.is_some()
-                                                ) {
-                                                    if response.clicked() {
+                                                if let Some(resp) = draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[2], &min_val_str, false, Some(colors::MILD_BLUE2), node_result.min_delay_link.is_some()) {
+                                                    if resp.clicked() {
                                                         if let Some(link) = &node_result.min_delay_link {
                                                             self.show_link_details_popup = Some(LinkDetailsPopupInfo {
                                                                 link: link.clone(),
@@ -996,18 +1004,9 @@ impl AnalyzeDependencyModal {
                                                         }
                                                     }
                                                 }
-
-                                                // Max
                                                 let max_val_str = format!("{:.3}", stats.max * MILLISECONDS_PER_SECOND);
-                                                if let Some(response) = draw_clickable_right_aligned_text_cell(
-                                                    ui,
-                                                    col_widths[3],
-                                                    &max_val_str,
-                                                    false,
-                                                    Some(colors::MILD_BLUE2),
-                                                    node_result.max_delay_link.is_some()
-                                                ) {
-                                                    if response.clicked() {
+                                                if let Some(resp) = draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[3], &max_val_str, false, Some(colors::MILD_BLUE2), node_result.max_delay_link.is_some()) {
+                                                    if resp.clicked() {
                                                         if let Some(link) = &node_result.max_delay_link {
                                                             self.show_link_details_popup = Some(LinkDetailsPopupInfo {
                                                                 link: link.clone(),
@@ -1020,61 +1019,33 @@ impl AnalyzeDependencyModal {
                                                         }
                                                     }
                                                 }
-
-                                                // Mean
-                                                draw_clickable_right_aligned_text_cell(
-                                                    ui,
-                                                    col_widths[4],
-                                                    &format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND),
-                                                    false,
-                                                    None,
-                                                    false
-                                                );
-                                                // Median
-                                                draw_clickable_right_aligned_text_cell(
-                                                    ui,
-                                                    col_widths[5],
-                                                    &format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND),
-                                                    false,
-                                                    None,
-                                                    false
-                                                );
+                                                draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[4], &format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND), false, None, false);
+                                                draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[5], &format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND), false, None, false);
                                             } else {
-                                                // No links for this node, display "-" for all stat columns (Count, Min, Max, Mean, Median)
-                                                for width in col_widths.iter().skip(1) {
-                                                    draw_clickable_right_aligned_text_cell(
-                                                        ui,
-                                                        *width,
-                                                        "-",
-                                                        false,
-                                                        None,
-                                                        false
-                                                    );
+                                                for &col_width_val in col_widths.iter().skip(1) {
+                                                    draw_clickable_right_aligned_text_cell(ui_data_grid, col_width_val, "-", false, None, false);
                                                 }
                                             }
-                                            ui.end_row();
+                                            ui_data_grid.end_row();
                                         }
                                     }
-
-                                    // If no results found
                                     if result.per_node_results.is_empty() {
-                                        draw_left_aligned_text_cell(ui, col_widths[0], "No matching dependencies found", false);
-                                        for width in col_widths.iter().skip(1) {
-                                             draw_clickable_right_aligned_text_cell(ui, *width, "", false, None, false);
+                                        draw_left_aligned_text_cell(ui_data_grid, col_widths[0], "No matching dependencies found", false);
+                                        for &col_width_val in col_widths.iter().skip(1) {
+                                            draw_clickable_right_aligned_text_cell(ui_data_grid, col_width_val, "", false, None, false);
                                         }
-                                        ui.end_row();
+                                        ui_data_grid.end_row();
                                     }
                                 });
                         } else {
-                            ui.label("Select source and target spans, then click 'Analyze' to see dependency statistics.");
+                            ui_scroll_content.label("Select source and target spans, then click 'Analyze' to see dependency statistics.");
                         }
                     });
 
-                ui.separator();
-
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Close").clicked() {
+                ui_main_column.separator();
+                ui_main_column.add_space(10.0);
+                ui_main_column.horizontal(|ui_close_button_row| {
+                    if ui_close_button_row.button("Close").clicked() {
                         modal_closed = true;
                     }
                 });
@@ -1095,6 +1066,7 @@ impl AnalyzeDependencyModal {
             self.group_by_attribute = String::new();
             self.source_scope = SourceScope::default();
             self.source_timing_strategy = SourceTimingStrategy::default();
+            self.group_aggregation_strategy = GroupAggregationStrategy::default();
             self.error_message = None;
         }
 
@@ -1115,9 +1087,6 @@ impl AnalyzeDependencyModal {
             let popup_id = Id::new(&details_info.title);
 
             Modal::new(popup_id).show(ctx, |ui| {
-                // We use `details_info` (the reference to the data in `self.show_link_details_popup`)
-                // directly for rendering the UI content.
-
                 ui.set_max_width(max_width);
                 ui.set_max_height(max_height);
                 ui.set_min_size(Vec2::new(max_width * 0.5, max_height * 0.5));
@@ -1148,7 +1117,6 @@ impl AnalyzeDependencyModal {
                 if ui.button("Close").clicked() {
                     close_requested = true;
                 }
-                // Check for Esc key press to also close the modal
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     close_requested = true;
                 }
