@@ -85,11 +85,18 @@ fn structured_mode_transformation_rek(
         modified_span.dont_collapse_this_span.set(true);
         modified_span.collapse_children.set(true);
     }
-    if !decision.replace_name.is_empty() {
+
+    let will_change_name = !decision.replace_name.is_empty()
+        || decision.add_height_to_name
+        || decision.add_shard_id_to_name;
+    if will_change_name {
         modified_span.attributes.insert(
             "original.span.name".to_string(),
             Some(Value::StringValue(modified_span.name.clone())),
         );
+    }
+
+    if !decision.replace_name.is_empty() {
         modified_span.name = decision.replace_name;
     }
     if decision.add_height_to_name {
