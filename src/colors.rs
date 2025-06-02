@@ -14,9 +14,8 @@ pub const GRAY_50: Color32 = Color32::from_gray(50);
 pub const GRAY_230: Color32 = Color32::from_gray(230);
 pub const GRAY_240: Color32 = Color32::from_gray(240);
 
-pub const VERY_LIGHT_BLUE: Color32 = Color32::from_rgb(220, 230, 245);
-pub const VERY_LIGHT_BLUE2: Color32 = Color32::from_rgb(200, 220, 240);
-pub const VERY_LIGHT_BLUE3: Color32 = Color32::from_rgb(220, 240, 255);
+pub const VERY_LIGHT_BLUE: Color32 = Color32::from_rgb(200, 220, 240);
+pub const VERY_LIGHT_BLUE2: Color32 = Color32::from_rgb(220, 240, 255);
 pub const LIGHT_BLUE: Color32 = Color32::from_rgb(134, 202, 227);
 pub const MILD_BLUE: Color32 = Color32::from_rgb(55, 127, 153);
 pub const MILD_BLUE2: Color32 = Color32::from_rgb(50, 150, 200);

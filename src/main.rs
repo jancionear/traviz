@@ -442,14 +442,8 @@ impl App {
             ui.with_layout(
                 egui::Layout::right_to_left(eframe::emath::Align::RIGHT),
                 |ui| {
-                    let clear_button = ui.add_enabled(
-                        has_highlights,
-                        Button::new("Clear Highlights").fill(if has_highlights {
-                            colors::VERY_LIGHT_BLUE
-                        } else {
-                            colors::GRAY_50
-                        }),
-                    );
+                    let clear_button =
+                        ui.add_enabled(has_highlights, Button::new("Clear Highlights"));
                     if clear_button.clicked() {
                         println!(
                             "Clearing {} highlighted spans",
@@ -1271,7 +1265,7 @@ impl App {
             // Set colors based on whether it's a highlighted span
             let (time_color, base_color) = if is_highlighted {
                 // Use blue color for highlighted spans
-                (colors::INTENSE_BLUE, colors::VERY_LIGHT_BLUE2)
+                (colors::INTENSE_BLUE, colors::VERY_LIGHT_BLUE)
             } else {
                 // Use yellow/gold colors for normal spans
                 (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
@@ -2182,7 +2176,7 @@ fn draw_dependency_arrow(
 
     // Draw the main line
     let line_stroke = if is_hovered {
-        Stroke::new(base_stroke.width + 1.5, colors::VERY_LIGHT_BLUE3)
+        Stroke::new(base_stroke.width + 1.5, colors::VERY_LIGHT_BLUE2)
     } else {
         base_stroke
     };
