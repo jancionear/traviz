@@ -748,10 +748,15 @@ impl App {
             .as_ref()
             .cloned()
             .unwrap_or_else(|| {
-                println!(
-                    "Reconstructing produce_block_starts in draw_time_points (cache was None)..."
-                );
-                collect_produce_block_starts_with_nodes(&self.all_spans_for_analysis)
+                if self.all_spans_for_analysis.is_empty() {
+                    // If there are no spans, no need to reconstruct, return empty.
+                    Vec::new()
+                } else {
+                    println!(
+                        "Reconstructing produce_block_starts in draw_time_points (cache was None)..."
+                    );
+                    collect_produce_block_starts_with_nodes(&self.all_spans_for_analysis)
+                }
             });
 
         for (t_ref, node_name) in &produce_block_starts_data {
