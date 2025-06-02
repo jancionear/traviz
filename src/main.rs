@@ -447,7 +447,7 @@ impl App {
                         Button::new("Clear Highlights").fill(if has_highlights {
                             colors::VERY_LIGHT_BLUE
                         } else {
-                            colors::GRAY_180
+                            colors::GRAY_50
                         }),
                     );
                     if clear_button.clicked() {

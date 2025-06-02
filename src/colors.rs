@@ -11,7 +11,6 @@ pub const GRAY_10: Color32 = Color32::from_gray(10);
 pub const GRAY_30: Color32 = Color32::from_gray(30);
 pub const GRAY_40: Color32 = Color32::from_gray(40);
 pub const GRAY_50: Color32 = Color32::from_gray(50);
-pub const GRAY_180: Color32 = Color32::from_gray(180);
 pub const GRAY_230: Color32 = Color32::from_gray(230);
 pub const GRAY_240: Color32 = Color32::from_gray(240);
 
