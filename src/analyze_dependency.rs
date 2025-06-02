@@ -146,6 +146,16 @@ pub struct AnalyzeDependencyModal {
     show_link_details_popup: Option<LinkDetailsPopupInfo>,
 }
 
+type PreparedAnalysisInput = (
+    String,
+    String,
+    Vec<Rc<Span>>,
+    Vec<Rc<Span>>,
+    Option<HashSet<String>>,
+);
+
+type NodeSpanMap = HashMap<String, Vec<Rc<Span>>>;
+
 impl AnalyzeDependencyModal {
     pub fn new() -> Self {
         let initial_threshold = 1;
@@ -228,7 +238,6 @@ impl AnalyzeDependencyModal {
                 *min_link_for_node = Some(formed_link.clone());
             }
             // A link can be both min and max if it's the only one, or if multiple links share the same min/max delay.
-            // The original code clones for max independently, so we replicate that.
             if link_delay == stats.max {
                 *max_link_for_node = Some(formed_link.clone());
             }
@@ -254,109 +263,19 @@ impl AnalyzeDependencyModal {
     fn analyze_dependencies(&mut self) {
         self.analysis_result = None;
 
-        // Validate source and target span names
-        let source_name = match &self.source_span_name {
-            Some(name) => name.clone(),
-            None => {
-                self.error_message = Some("Source span not selected".to_string());
-                return;
-            }
-        };
-        let target_name = match &self.target_span_name {
-            Some(name) => name.clone(),
-            None => {
-                self.error_message = Some("Target span not selected".to_string());
-                return;
-            }
-        };
-
-        // Validate that source and target spans are different
-        if source_name == target_name {
-            self.error_message = Some("Source and target spans must be different".to_string());
-            return;
-        }
-
-        // Start timing the analysis
         let analysis_start = Instant::now();
 
-        // Collect all source and target spans
-        let mut source_spans = Vec::new();
-        let mut target_spans = Vec::new();
-
-        collect_matching_spans(
-            &self.all_spans_for_analysis,
-            &source_name,
-            &mut source_spans,
-        );
-        collect_matching_spans(
-            &self.all_spans_for_analysis,
-            &target_name,
-            &mut target_spans,
-        );
-
-        if source_spans.is_empty() {
-            self.error_message = Some(format!("No spans found with name '{}'", source_name));
-            return;
-        }
-
-        if target_spans.is_empty() {
-            self.error_message = Some(format!("No spans found with name '{}'", target_name));
-            return;
-        }
-
-        // Determine expected_group_keys_set if grouping is active
-        let mut expected_group_keys_set: Option<HashSet<String>> = None;
-        if !self.group_by_attribute.is_empty() {
-            let mut keys_found = HashSet::new();
-            for s_span in &source_spans {
-                if let Some(Some(Value::StringValue(s_val))) =
-                    s_span.attributes.get(&self.group_by_attribute)
-                {
-                    keys_found.insert(s_val.clone());
+        let (source_name, target_name, source_spans, target_spans, expected_group_keys_set) =
+            match self.prepare_analysis_inputs() {
+                Ok(inputs) => inputs,
+                Err(msg) => {
+                    self.error_message = Some(msg);
+                    return;
                 }
-            }
+            };
 
-            if keys_found.is_empty() {
-                self.error_message = Some(format!(
-                    "The 'Group By Attribute' ('{}') was not found in any source spans named '{}', or no such source spans have this attribute.",
-                    self.group_by_attribute, source_name
-                ));
-                // If grouping is specified but cannot be performed, it's an invalid setup.
-                // We could also choose to let it proceed and find no grouped links, but an error is clearer.
-                return;
-            }
-            expected_group_keys_set = Some(keys_found);
-        }
-
-        // Sort spans by start time
-        source_spans.sort_by(|a, b| {
-            a.start_time
-                .partial_cmp(&b.start_time)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        target_spans.sort_by(|a, b| {
-            a.start_time
-                .partial_cmp(&b.start_time)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        // Group spans by node
-        let mut source_spans_by_node: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
-        let mut target_spans_by_node: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
-
-        for span in source_spans {
-            source_spans_by_node
-                .entry(span.node.name.clone())
-                .or_default()
-                .push(span);
-        }
-
-        for span in target_spans {
-            target_spans_by_node
-                .entry(span.node.name.clone())
-                .or_default()
-                .push(span);
-        }
+        let (source_spans_by_node, target_spans_by_node) =
+            group_spans_by_node(&source_spans, &target_spans);
 
         // Per-node dependency analysis
         let mut per_node_results = HashMap::new();
@@ -379,299 +298,24 @@ impl AnalyzeDependencyModal {
         // This set is for 'self' mode: if a source span is a potential candidate for any target, it's marked used globally
         let mut global_used_source_span_ids_for_self_mode: HashSet<Vec<u8>> = HashSet::new();
 
-        for node_name in node_names {
-            let current_source_node_spans = if self.source_scope == SourceScope::SameNode {
-                // Only use spans from this node
-                source_spans_by_node
-                    .get(&node_name)
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                // Use spans from all nodes, sorted by time
-                let mut all_s_spans: Vec<Rc<Span>> =
-                    source_spans_by_node.values().flatten().cloned().collect();
-                all_s_spans.sort_by(|a, b| {
-                    a.start_time
-                        .partial_cmp(&b.start_time)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                all_s_spans
-            };
+        for node_name_str in node_names {
+            let current_target_spans_for_node = target_spans_by_node
+                .get(&node_name_str)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
 
-            // Skip if no source spans for this node/scope
-            if current_source_node_spans.is_empty() {
+            if current_target_spans_for_node.is_empty() {
                 continue;
             }
 
-            // Get target spans (always from the current node being processed for targets)
-            let current_target_node_spans = target_spans_by_node
-                .get(&node_name)
-                .cloned()
-                .unwrap_or_default();
-
-            // Skip if no target spans for this node
-            if current_target_node_spans.is_empty() {
-                continue;
-            }
-
-            // Find valid links for the current node
-            let mut node_links_for_current_node = Vec::new();
-            let mut stats_for_current_node = Statistics::new();
-            let mut min_link_for_current_node: Option<DependencyLink> = None;
-            let mut max_link_for_current_node: Option<DependencyLink> = None;
-
-            let mut used_target_spans: HashSet<Vec<u8>> = HashSet::new();
-            let mut used_source_ids_for_current_node_all_scope: HashSet<Vec<u8>> = HashSet::new();
-
-            for target_span in current_target_node_spans.iter() {
-                if used_target_spans.contains(&target_span.span_id) {
-                    // This target has already been linked by a source group
-                    continue;
-                }
-
-                // Check linking attribute for target_span if specified
-                if !self.linking_attribute.is_empty()
-                    && !target_span.attributes.contains_key(&self.linking_attribute)
-                {
-                    // Target itself must have the linking attribute to be a candidate
-                    continue;
-                }
-
-                // Common logic to find all temporally valid, attribute-matching, and not-yet-used source spans
-                // for the current target_span, regardless of grouping.
-                let mut eligible_sources_before_target: Vec<Rc<Span>> = Vec::new();
-                for s_span in current_source_node_spans.iter() {
-                    let mut skip_source = false;
-                    if self.source_scope == SourceScope::SameNode {
-                        if global_used_source_span_ids_for_self_mode.contains(&s_span.span_id) {
-                            skip_source = true;
-                        }
-                    } else {
-                        // "all nodes" mode
-                        if used_source_ids_for_current_node_all_scope.contains(&s_span.span_id) {
-                            skip_source = true;
-                        }
-                    }
-                    if skip_source {
-                        continue;
-                    }
-
-                    // Basic time validity
-                    if s_span.end_time < target_span.start_time {
-                        // Check linking attribute compatibility if field is specified
-                        if !self.linking_attribute.is_empty() {
-                            // Source must also have the linking attribute
-                            if !s_span.attributes.contains_key(&self.linking_attribute) {
-                                continue;
-                            }
-                            // Values must match (target_span's linking attribute existence already checked)
-                            let source_value = &s_span.attributes[&self.linking_attribute];
-                            let target_value = &target_span.attributes[&self.linking_attribute];
-                            if source_value != target_value {
-                                continue;
-                            }
-                        }
-                        eligible_sources_before_target.push(s_span.clone());
-                    }
-                }
-
-                // Branch based on grouping
-                if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
-                    // GROUPING LOGIC
-                    let current_expected_group_attribute_keys =
-                        expected_group_keys_set.as_ref().unwrap();
-                    if current_expected_group_attribute_keys.is_empty() {
-                        continue;
-                    }
-
-                    let mut grouped_potential_sources: HashMap<String, Vec<Rc<Span>>> =
-                        HashMap::new();
-                    for s_span in &eligible_sources_before_target {
-                        if let Some(Some(Value::StringValue(s_val))) =
-                            s_span.attributes.get(&self.group_by_attribute)
-                        {
-                            grouped_potential_sources
-                                .entry(s_val.clone())
-                                .or_default()
-                                .push(s_span.clone());
-                        }
-                    }
-
-                    let mut all_groups_meet_threshold = true;
-                    let mut spans_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
-
-                    // Check if all expected groups are present in the potential sources for this target
-                    if grouped_potential_sources.len() < current_expected_group_attribute_keys.len()
-                    {
-                        all_groups_meet_threshold = false;
-                    } else {
-                        for expected_key_val in current_expected_group_attribute_keys {
-                            match grouped_potential_sources.get(expected_key_val) {
-                                Some(group_spans)
-                                    if group_spans.len() >= self.threshold
-                                        && self.threshold > 0 =>
-                                {
-                                    let selected_from_group =
-                                        self.select_spans_for_link_formation(group_spans);
-                                    spans_for_this_grouped_link.extend(selected_from_group);
-                                }
-                                _ => {
-                                    all_groups_meet_threshold = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if all_groups_meet_threshold && !spans_for_this_grouped_link.is_empty() {
-                        // Determine the effective end_time for the source side of the link
-                        // based on the chosen group aggregation strategy.
-                        let effective_link_source_end_time_opt: Option<f64> = match self
-                            .group_aggregation_strategy
-                        {
-                            GroupAggregationStrategy::WaitForLastGroup => {
-                                // Uses the end_time of the latest *ending* source span in the entire group link
-                                spans_for_this_grouped_link
-                                    .iter()
-                                    .map(|s| s.end_time)
-                                    .max_by(|a, b| {
-                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                                    })
-                            }
-                            GroupAggregationStrategy::FirstCompletedGroup => {
-                                let mut group_completion_times: Vec<f64> = Vec::new();
-                                for expected_key_val in current_expected_group_attribute_keys {
-                                    if grouped_potential_sources.contains_key(expected_key_val) {
-                                        let mut latest_end_time_for_this_group = None;
-                                        for s_span in &spans_for_this_grouped_link {
-                                            if let Some(Some(Value::StringValue(s_val))) =
-                                                s_span.attributes.get(&self.group_by_attribute)
-                                            {
-                                                if s_val == expected_key_val {
-                                                    match latest_end_time_for_this_group {
-                                                        Some(current_max) => {
-                                                            if s_span.end_time > current_max {
-                                                                latest_end_time_for_this_group =
-                                                                    Some(s_span.end_time);
-                                                            }
-                                                        }
-                                                        None => {
-                                                            latest_end_time_for_this_group =
-                                                                Some(s_span.end_time);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(time) = latest_end_time_for_this_group {
-                                            group_completion_times.push(time);
-                                        }
-                                    }
-                                }
-                                // The link forms only if ALL groups met threshold, so group_completion_times should not be empty.
-                                group_completion_times
-                                    .iter()
-                                    .min_by(|a, b| {
-                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                                    })
-                                    .cloned()
-                            }
-                        };
-
-                        if let Some(effective_link_source_end_time) =
-                            effective_link_source_end_time_opt
-                        {
-                            if effective_link_source_end_time < target_span.start_time {
-                                let link_distance =
-                                    target_span.start_time - effective_link_source_end_time;
-
-                                let new_formed_link = DependencyLink {
-                                    source_spans: spans_for_this_grouped_link.clone(),
-                                    target_span: target_span.clone(),
-                                };
-
-                                self.record_formed_link(
-                                    &mut stats_for_current_node,
-                                    &mut node_links_for_current_node,
-                                    &mut min_link_for_current_node,
-                                    &mut max_link_for_current_node,
-                                    &new_formed_link,
-                                    link_distance,
-                                    &mut used_target_spans,
-                                    &target_span.span_id,
-                                );
-
-                                self.mark_source_spans_used(
-                                    &spans_for_this_grouped_link,
-                                    &mut global_used_source_span_ids_for_self_mode,
-                                    &mut used_source_ids_for_current_node_all_scope,
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    // NON-GROUPING LOGIC (uses eligible_sources_before_target as potential_sources_for_this_target)
-                    if eligible_sources_before_target.len() >= self.threshold && self.threshold > 0
-                    {
-                        let selected_source_spans_group =
-                            self.select_spans_for_link_formation(&eligible_sources_before_target);
-
-                        if !selected_source_spans_group.is_empty() {
-                            let relevant_source_for_timing = selected_source_spans_group
-                                .last()
-                                .expect("selected_source_spans_group should not be empty here");
-
-                            if relevant_source_for_timing.end_time < target_span.start_time {
-                                let link_distance =
-                                    target_span.start_time - relevant_source_for_timing.end_time;
-
-                                let new_formed_link = DependencyLink {
-                                    source_spans: selected_source_spans_group.clone(),
-                                    target_span: target_span.clone(),
-                                };
-
-                                self.record_formed_link(
-                                    &mut stats_for_current_node,
-                                    &mut node_links_for_current_node,
-                                    &mut min_link_for_current_node,
-                                    &mut max_link_for_current_node,
-                                    &new_formed_link,
-                                    link_distance,
-                                    &mut used_target_spans,
-                                    &target_span.span_id,
-                                );
-
-                                self.mark_source_spans_used(
-                                    &selected_source_spans_group,
-                                    &mut global_used_source_span_ids_for_self_mode,
-                                    &mut used_source_ids_for_current_node_all_scope,
-                                );
-                            }
-                        }
-                    }
-
-                    // For "self" mode without grouping: *all potential* sources for this target are marked globally used.
-                    // This runs after link formation attempt for the current target_span.
-                    if self.source_scope == SourceScope::SameNode {
-                        for s_potential_for_this_target in &eligible_sources_before_target {
-                            global_used_source_span_ids_for_self_mode
-                                .insert(s_potential_for_this_target.span_id.clone());
-                        }
-                    }
-                }
-            }
-
-            // Add result for this node if any links were formed
-            if !node_links_for_current_node.is_empty() || stats_for_current_node.count > 0 {
-                per_node_results.insert(
-                    node_name.clone(),
-                    NodeDependencyMetrics {
-                        link_delay_statistics: stats_for_current_node,
-                        links: node_links_for_current_node,
-                        min_delay_link: min_link_for_current_node,
-                        max_delay_link: max_link_for_current_node,
-                    },
-                );
+            if let Some(metrics) = self.analyze_dependencies_for_single_node(
+                &node_name_str,
+                &source_spans_by_node,
+                current_target_spans_for_node,
+                &mut global_used_source_span_ids_for_self_mode,
+                &expected_group_keys_set,
+            ) {
+                per_node_results.insert(node_name_str.clone(), metrics);
             }
         }
 
@@ -693,6 +337,364 @@ impl AnalyzeDependencyModal {
         });
 
         self.error_message = None;
+    }
+
+    /// Analyzes dependencies for a single node.
+    fn analyze_dependencies_for_single_node(
+        &mut self,
+        node_name: &str,
+        source_spans_by_node: &HashMap<String, Vec<Rc<Span>>>,
+        current_target_node_spans: &[Rc<Span>],
+        global_used_source_span_ids_for_self_mode: &mut HashSet<Vec<u8>>,
+        expected_group_keys_set: &Option<HashSet<String>>,
+    ) -> Option<NodeDependencyMetrics> {
+        let current_source_node_spans = if self.source_scope == SourceScope::SameNode {
+            // Only use spans from this node
+            source_spans_by_node
+                .get(node_name)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            // Use spans from all nodes, sorted by time
+            let mut all_s_spans: Vec<Rc<Span>> =
+                source_spans_by_node.values().flatten().cloned().collect();
+            all_s_spans.sort_by(|a, b| {
+                a.start_time
+                    .partial_cmp(&b.start_time)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            all_s_spans
+        };
+
+        // Skip if no source spans for this node/scope
+        if current_source_node_spans.is_empty() {
+            return None;
+        }
+
+        // Find valid links for the current node
+        let mut node_links_for_current_node = Vec::new();
+        let mut stats_for_current_node = Statistics::new();
+        let mut min_link_for_current_node: Option<DependencyLink> = None;
+        let mut max_link_for_current_node: Option<DependencyLink> = None;
+
+        let mut used_target_spans: HashSet<Vec<u8>> = HashSet::new();
+        // This is specific to the current node when in "all nodes" scope, ensuring sources are not reused for different targets *on this same node* within this call.
+        let mut used_source_ids_for_current_node_all_scope: HashSet<Vec<u8>> = HashSet::new();
+
+        for target_span_rc in current_target_node_spans.iter() {
+            if used_target_spans.contains(&target_span_rc.span_id) {
+                // This target has already been linked by a source group
+                continue;
+            }
+
+            self.process_target_span_for_links(
+                target_span_rc, // Pass as &Rc<Span>
+                &current_source_node_spans,
+                expected_group_keys_set,
+                global_used_source_span_ids_for_self_mode,
+                &mut used_source_ids_for_current_node_all_scope, // Pass as mutable ref
+                &mut node_links_for_current_node,
+                &mut stats_for_current_node,
+                &mut min_link_for_current_node,
+                &mut max_link_for_current_node,
+                &mut used_target_spans,
+            );
+        }
+
+        // Add result for this node if any links were formed
+        if !node_links_for_current_node.is_empty() || stats_for_current_node.count > 0 {
+            Some(NodeDependencyMetrics {
+                link_delay_statistics: stats_for_current_node,
+                links: node_links_for_current_node,
+                min_delay_link: min_link_for_current_node,
+                max_delay_link: max_link_for_current_node,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Processes a single target span to find and record dependency links.
+    #[allow(clippy::too_many_arguments)]
+    fn process_target_span_for_links(
+        &self,
+        target_span: &Rc<Span>,
+        current_source_node_spans: &[Rc<Span>],
+        expected_group_keys_set: &Option<HashSet<String>>,
+        global_used_source_span_ids_for_self_mode: &mut HashSet<Vec<u8>>,
+        used_source_ids_for_current_node_all_scope: &mut HashSet<Vec<u8>>,
+        node_links_for_current_node: &mut Vec<DependencyLink>,
+        stats_for_current_node: &mut Statistics,
+        min_link_for_current_node: &mut Option<DependencyLink>,
+        max_link_for_current_node: &mut Option<DependencyLink>,
+        used_target_spans: &mut HashSet<Vec<u8>>,
+    ) {
+        // Check linking attribute for target_span if specified
+        if !self.linking_attribute.is_empty()
+            && !target_span.attributes.contains_key(&self.linking_attribute)
+        {
+            // Target itself must have the linking attribute to be a candidate
+            return;
+        }
+
+        // Common logic to find all temporally valid, attribute-matching, and not-yet-used source spans
+        // for the current target_span, regardless of grouping.
+        let mut eligible_sources_before_target: Vec<Rc<Span>> = Vec::new();
+        for s_span in current_source_node_spans.iter() {
+            let mut skip_source = false;
+            if self.source_scope == SourceScope::SameNode {
+                if global_used_source_span_ids_for_self_mode.contains(&s_span.span_id) {
+                    skip_source = true;
+                }
+            } else {
+                // "all nodes" mode
+                if used_source_ids_for_current_node_all_scope.contains(&s_span.span_id) {
+                    skip_source = true;
+                }
+            }
+            if skip_source {
+                continue;
+            }
+
+            // Basic time validity
+            if s_span.end_time < target_span.start_time {
+                // Check linking attribute compatibility if field is specified
+                if !self.linking_attribute.is_empty() {
+                    // Source must also have the linking attribute
+                    if !s_span.attributes.contains_key(&self.linking_attribute) {
+                        continue;
+                    }
+                    // Values must match (target_span's linking attribute existence already checked)
+                    let source_value = &s_span.attributes[&self.linking_attribute];
+                    let target_value = &target_span.attributes[&self.linking_attribute];
+                    if source_value != target_value {
+                        continue;
+                    }
+                }
+                eligible_sources_before_target.push(s_span.clone());
+            }
+        }
+
+        // Branch based on grouping
+        if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
+            // GROUPING LOGIC
+            let current_expected_group_attribute_keys = expected_group_keys_set.as_ref().unwrap();
+            if current_expected_group_attribute_keys.is_empty() {
+                // This case implies grouping is active but no valid group keys were found initially.
+                // This should have been caught by prepare_analysis_inputs, but as a safeguard:
+                return;
+            }
+
+            let mut grouped_potential_sources: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
+            for s_span in &eligible_sources_before_target {
+                if let Some(Some(Value::StringValue(s_val))) =
+                    s_span.attributes.get(&self.group_by_attribute)
+                {
+                    grouped_potential_sources
+                        .entry(s_val.clone())
+                        .or_default()
+                        .push(s_span.clone());
+                }
+            }
+
+            let mut all_groups_meet_threshold = true;
+            let mut spans_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
+
+            // Check if all expected groups are present in the potential sources for this target
+            if grouped_potential_sources.len() < current_expected_group_attribute_keys.len() {
+                all_groups_meet_threshold = false;
+            } else {
+                for expected_key_val in current_expected_group_attribute_keys {
+                    match grouped_potential_sources.get(expected_key_val) {
+                        Some(group_spans)
+                            if group_spans.len() >= self.threshold && self.threshold > 0 =>
+                        {
+                            let selected_from_group =
+                                self.select_spans_for_link_formation(group_spans);
+                            spans_for_this_grouped_link.extend(selected_from_group);
+                        }
+                        _ => {
+                            all_groups_meet_threshold = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if all_groups_meet_threshold && !spans_for_this_grouped_link.is_empty() {
+                // Calculate link delay based on aggregation strategy for groups
+                let link_delay = match self.group_aggregation_strategy {
+                    GroupAggregationStrategy::WaitForLastGroup => {
+                        spans_for_this_grouped_link
+                            .iter()
+                            .map(|s| s.end_time)
+                            .fold(f64::NEG_INFINITY, f64::max)
+                            - target_span.start_time
+                    }
+                    GroupAggregationStrategy::FirstCompletedGroup => {
+                        let mut latest_end_time_per_group: HashMap<String, f64> = HashMap::new();
+                        for s_span in &spans_for_this_grouped_link {
+                            if let Some(Some(Value::StringValue(group_key))) =
+                                s_span.attributes.get(&self.group_by_attribute)
+                            {
+                                latest_end_time_per_group
+                                    .entry(group_key.clone())
+                                    .and_modify(|e| *e = e.max(s_span.end_time))
+                                    .or_insert(s_span.end_time);
+                            }
+                        }
+                        latest_end_time_per_group
+                            .values()
+                            .fold(f64::INFINITY, |a, &b| a.min(b))
+                            - target_span.start_time
+                    }
+                }
+                .abs();
+
+                let new_formed_link = DependencyLink {
+                    source_spans: spans_for_this_grouped_link.clone(),
+                    target_span: target_span.clone(),
+                };
+
+                self.record_formed_link(
+                    stats_for_current_node,
+                    node_links_for_current_node,
+                    min_link_for_current_node,
+                    max_link_for_current_node,
+                    &new_formed_link,
+                    link_delay,
+                    used_target_spans,
+                    &target_span.span_id,
+                );
+
+                self.mark_source_spans_used(
+                    &spans_for_this_grouped_link,
+                    global_used_source_span_ids_for_self_mode,
+                    used_source_ids_for_current_node_all_scope,
+                );
+            }
+        } else {
+            // NON-GROUPING LOGIC
+            if eligible_sources_before_target.len() >= self.threshold && self.threshold > 0 {
+                let selected_source_spans_group =
+                    self.select_spans_for_link_formation(&eligible_sources_before_target);
+
+                if !selected_source_spans_group.is_empty() {
+                    let latest_end_time_of_selected_sources = selected_source_spans_group
+                        .iter()
+                        .map(|s| s.end_time)
+                        .fold(f64::NEG_INFINITY, f64::max);
+
+                    let link_distance =
+                        (target_span.start_time - latest_end_time_of_selected_sources).abs();
+
+                    let new_formed_link = DependencyLink {
+                        source_spans: selected_source_spans_group.clone(),
+                        target_span: target_span.clone(),
+                    };
+
+                    self.record_formed_link(
+                        stats_for_current_node,
+                        node_links_for_current_node,
+                        min_link_for_current_node,
+                        max_link_for_current_node,
+                        &new_formed_link,
+                        link_distance,
+                        used_target_spans,
+                        &target_span.span_id,
+                    );
+
+                    self.mark_source_spans_used(
+                        &selected_source_spans_group,
+                        global_used_source_span_ids_for_self_mode,
+                        used_source_ids_for_current_node_all_scope,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Validates inputs and prepares initial span lists for dependency analysis.
+    /// Returns a tuple of (source_name, target_name, source_spans, target_spans, expected_group_keys_set)
+    /// or an error message string if validation fails.
+    fn prepare_analysis_inputs(&mut self) -> Result<PreparedAnalysisInput, String> {
+        // Validate source and target span names
+        let source_name = match &self.source_span_name {
+            Some(name) => name.clone(),
+            None => return Err("Source span not selected".to_string()),
+        };
+        let target_name = match &self.target_span_name {
+            Some(name) => name.clone(),
+            None => return Err("Target span not selected".to_string()),
+        };
+
+        // Validate that source and target spans are different
+        if source_name == target_name {
+            return Err("Source and target spans must be different".to_string());
+        }
+
+        // Collect all source and target spans
+        let mut source_spans = Vec::new();
+        let mut target_spans = Vec::new();
+
+        collect_matching_spans(
+            &self.all_spans_for_analysis,
+            &source_name,
+            &mut source_spans,
+        );
+        collect_matching_spans(
+            &self.all_spans_for_analysis,
+            &target_name,
+            &mut target_spans,
+        );
+
+        if source_spans.is_empty() {
+            return Err(format!("No spans found with name \'{}\'", source_name));
+        }
+
+        if target_spans.is_empty() {
+            return Err(format!("No spans found with name \'{}\'", target_name));
+        }
+
+        // Determine expected_group_keys_set if grouping is active
+        let mut expected_group_keys_set: Option<HashSet<String>> = None;
+        if !self.group_by_attribute.is_empty() {
+            let mut keys_found = HashSet::new();
+            for s_span in &source_spans {
+                if let Some(Some(Value::StringValue(s_val))) =
+                    s_span.attributes.get(&self.group_by_attribute)
+                {
+                    keys_found.insert(s_val.clone());
+                }
+            }
+
+            if keys_found.is_empty() {
+                return Err(format!(
+                    "The \'Group By Attribute\' (\'{}\') was not found in any source spans named \'{}\', or no such source spans have this attribute.",
+                    self.group_by_attribute, source_name
+                ));
+            }
+            expected_group_keys_set = Some(keys_found);
+        }
+
+        // Sort spans by start time
+        source_spans.sort_by(|a, b| {
+            a.start_time
+                .partial_cmp(&b.start_time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        target_spans.sort_by(|a, b| {
+            a.start_time
+                .partial_cmp(&b.start_time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok((
+            source_name,
+            target_name,
+            source_spans,
+            target_spans,
+            expected_group_keys_set,
+        ))
     }
 
     // Show the modal
@@ -1269,4 +1271,27 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
                 id_label_response.on_hover_text("This is the Target Span");
             });
         });
+}
+
+fn group_spans_by_node(
+    source_spans_list: &[Rc<Span>],
+    target_spans_list: &[Rc<Span>],
+) -> (NodeSpanMap, NodeSpanMap) {
+    let mut source_spans_by_node: NodeSpanMap = HashMap::new();
+    let mut target_spans_by_node: NodeSpanMap = HashMap::new();
+
+    for span in source_spans_list {
+        source_spans_by_node
+            .entry(span.node.name.clone())
+            .or_default()
+            .push(span.clone());
+    }
+
+    for span in target_spans_list {
+        target_spans_by_node
+            .entry(span.node.name.clone())
+            .or_default()
+            .push(span.clone());
+    }
+    (source_spans_by_node, target_spans_by_node)
 }
