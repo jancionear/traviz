@@ -530,7 +530,7 @@ impl EditRelationViews {
                 self.relation_views.push(new_relation_view);
                 self.selected_relation_view_idx = self.relation_views.len() - 1;
             }
-            if ui.button("Delete Relation").clicked() {
+            if ui.button("Delete Relation view").clicked() {
                 if let Some(view) = self.relation_views.get(self.selected_relation_view_idx) {
                     if view.is_builtin {
                         self.not_editable_message = "Builtin relation views can not be deleted".to_string();
