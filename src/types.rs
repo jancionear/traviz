@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
+use crate::relation::{Relation, RelationInstance};
+
 pub const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 
 /// Seconds since epoch
@@ -51,6 +53,9 @@ pub struct Span {
     pub display_start: Cell<f32>,
     pub display_length: Cell<f32>,
     pub time_display_length: Cell<f32>,
+
+    pub incoming_relations: RefCell<Vec<RelationInstance>>,
+    pub outgoing_relations: RefCell<Vec<RelationInstance>>,
 }
 
 impl Span {
@@ -64,6 +69,11 @@ impl Span {
             }
         }
         false
+    }
+
+    pub fn original_name(&self) -> &str {
+        // TODO - should this be a field or an attribute?
+        &self.original_name
     }
 }
 
