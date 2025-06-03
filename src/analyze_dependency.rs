@@ -671,11 +671,6 @@ impl AnalyzeDependencyModal {
             None => return Err("Target span not selected".to_string()),
         };
 
-        // Validate that source and target spans are different
-        if source_name == target_name {
-            return Err("Source and target spans must be different".to_string());
-        }
-
         // Collect all source and target spans
         let mut source_spans = Vec::new();
         let mut target_spans = Vec::new();
