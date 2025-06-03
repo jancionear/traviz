@@ -1130,12 +1130,15 @@ impl App {
                         );
                         let bbox = arrange_spans(&spans_in_range, true);
 
-                        self.collect_span_positions(
-                            &spans_in_range,
-                            cur_height,
-                            span_height,
-                            &mut span_positions,
-                        );
+                        if !highlighted_span_ids_set.is_empty() || !self.active_relations.is_empty()
+                        {
+                            self.collect_span_positions(
+                                &spans_in_range,
+                                cur_height,
+                                span_height,
+                                &mut span_positions,
+                            );
+                        }
 
                         ui.style_mut().visuals.override_text_color = Some(colors::BLACK);
                         self.draw_arranged_spans(
