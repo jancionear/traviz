@@ -141,7 +141,7 @@ pub fn find_relations(
     spans: &[Rc<Span>],
 ) -> Vec<RelationInstance> {
     #[cfg(feature = "profiling")]
-    let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("find_relations");
+    let _timing_guard = crate::profiling::GLOBAL_PROFILER.start_timing("find_relations");
 
     let task_timer = TaskTimer::new("Finding relations");
 
