@@ -856,10 +856,10 @@ impl AnalyzeDependencyModal {
             }
 
             // Basic time validity: target must start after source ends
-            if t_span.start_time > source_span.end_time {
-                if self.spans_match_linking_attributes(source_span, t_span) {
-                    eligible_targets_after_source.push(t_span.clone());
-                }
+            if t_span.start_time > source_span.end_time
+                && self.spans_match_linking_attributes(source_span, t_span)
+            {
+                eligible_targets_after_source.push(t_span.clone());
             }
         }
 

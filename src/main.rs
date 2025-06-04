@@ -934,7 +934,7 @@ impl App {
 
                 let mut cache = HashMap::new();
                 for root_span in &self.all_spans_for_analysis {
-                    self.populate_span_cache_recursive(root_span, root_span, &mut cache);
+                    populate_span_cache_recursive(root_span, root_span, &mut cache);
                 }
                 self.span_id_to_root_cache = Some(cache);
             }
@@ -1151,7 +1151,12 @@ impl App {
                         let _timing_guard_arrange =
                             profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
 
-                        let bbox = arrange_spans(&spans_in_range, true);
+                        let bbox = arrange_spans_with_viewport(
+                            &spans_in_range,
+                            true,
+                            self.timeline.selected_start,
+                            self.timeline.selected_end,
+                        );
 
                         if !highlighted_span_ids_set.is_empty() || !self.active_relations.is_empty()
                         {
@@ -1298,8 +1303,23 @@ impl App {
             span.display_length.set(display_len);
             span.time_display_length.set(time_display_len);
 
+            // Filter children to only include those that intersect with the viewport
+            let all_children = span.display_children.borrow();
+            let viewport_culled_children: Vec<Rc<Span>> = all_children
+                .iter()
+                .filter(|child| {
+                    is_intersecting(
+                        child.min_start_time.get(),
+                        child.max_end_time.get(),
+                        start_time,
+                        end_time,
+                    )
+                })
+                .cloned()
+                .collect();
+
             Self::set_display_params_with_highlights(
-                span.display_children.borrow().as_slice(),
+                &viewport_culled_children,
                 highlighted_span_ids,
                 start_time,
                 end_time,
@@ -2048,19 +2068,18 @@ impl App {
             self.set_timeline_end_bars_to_selected();
         }
     }
+}
 
-    /// Recursively populates the span ID to root span cache
-    fn populate_span_cache_recursive(
-        &self,
-        current_span: &Rc<Span>,
-        root_span: &Rc<Span>,
-        cache: &mut HashMap<Vec<u8>, Rc<Span>>,
-    ) {
-        cache.insert(current_span.span_id.clone(), root_span.clone());
+/// Recursively populates the span ID to root span cache
+fn populate_span_cache_recursive(
+    current_span: &Rc<Span>,
+    root_span: &Rc<Span>,
+    cache: &mut HashMap<Vec<u8>, Rc<Span>>,
+) {
+    cache.insert(current_span.span_id.clone(), root_span.clone());
 
-        for child in current_span.children.borrow().iter() {
-            self.populate_span_cache_recursive(child, root_span, cache);
-        }
+    for child in current_span.children.borrow().iter() {
+        populate_span_cache_recursive(child, root_span, cache);
     }
 }
 
@@ -2089,8 +2108,12 @@ struct SpanBoundingBox {
     height: HeightLevel,
 }
 
-/// Sets relative_display_pos for all spans and their children
-fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundingBox {
+fn arrange_spans_with_viewport(
+    input_spans: &[Rc<Span>],
+    first_invocation: bool,
+    viewport_start: f64,
+    viewport_end: f64,
+) -> SpanBoundingBox {
     #[cfg(feature = "profiling")]
     let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
 
@@ -2118,7 +2141,7 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
     let mut active_spans: Vec<usize> = Vec::new();
 
     for (i, span) in sorted_spans.iter().enumerate() {
-        let mut span_bbox = arrange_span(span);
+        let mut span_bbox = arrange_span_with_viewport(span, viewport_start, viewport_end);
         if first_invocation && span_bbox.height > 0 {
             span_bbox.height += 1; // Top-level spans have one unit of padding below them
         }
@@ -2190,7 +2213,11 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
     final_bbox
 }
 
-fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
+fn arrange_span_with_viewport(
+    span: &Rc<Span>,
+    viewport_start: f64,
+    viewport_end: f64,
+) -> SpanBoundingBox {
     let span_start = span.display_start.get();
     let span_end = span_start + span.display_length.get();
 
@@ -2201,7 +2228,27 @@ fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
             height: 1,
         }
     } else {
-        let children_bbox = arrange_spans(span.display_children.borrow().as_slice(), false);
+        // Filter children to only include those that intersect with the viewport
+        let all_children = span.display_children.borrow();
+        let viewport_culled_children: Vec<Rc<Span>> = all_children
+            .iter()
+            .filter(|child| {
+                is_intersecting(
+                    child.min_start_time.get(),
+                    child.max_end_time.get(),
+                    viewport_start,
+                    viewport_end,
+                )
+            })
+            .cloned()
+            .collect();
+
+        let children_bbox = arrange_spans_with_viewport(
+            &viewport_culled_children,
+            false,
+            viewport_start,
+            viewport_end,
+        );
         SpanBoundingBox {
             start: span_start.min(children_bbox.start),
             end: span_end.max(children_bbox.end),
