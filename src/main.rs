@@ -917,6 +917,10 @@ impl App {
 
         let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
         if !self.highlighted_spans.is_empty() {
+            #[cfg(feature = "profiling")]
+            let _timing_guard_highlight =
+                profiling::GLOBAL_PROFILER.start_timing("highlighted_spans_processing");
+
             // This block ensures that if any spans are highlighted, their complete hierarchical context
             // (i.e., their root span from the `all_spans_for_analysis` list) is included for drawing.
             // A new vector is created only if highlighted spans necessitate adding roots not already
@@ -960,6 +964,10 @@ impl App {
         let node_spans_items_for_loop: NodeSpansVec;
 
         if final_spans_for_drawing_owned.is_some() {
+            #[cfg(feature = "profiling")]
+            let _timing_guard_node_map =
+                profiling::GLOBAL_PROFILER.start_timing("build_temp_node_map_for_highlights");
+
             // Highlights are active and modified the span list, build a temporary map
             let mut temp_map_for_highlight: NodeSpansMap = BTreeMap::new();
             for span_ref in spans_to_render {
@@ -1118,6 +1126,11 @@ impl App {
                             &spans_in_range,
                             &self.highlighted_spans,
                         );
+
+                        #[cfg(feature = "profiling")]
+                        let _timing_guard_display_params = profiling::GLOBAL_PROFILER
+                            .start_timing("set_display_params_with_highlights");
+
                         Self::set_display_params_with_highlights(
                             &spans_in_range,
                             &highlighted_span_ids_set,
@@ -1127,10 +1140,19 @@ impl App {
                             under_time_points_area.max.x,
                             ui,
                         );
+
+                        #[cfg(feature = "profiling")]
+                        let _timing_guard_arrange =
+                            profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
+
                         let bbox = arrange_spans(&spans_in_range, true);
 
                         if !highlighted_span_ids_set.is_empty() || !self.active_relations.is_empty()
                         {
+                            #[cfg(feature = "profiling")]
+                            let _timing_guard_positions =
+                                profiling::GLOBAL_PROFILER.start_timing("collect_span_positions");
+
                             self.collect_span_positions(
                                 &spans_in_range,
                                 cur_height,
@@ -1175,6 +1197,10 @@ impl App {
 
                     // Draw dependency arrows if needed
                     if !highlighted_span_ids_set.is_empty() {
+                        #[cfg(feature = "profiling")]
+                        let _timing_guard_arrows =
+                            profiling::GLOBAL_PROFILER.start_timing("draw_dependency_links");
+
                         self.draw_dependency_links(ui, &span_positions, &time_params, ctx);
                     }
 
@@ -1940,6 +1966,10 @@ impl App {
     }
 
     fn highlight_spans_for_dependency_links(&mut self, links: &[DependencyLink]) {
+        #[cfg(feature = "profiling")]
+        let _timing_guard =
+            profiling::GLOBAL_PROFILER.start_timing("highlight_spans_for_dependency_links");
+
         let mut spans_to_highlight = Vec::new();
         let mut unique_span_ids_to_highlight = HashSet::new();
 
@@ -2256,6 +2286,10 @@ fn get_time_dots(start_time: TimePoint, end_time: TimePoint) -> Vec<TimePoint> {
 }
 
 fn set_display_children_with_highlights(spans: &[Rc<Span>], highlighted_spans: &[Rc<Span>]) {
+    #[cfg(feature = "profiling")]
+    let _timing_guard =
+        profiling::GLOBAL_PROFILER.start_timing("set_display_children_with_highlights");
+
     // First, set dont_collapse_this_span for all highlighted spans
     for span in highlighted_spans {
         span.dont_collapse_this_span.set(true);
