@@ -1858,7 +1858,7 @@ impl App {
                 None => continue, // Skip if the span position is not found
             };
 
-            let distance_ms = (to_span.end_time - from_span.start_time) * MILLISECONDS_PER_SECOND;
+            let distance_ms = (to_span.start_time - from_span.end_time) * MILLISECONDS_PER_SECOND;
 
             let arrow_key = ArrowKey {
                 source_span_id: from_span.span_id.clone(),
