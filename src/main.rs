@@ -161,6 +161,9 @@ struct App {
     // Spans highlighting
     highlighted_spans: Vec<Rc<Span>>,
 
+    // Cache for span ID to root span lookup (for highlighted spans performance)
+    span_id_to_root_cache: Option<HashMap<Vec<u8>, Rc<Span>>>,
+
     // Dependency arrow interactivity
     clicked_arrow_info: Option<ArrowInfo>,
     hovered_arrow_key: Option<ArrowKey>,
@@ -246,6 +249,7 @@ impl Default for App {
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
+            span_id_to_root_cache: None,
             clicked_arrow_info: None,
             hovered_arrow_key: None,
             cached_produce_block_starts: None,
@@ -544,6 +548,7 @@ impl App {
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
+        self.span_id_to_root_cache = None;
         self.analyze_span_modal = AnalyzeSpanModal::default();
         self.analyze_dependency_modal = AnalyzeDependencyModal::new();
         self.cached_produce_block_starts = None;
@@ -921,10 +926,21 @@ impl App {
             let _timing_guard_highlight =
                 profiling::GLOBAL_PROFILER.start_timing("highlighted_spans_processing");
 
-            // This block ensures that if any spans are highlighted, their complete hierarchical context
-            // (i.e., their root span from the `all_spans_for_analysis` list) is included for drawing.
-            // A new vector is created only if highlighted spans necessitate adding roots not already
-            // present in the current display mode's spans.
+            // Build the cache if it doesn't exist
+            if self.span_id_to_root_cache.is_none() {
+                #[cfg(feature = "profiling")]
+                let _timing_guard_cache_build =
+                    profiling::GLOBAL_PROFILER.start_timing("build_span_id_cache");
+
+                let mut cache = HashMap::new();
+                for root_span in &self.all_spans_for_analysis {
+                    self.populate_span_cache_recursive(root_span, root_span, &mut cache);
+                }
+                self.span_id_to_root_cache = Some(cache);
+            }
+
+            // Use the cache for fast lookups
+            let cache = self.span_id_to_root_cache.as_ref().unwrap();
             let mut roots_to_add_if_highlighted: Vec<Rc<Span>> = Vec::new();
             let mut current_display_plus_new_root_ids: HashSet<Vec<u8>> = self
                 .spans_to_display
@@ -933,19 +949,9 @@ impl App {
                 .collect();
 
             for highlighted_span_rc in &self.highlighted_spans {
-                let mut containing_root_from_all_spans: Option<Rc<Span>> = None;
-                for root_candidate_from_all in &self.all_spans_for_analysis {
-                    if root_candidate_from_all.is_ancestor_or_self(&highlighted_span_rc.span_id) {
-                        containing_root_from_all_spans = Some(root_candidate_from_all.clone());
-                        break;
-                    }
-                }
-
-                if let Some(root_to_potentially_add) = containing_root_from_all_spans {
-                    if current_display_plus_new_root_ids
-                        .insert(root_to_potentially_add.span_id.clone())
-                    {
-                        roots_to_add_if_highlighted.push(root_to_potentially_add);
+                if let Some(root_span) = cache.get(&highlighted_span_rc.span_id) {
+                    if current_display_plus_new_root_ids.insert(root_span.span_id.clone()) {
+                        roots_to_add_if_highlighted.push(root_span.clone());
                     }
                 }
             }
@@ -2040,6 +2046,20 @@ impl App {
             self.timeline.selected_start = min_time;
             self.timeline.selected_end = max_time;
             self.set_timeline_end_bars_to_selected();
+        }
+    }
+
+    /// Recursively populates the span ID to root span cache
+    fn populate_span_cache_recursive(
+        &self,
+        current_span: &Rc<Span>,
+        root_span: &Rc<Span>,
+        cache: &mut HashMap<Vec<u8>, Rc<Span>>,
+    ) {
+        cache.insert(current_span.span_id.clone(), root_span.clone());
+
+        for child in current_span.children.borrow().iter() {
+            self.populate_span_cache_recursive(child, root_span, cache);
         }
     }
 }
