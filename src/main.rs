@@ -44,7 +44,7 @@ mod structured_modes;
 mod task_timer;
 mod types;
 
-use analyze_dependency::AnalyzeDependencyModal;
+use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
 use analyze_span::AnalyzeSpanModal;
 
 fn main() -> eframe::Result {
@@ -1562,94 +1562,26 @@ impl App {
         // Clear previous highlights
         self.highlighted_spans.clear();
 
-        // Get the analysis result
-        let analysis = match &self.analyze_dependency_modal.analysis_result {
-            Some(res) => res,
+        // Get the links to highlight by cloning them to avoid borrow conflicts
+        let links_to_highlight = match &self.analyze_dependency_modal.analysis_result {
+            Some(analysis) => match analysis.per_node_results.get(&focus_node_name) {
+                Some(node_result) => {
+                    println!("Found node result with {} links", node_result.links.len());
+                    node_result.links.clone()
+                }
+                None => {
+                    println!("Node result not found for: {}", focus_node_name);
+                    return;
+                }
+            },
             None => {
                 println!("No analysis result available!");
                 return;
             }
         };
 
-        let node_result = match analysis.per_node_results.get(&focus_node_name) {
-            Some(res) => res,
-            None => {
-                println!("Node result not found for: {}", focus_node_name);
-                return;
-            }
-        };
-
-        println!("Found node result with {} links", node_result.links.len());
-
-        let mut spans_to_highlight = Vec::new();
-        let mut unique_span_ids_to_highlight: HashSet<Vec<u8>> = HashSet::new();
-
-        // Iterate through links and directly collect unique spans
-        for (i, link) in node_result.links.iter().enumerate() {
-            // Process source spans
-            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
-                println!(
-                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
-                    i,
-                    s_idx + 1,
-                    link.source_spans.len(),
-                    source_s.original_name,
-                    source_s.node.name,
-                    hex::encode(&source_s.span_id)
-                );
-                if unique_span_ids_to_highlight.insert(source_s.span_id.clone()) {
-                    spans_to_highlight.push(source_s.clone());
-                }
-            }
-
-            // Process target span
-            let target_s = &link.target_span;
-            println!(
-                "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
-                i,
-                target_s.original_name,
-                target_s.node.name,
-                hex::encode(&target_s.span_id)
-            );
-            if unique_span_ids_to_highlight.insert(target_s.span_id.clone()) {
-                spans_to_highlight.push(target_s.clone());
-            }
-        }
-
-        // Assign the collected unique spans
-        self.highlighted_spans = spans_to_highlight;
-
-        // Adjust timeline to show these spans if needed
-        if self.highlighted_spans.is_empty() {
-            println!("No spans were highlighted!");
-            return;
-        }
-
-        let mut min_time = f64::MAX;
-        let mut max_time = f64::MIN;
-
-        for span in &self.highlighted_spans {
-            min_time = min_time.min(span.start_time);
-            max_time = max_time.max(span.end_time);
-        }
-
-        // Limit the range to 4 seconds maximum
-        let desired_max_time = min_time + 4.0;
-        if max_time > desired_max_time {
-            max_time = desired_max_time;
-        }
-
-        // Add padding around the time range
-        let padding = (max_time - min_time) * 0.2;
-        min_time -= padding;
-        max_time += padding;
-
-        // Update timeline if needed
-        if min_time < self.timeline.selected_start || max_time > self.timeline.selected_end {
-            self.timeline.selected_start = min_time;
-            self.timeline.selected_end = max_time;
-            self.set_timeline_end_bars_to_selected();
-        }
+        // Use the existing method instead of duplicating the logic
+        self.highlight_spans_for_dependency_links(&links_to_highlight);
     }
 
     // Collect positions of spans in a node, including children
@@ -1717,29 +1649,11 @@ impl App {
         let base_arrow_stroke = Stroke::new(2.0, arrow_color);
 
         for link in links_to_draw.iter() {
-            if link.source_spans.is_empty() {
+            if link.source_spans.is_empty() || link.target_spans.is_empty() {
                 continue;
             }
 
-            let target_span = &link.target_span;
-
-            // Ensure target span y_center_on_screen is available
-            let target_y_center_on_screen = match span_positions.get(&target_span.span_id) {
-                Some(&y_center) => y_center,
-                None => continue, // Target span not found in positions, skip this link
-            };
-
-            // Calculate the x-coordinate for the arrow tip based on the target span's start time
-            let target_x_for_arrow_tip = time_to_screen(
-                target_span.start_time,
-                time_params.visual_start_x,
-                time_params.visual_end_x,
-                time_params.selected_start_time,
-                time_params.selected_end_time,
-            );
-            // The arrow points to the vertical center of the target span
-            let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
-
+            // Draw arrows from each source to each target
             for source_span in &link.source_spans {
                 // Ensure source span y_center_on_screen is available
                 let source_y_center_on_screen = match span_positions.get(&source_span.span_id) {
@@ -1758,52 +1672,72 @@ impl App {
                 // The arrow originates from the vertical center of the source span
                 let from_pos = Pos2::new(source_x_for_arrow_origin, source_y_center_on_screen);
 
-                let distance_ms =
-                    (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
+                for target_span in &link.target_spans {
+                    // Ensure target span y_center_on_screen is available
+                    let target_y_center_on_screen = match span_positions.get(&target_span.span_id) {
+                        Some(&y_center) => y_center,
+                        None => continue, // Target span not found in positions, skip this target
+                    };
 
-                if distance_ms < 0.0 {
-                    // Ensure source ends before target starts
-                    continue;
-                }
+                    // Calculate the x-coordinate for the arrow tip based on the target span's start time
+                    let target_x_for_arrow_tip = time_to_screen(
+                        target_span.start_time,
+                        time_params.visual_start_x,
+                        time_params.visual_end_x,
+                        time_params.selected_start_time,
+                        time_params.selected_end_time,
+                    );
+                    // The arrow points to the vertical center of the target span
+                    let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
 
-                let arrow_key = ArrowKey {
-                    source_span_id: source_span.span_id.clone(),
-                    source_node_name: source_span.node.name.clone(),
-                    target_span_id: target_span.span_id.clone(),
-                    target_node_name: target_span.node.name.clone(),
-                };
+                    let distance_ms =
+                        (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
 
-                // Draw the arrow based on the hover state from the PREVIOUS frame
-                // (or the most recent state if multiple repaints happened quickly)
-                let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+                    if distance_ms < 0.0 {
+                        // Ensure source ends before target starts
+                        continue;
+                    }
 
-                let arrow_interaction_result = draw_dependency_arrow(
-                    ui,
-                    from_pos,
-                    to_pos,
-                    base_arrow_stroke,
-                    format!("{:.2} ms", distance_ms),
-                    should_draw_highlighted,
-                    &arrow_key,
-                );
-
-                if arrow_interaction_result.is_precisely_hovered {
-                    // This arrow is being hovered in the current frame's input processing pass
-                    new_hovered_arrow_key = Some(arrow_key.clone());
-                }
-
-                if arrow_interaction_result.response.clicked() {
-                    self.clicked_arrow_info = Some(ArrowInfo {
-                        source_span_name: source_span.name.clone(),
+                    let arrow_key = ArrowKey {
+                        source_span_id: source_span.span_id.clone(),
                         source_node_name: source_span.node.name.clone(),
-                        source_start_time: source_span.start_time,
-                        source_end_time: source_span.end_time,
-                        target_span_name: target_span.name.clone(),
+                        target_span_id: target_span.span_id.clone(),
                         target_node_name: target_span.node.name.clone(),
-                        target_start_time: target_span.start_time,
-                        target_end_time: target_span.end_time,
-                        duration: target_span.start_time - source_span.end_time,
-                    });
+                    };
+
+                    // Draw the arrow based on the hover state from the PREVIOUS frame
+                    // (or the most recent state if multiple repaints happened quickly)
+                    let should_draw_highlighted =
+                        self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+
+                    let arrow_interaction_result = draw_dependency_arrow(
+                        ui,
+                        from_pos,
+                        to_pos,
+                        base_arrow_stroke,
+                        format!("{:.2} ms", distance_ms),
+                        should_draw_highlighted,
+                        &arrow_key,
+                    );
+
+                    if arrow_interaction_result.is_precisely_hovered {
+                        // This arrow is being hovered in the current frame's input processing pass
+                        new_hovered_arrow_key = Some(arrow_key.clone());
+                    }
+
+                    if arrow_interaction_result.response.clicked() {
+                        self.clicked_arrow_info = Some(ArrowInfo {
+                            source_span_name: source_span.name.clone(),
+                            source_node_name: source_span.node.name.clone(),
+                            source_start_time: source_span.start_time,
+                            source_end_time: source_span.end_time,
+                            target_span_name: target_span.name.clone(),
+                            target_node_name: target_span.node.name.clone(),
+                            target_start_time: target_span.start_time,
+                            target_end_time: target_span.end_time,
+                            duration: target_span.start_time - source_span.end_time,
+                        });
+                    }
                 }
             }
         }
@@ -2002,6 +1936,80 @@ impl App {
             &self.relation_views,
         ) {
             eprintln!("Failed to save persistent data: {}", err);
+        }
+    }
+
+    fn highlight_spans_for_dependency_links(&mut self, links: &[DependencyLink]) {
+        let mut spans_to_highlight = Vec::new();
+        let mut unique_span_ids_to_highlight = HashSet::new();
+
+        for (i, link) in links.iter().enumerate() {
+            // Process source spans
+            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
+                println!(
+                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
+                    i,
+                    s_idx + 1,
+                    link.source_spans.len(),
+                    source_s.original_name,
+                    source_s.node.name,
+                    hex::encode(&source_s.span_id)
+                );
+                if unique_span_ids_to_highlight.insert(source_s.span_id.clone()) {
+                    spans_to_highlight.push(source_s.clone());
+                }
+            }
+
+            // Process target spans
+            for (t_idx, target_s) in link.target_spans.iter().enumerate() {
+                println!(
+                    "[Link {}][Target {}/{}] Name: {} (node: {}, ID: {:?})",
+                    i,
+                    t_idx + 1,
+                    link.target_spans.len(),
+                    target_s.original_name,
+                    target_s.node.name,
+                    hex::encode(&target_s.span_id)
+                );
+                if unique_span_ids_to_highlight.insert(target_s.span_id.clone()) {
+                    spans_to_highlight.push(target_s.clone());
+                }
+            }
+        }
+
+        // Assign the collected unique spans
+        self.highlighted_spans = spans_to_highlight;
+
+        // Adjust timeline to show these spans if needed
+        if self.highlighted_spans.is_empty() {
+            println!("No spans were highlighted!");
+            return;
+        }
+
+        let mut min_time = f64::MAX;
+        let mut max_time = f64::MIN;
+
+        for span in &self.highlighted_spans {
+            min_time = min_time.min(span.start_time);
+            max_time = max_time.max(span.end_time);
+        }
+
+        // Limit the range to 4 seconds maximum
+        let desired_max_time = min_time + 4.0;
+        if max_time > desired_max_time {
+            max_time = desired_max_time;
+        }
+
+        // Add padding around the time range
+        let padding = (max_time - min_time) * 0.2;
+        min_time -= padding;
+        max_time += padding;
+
+        // Update timeline if needed
+        if min_time < self.timeline.selected_start || max_time > self.timeline.selected_end {
+            self.timeline.selected_start = min_time;
+            self.timeline.selected_end = max_time;
+            self.set_timeline_end_bars_to_selected();
         }
     }
 }
