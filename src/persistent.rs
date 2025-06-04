@@ -1,8 +1,10 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use crate::builtin_relations::builtin_relations;
+use crate::legacy::RelationV0;
 use crate::node_filter::{builtin_filters, NodeFilter};
-use crate::relation::{builtin_relation_views, builtin_relations, Relation, RelationView};
+use crate::relation::{builtin_relation_views, Relation, RelationView};
 use crate::structured_modes::{builtin_structured_modes, StructuredMode};
 
 /// Persistent data structure that holds user-defined display modes and node filters.
@@ -12,6 +14,7 @@ use crate::structured_modes::{builtin_structured_modes, StructuredMode};
 pub enum PersistentData {
     V1(PersistentDataV1),
     V2(PersistentDataV2),
+    V3(PersistentDataV3),
 }
 
 impl Default for PersistentData {
@@ -28,6 +31,14 @@ pub struct PersistentDataV1 {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PersistentDataV2 {
+    display_modes: Vec<StructuredMode>,
+    node_filters: Vec<NodeFilter>,
+    relations: Vec<RelationV0>,
+    relation_views: Vec<RelationView>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PersistentDataV3 {
     display_modes: Vec<StructuredMode>,
     node_filters: Vec<NodeFilter>,
     relations: Vec<Relation>,
@@ -52,7 +63,7 @@ pub fn save_persistent_data(
     let mut relation_views = relation_views.to_vec();
     relation_views.retain(|view| !view.is_builtin);
 
-    let data = PersistentData::V2(PersistentDataV2 {
+    let data = PersistentData::V3(PersistentDataV3 {
         display_modes: dmodes,
         node_filters: filters,
         relations,
@@ -77,6 +88,12 @@ pub fn load_persistent_data(
             Vec::new(),
         ),
         PersistentData::V2(data) => (
+            data.display_modes,
+            data.node_filters,
+            data.relations.into_iter().map(RelationV0::into).collect(),
+            data.relation_views,
+        ),
+        PersistentData::V3(data) => (
             data.display_modes,
             data.node_filters,
             data.relations,

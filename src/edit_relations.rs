@@ -2,10 +2,11 @@ use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Vec2, Widget};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::edit_modes::{AddingOrEditing, HIGHLIGHT_COLOR};
+use crate::edit_modes::{AddingOrEditing, EditDisplayModes, HIGHLIGHT_COLOR};
 use crate::relation::{
     AttributeRelation, AttributeRelationOp, MatchType, Relation, RelationNodesConfig, RelationView,
 };
+use crate::structured_modes::SpanSelector;
 
 #[derive(Clone, Debug)]
 pub struct EditRelations {
@@ -217,21 +218,33 @@ impl EditRelations {
     }
 
     fn draw_editing_relation(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
-        ui.label("Editing Relation");
+        ui.heading("Editing Relation");
         self.draw_short_separator(ui);
         ui.horizontal(|ui| {
             ui.label("Relation name:");
             ui.text_edit_singleline(&mut self.current_relation.name);
         });
-        ui.horizontal(|ui| {
-            ui.label("From Span Name:");
-            ui.text_edit_singleline(&mut self.current_relation.from_span_name);
-        });
-        ui.horizontal(|ui| {
-            ui.label("To Span Name:");
-            ui.text_edit_singleline(&mut self.current_relation.to_span_name);
-        });
-        ui.label("Attribute Relations");
+        // TODO - description
+        self.draw_short_separator(ui);
+        ui.strong("From span selector");
+        EditDisplayModes::draw_edit_span_selector(
+            &mut self.current_relation.from_span_selector,
+            ui,
+            self.max_width,
+            "from span selector",
+        );
+        ui.add_space(20.0);
+        self.draw_short_separator(ui);
+        ui.strong("To span selector");
+        EditDisplayModes::draw_edit_span_selector(
+            &mut self.current_relation.to_span_selector,
+            ui,
+            self.max_width,
+            "to span selector",
+        );
+        ui.add_space(20.0);
+        self.draw_short_separator(ui);
+        ui.strong("Attribute Relations");
         let mut attribute_relation_to_remove = None;
         for (i, attr_condition) in &mut self
             .current_relation
@@ -281,6 +294,7 @@ impl EditRelations {
         }
 
         self.draw_short_separator(ui);
+        ui.strong("Other options");
         ui.horizontal(|ui| {
             ui.label("Max time difference (seconds):");
             ui.text_edit_singleline(&mut self.time_difference_string);
@@ -371,8 +385,9 @@ impl EditRelations {
         Relation {
             id: Uuid::new_v4(),
             name: "New relation".to_string(),
-            from_span_name: "from span".to_string(),
-            to_span_name: "to span".to_string(),
+            description: String::new(),
+            from_span_selector: SpanSelector::new_equal_name("from span"),
+            to_span_selector: SpanSelector::new_equal_name("to span"),
             attribute_relations: vec![],
             max_time_diff: Some(10.0),
             nodes_config: RelationNodesConfig::AllNodes,
