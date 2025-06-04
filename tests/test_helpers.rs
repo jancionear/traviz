@@ -99,8 +99,255 @@ pub fn string_attr(value: &str) -> Option<Value> {
     Some(Value::StringValue(value.to_string()))
 }
 
-/// Helper to create simple test scenario with source and target spans
-pub struct SimpleTestScenario {
+/// Helper to create an integer attribute value
+#[allow(dead_code)]
+pub fn int_attr(value: i64) -> Option<Value> {
+    Some(Value::IntValue(value))
+}
+
+/// Helper to create a boolean attribute value
+#[allow(dead_code)]
+pub fn bool_attr(value: bool) -> Option<Value> {
+    Some(Value::BoolValue(value))
+}
+
+/// Helper to create a double attribute value
+#[allow(dead_code)]
+pub fn double_attr(value: f64) -> Option<Value> {
+    Some(Value::DoubleValue(value))
+}
+
+/// Represents a time interval for spans
+#[derive(Debug, Clone)]
+pub struct TimeInterval {
+    pub start: TimePoint,
+    pub end: TimePoint,
+}
+
+impl TimeInterval {
+    pub fn new(start: TimePoint, end: TimePoint) -> Self {
+        Self { start, end }
+    }
+
+    /// Creates an interval with specified duration
+    pub fn with_duration(start: TimePoint, duration: f64) -> Self {
+        Self {
+            start,
+            end: start + duration,
+        }
+    }
+
+    /// Creates an interval that precedes another interval by a gap
+    pub fn before(other: &TimeInterval, gap: f64, duration: f64) -> Self {
+        Self {
+            start: other.start - gap - duration,
+            end: other.start - gap,
+        }
+    }
+
+    /// Creates an interval that follows another interval by a gap
+    pub fn after(other: &TimeInterval, gap: f64, duration: f64) -> Self {
+        Self {
+            start: other.end + gap,
+            end: other.end + gap + duration,
+        }
+    }
+
+    /// Creates an overlapping interval
+    pub fn overlapping(other: &TimeInterval, start_offset: f64, duration: f64) -> Self {
+        Self {
+            start: other.start + start_offset,
+            end: other.start + start_offset + duration,
+        }
+    }
+}
+
+/// Configuration for creating a span with attributes and timing
+#[derive(Debug, Clone)]
+pub struct SpanConfig {
+    pub name: String,
+    pub node_name: String,
+    pub timing: TimeInterval,
+    pub attributes: BTreeMap<String, Option<Value>>,
+    pub span_id: Vec<u8>,
+}
+
+impl SpanConfig {
+    pub fn new(name: &str, node_name: &str, timing: TimeInterval) -> Self {
+        static mut SPAN_ID_COUNTER: u8 = 1;
+        let span_id = unsafe {
+            let id = SPAN_ID_COUNTER;
+            SPAN_ID_COUNTER += 1;
+            vec![id]
+        };
+
+        Self {
+            name: name.to_string(),
+            node_name: node_name.to_string(),
+            timing,
+            attributes: BTreeMap::new(),
+            span_id,
+        }
+    }
+
+    /// Add an attribute to this span
+    pub fn with_attr(mut self, key: &str, value: Option<Value>) -> Self {
+        self.attributes.insert(key.to_string(), value);
+        self
+    }
+
+    /// Add a string attribute
+    pub fn with_string_attr(self, key: &str, value: &str) -> Self {
+        self.with_attr(key, string_attr(value))
+    }
+
+    /// Add an integer attribute
+    pub fn with_int_attr(self, key: &str, value: i64) -> Self {
+        self.with_attr(key, int_attr(value))
+    }
+
+    /// Add multiple attributes from a slice of (key, value) pairs
+    pub fn with_attrs(mut self, attrs: &[(&str, Option<Value>)]) -> Self {
+        for (key, value) in attrs {
+            self.attributes.insert(key.to_string(), value.clone());
+        }
+        self
+    }
+
+    /// Set a custom span ID
+    pub fn with_span_id(mut self, span_id: &[u8]) -> Self {
+        self.span_id = span_id.to_vec();
+        self
+    }
+}
+
+/// Builder for creating comprehensive test scenarios
+pub struct ScenarioBuilder {
+    nodes: Vec<Rc<Node>>,
+    spans: Vec<SpanConfig>,
+    next_node_counter: usize,
+}
+
+impl ScenarioBuilder {
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            spans: Vec::new(),
+            next_node_counter: 1,
+        }
+    }
+
+    /// Add a node to the scenario
+    pub fn add_node(&mut self, name: &str) -> &mut Self {
+        self.nodes.push(create_test_node(name));
+        self
+    }
+
+    /// Add nodes with automatic naming (node_1, node_2, etc.)
+    pub fn add_nodes(&mut self, count: usize) -> &mut Self {
+        for _ in 0..count {
+            let node_name = format!("node_{}", self.next_node_counter);
+            self.next_node_counter += 1;
+            self.add_node(&node_name);
+        }
+        self
+    }
+
+    /// Add a span configuration
+    pub fn add_span(&mut self, config: SpanConfig) -> &mut Self {
+        self.spans.push(config);
+        self
+    }
+
+    /// Add multiple spans with the same name but different timing
+    pub fn add_spans_with_timing(
+        &mut self,
+        name: &str,
+        node_name: &str,
+        timings: &[TimeInterval],
+    ) -> &mut Self {
+        for timing in timings {
+            self.add_span(SpanConfig::new(name, node_name, timing.clone()));
+        }
+        self
+    }
+
+    /// Add spans with sequential timing (each span starts after the previous ends)
+    pub fn add_sequential_spans(
+        &mut self,
+        base_name: &str,
+        node_name: &str,
+        start_time: TimePoint,
+        count: usize,
+        duration: f64,
+        gap: f64,
+    ) -> &mut Self {
+        let mut current_time = start_time;
+        for i in 0..count {
+            let span_name = format!("{}_{}", base_name, i + 1);
+            let timing = TimeInterval::with_duration(current_time, duration);
+            self.add_span(SpanConfig::new(&span_name, node_name, timing));
+            current_time += duration + gap;
+        }
+        self
+    }
+
+    /// Build the scenario into a TestScenario
+    pub fn build(self) -> TestScenario {
+        let mut node_map: BTreeMap<String, Rc<Node>> = BTreeMap::new();
+
+        // Ensure all referenced nodes exist
+        for span_config in &self.spans {
+            if !node_map.contains_key(&span_config.node_name) {
+                // Find existing node or create new one
+                if let Some(existing_node) =
+                    self.nodes.iter().find(|n| n.name == span_config.node_name)
+                {
+                    node_map.insert(span_config.node_name.clone(), existing_node.clone());
+                } else {
+                    node_map.insert(
+                        span_config.node_name.clone(),
+                        create_test_node(&span_config.node_name),
+                    );
+                }
+            }
+        }
+
+        // Create spans
+        let mut all_spans = Vec::new();
+        let mut source_spans = Vec::new();
+        let mut target_spans = Vec::new();
+
+        for span_config in self.spans {
+            let node = node_map.get(&span_config.node_name).unwrap().clone();
+            let span = create_test_span_with_attributes(
+                &span_config.name,
+                node,
+                span_config.timing.start,
+                span_config.timing.end,
+                &span_config.span_id,
+                span_config.attributes,
+            );
+            all_spans.push(span.clone());
+
+            // Categorize as source or target based on naming convention
+            if span_config.name.contains("source") || span_config.name.contains("task") {
+                source_spans.push(span);
+            } else if span_config.name.contains("target") || span_config.name.contains("process") {
+                target_spans.push(span);
+            }
+        }
+
+        TestScenario {
+            source_spans,
+            target_spans,
+            all_spans,
+        }
+    }
+}
+
+/// Represents a complete test scenario with source and target spans
+pub struct TestScenario {
     #[allow(dead_code)]
     pub source_spans: Vec<Rc<Span>>,
     #[allow(dead_code)]
@@ -108,49 +355,277 @@ pub struct SimpleTestScenario {
     pub all_spans: Vec<Rc<Span>>,
 }
 
-impl SimpleTestScenario {
-    /// Creates a basic scenario:
-    /// - Node A: source span "task" ending at time 1.0
-    /// - Node A: target span "process" starting at time 2.0
-    /// This should create a dependency with 1.0 second delay
-    pub fn basic_dependency() -> Self {
-        let node_a = create_test_node("node_a");
+impl TestScenario {
+    /// Creates a scenario for testing 1-to-N cardinality on same node
+    pub fn one_to_n_same_node() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
 
-        let source_span = create_test_span("task", node_a.clone(), 0.0, 1.0, &[1]);
+        // One source span
+        let source_timing = TimeInterval::with_duration(0.0, 1.0);
+        builder.add_span(SpanConfig::new("source", "node_a", source_timing));
 
-        let target_span = create_test_span("process", node_a.clone(), 2.0, 3.0, &[2]);
+        // Multiple target spans that start after source ends
+        let target_timings = vec![
+            TimeInterval::with_duration(2.0, 1.0), // starts 1.0 after source ends
+            TimeInterval::with_duration(2.5, 1.0), // starts 1.5 after source ends
+            TimeInterval::with_duration(3.0, 1.0), // starts 2.0 after source ends
+        ];
+        builder.add_spans_with_timing("target", "node_a", &target_timings);
 
-        let source_spans = vec![source_span.clone()];
-        let target_spans = vec![target_span.clone()];
-        let all_spans = vec![source_span, target_span];
+        builder.build()
+    }
 
+    /// Creates a scenario for testing 1-to-N cardinality across nodes
+    pub fn one_to_n_cross_node() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_nodes(3); // node_1, node_2, node_3
+
+        // One source span on node_1
+        let source_timing = TimeInterval::with_duration(0.0, 1.0);
+        builder.add_span(SpanConfig::new("source", "node_1", source_timing));
+
+        // Target spans on different nodes
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_2",
+            TimeInterval::with_duration(2.0, 1.0),
+        ));
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_3",
+            TimeInterval::with_duration(2.5, 1.0),
+        ));
+
+        builder.build()
+    }
+
+    /// Creates a scenario for testing timing strategies
+    pub fn multiple_sources_timing() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
+
+        // Multiple source spans with different end times
+        let source_timings = vec![
+            TimeInterval::with_duration(0.0, 0.5), // ends at 0.5 (earliest)
+            TimeInterval::with_duration(0.2, 0.6), // ends at 0.8 (middle)
+            TimeInterval::with_duration(0.4, 0.8), // ends at 1.2 (latest)
+        ];
+        builder.add_spans_with_timing("source", "node_a", &source_timings);
+
+        // One target span that starts after all sources
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(2.0, 1.0),
+        ));
+
+        builder.build()
+    }
+
+    /// Creates a scenario for testing attribute linking
+    pub fn with_linking_attributes() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
+
+        // Source spans with different height attributes
+        builder.add_span(
+            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+                .with_string_attr("height", "100"),
+        );
+        builder.add_span(
+            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.5, 1.0))
+                .with_string_attr("height", "200"),
+        );
+
+        // Target spans with matching and non-matching height attributes
+        builder.add_span(
+            SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+                .with_string_attr("height", "100"), // matches first source
+        );
+        builder.add_span(
+            SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.5, 1.0))
+                .with_string_attr("height", "300"), // no match
+        );
+
+        builder.build()
+    }
+
+    /// Creates a scenario for testing grouping
+    pub fn with_grouping_attributes() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
+
+        // Source spans with different group attributes
+        builder.add_span(
+            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+                .with_string_attr("shard_id", "shard_1"),
+        );
+        builder.add_span(
+            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+                .with_string_attr("shard_id", "shard_1"),
+        );
+        builder.add_span(
+            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.4, 1.0))
+                .with_string_attr("shard_id", "shard_2"),
+        );
+        builder.add_span(
+            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.6, 1.0))
+                .with_string_attr("shard_id", "shard_2"),
+        );
+
+        // Target span
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(3.0, 1.0),
+        ));
+
+        builder.build()
+    }
+
+    /// Creates a scenario with overlapping spans (invalid timing)
+    pub fn with_overlapping_timing() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
+
+        // Source span that ends AFTER target starts (invalid)
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(1.0, 2.0),
+        )); // ends at 3.0
+
+        // Target span that starts before source ends
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(2.0, 1.0),
+        )); // starts at 2.0
+
+        builder.build()
+    }
+
+    /// Creates a scenario with identical timing
+    pub fn with_identical_timing() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
+
+        // Spans with identical start/end times
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(1.0, 0.0),
+        )); // zero duration
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(1.0, 0.0),
+        )); // same timing
+
+        builder.build()
+    }
+
+    /// Creates an empty scenario
+    pub fn empty() -> Self {
         Self {
-            source_spans,
-            target_spans,
-            all_spans,
+            source_spans: Vec::new(),
+            target_spans: Vec::new(),
+            all_spans: Vec::new(),
         }
     }
 
-    /// Creates a multi-node scenario:
-    /// - Node A: source span "task" ending at time 1.0
-    /// - Node B: target span "process" starting at time 2.5
-    /// This tests cross-node dependencies
-    pub fn cross_node_dependency() -> Self {
-        let node_a = create_test_node("node_a");
-        let node_b = create_test_node("node_b");
+    /// Creates a complex scenario combining multiple features
+    pub fn complex_all_features() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_nodes(2); // node_1, node_2
 
-        let source_span = create_test_span("task", node_a, 0.0, 1.0, &[1]);
+        // Source spans on node_1 with grouping and linking attributes
+        builder.add_span(
+            SpanConfig::new("source", "node_1", TimeInterval::with_duration(0.0, 1.0))
+                .with_string_attr("shard_id", "shard_1")
+                .with_string_attr("height", "100"),
+        );
+        builder.add_span(
+            SpanConfig::new("source", "node_1", TimeInterval::with_duration(0.5, 1.0))
+                .with_string_attr("shard_id", "shard_2")
+                .with_string_attr("height", "100"),
+        );
 
-        let target_span = create_test_span("process", node_b, 2.5, 3.5, &[2]);
+        // Target spans on node_2 with matching attributes
+        builder.add_span(
+            SpanConfig::new("target", "node_2", TimeInterval::with_duration(3.0, 1.0))
+                .with_string_attr("height", "100"),
+        );
+        builder.add_span(
+            SpanConfig::new("target", "node_2", TimeInterval::with_duration(3.5, 1.0))
+                .with_string_attr("height", "100"),
+        );
 
-        let source_spans = vec![source_span.clone()];
-        let target_spans = vec![target_span.clone()];
-        let all_spans = vec![source_span, target_span];
+        builder.build()
+    }
 
-        Self {
-            source_spans,
-            target_spans,
-            all_spans,
-        }
+    /// Creates a scenario specifically for testing statistical calculations.
+    /// Multiple source-target pairs with known delays for validating min, max, mean, median.
+    /// Delays: 0.5s, 1.0s, 1.5s, 2.0s, 3.0s (mean: 1.6s, median: 1.5s, min: 0.5s, max: 3.0s)
+    pub fn for_statistics_testing() -> Self {
+        let mut builder = ScenarioBuilder::new();
+        builder.add_node("node_a");
+
+        // Create source spans that end at different times
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(0.0, 1.0),
+        )); // ends at 1.0
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(1.0, 1.0),
+        )); // ends at 2.0
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(2.0, 1.0),
+        )); // ends at 3.0
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(3.0, 1.0),
+        )); // ends at 4.0
+        builder.add_span(SpanConfig::new(
+            "source",
+            "node_a",
+            TimeInterval::with_duration(4.0, 1.0),
+        )); // ends at 5.0
+
+        // Create target spans with precisely calculated delays
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(1.5, 1.0),
+        )); // delay = 0.5s (from source ending at 1.0)
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(3.0, 1.0),
+        )); // delay = 1.0s (from source ending at 2.0)
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(4.5, 1.0),
+        )); // delay = 1.5s (from source ending at 3.0)
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(6.0, 1.0),
+        )); // delay = 2.0s (from source ending at 4.0)
+        builder.add_span(SpanConfig::new(
+            "target",
+            "node_a",
+            TimeInterval::with_duration(8.0, 1.0),
+        )); // delay = 3.0s (from source ending at 5.0)
+
+        builder.build()
     }
 }
