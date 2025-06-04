@@ -6,17 +6,27 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::Result;
-use edit_modes::EditDisplayModes;
-use edit_relations::{EditRelationViews, EditRelations};
 use eframe::egui::scroll_area::ScrollBarVisibility;
 use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
     ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
 use eframe::epaint::PathShape;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+
+#[cfg(feature = "profiling")]
+use traviz::profiling;
+use traviz::{
+    analyze_dependency, analyze_span, colors, edit_modes, edit_relations, modes, node_filter,
+    persistent, relation, structured_modes, task_timer, types,
+};
+
+use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
+use analyze_span::AnalyzeSpanModal;
+use edit_modes::EditDisplayModes;
+use edit_relations::{EditRelationViews, EditRelations};
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
-use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use relation::{
     builtin_relation_views, builtin_relations, find_relations, Relation, RelationInstance,
     RelationView,
@@ -27,25 +37,6 @@ use types::{
     time_point_to_utc_string, value_to_text, DisplayLength, Event, HeightLevel, Node, Span,
     TimePoint, MILLISECONDS_PER_SECOND,
 };
-
-mod analyze_dependency;
-mod analyze_span;
-mod analyze_utils;
-mod colors;
-mod edit_modes;
-mod edit_relations;
-mod modes;
-mod node_filter;
-mod persistent;
-#[cfg(feature = "profiling")]
-mod profiling;
-mod relation;
-mod structured_modes;
-mod task_timer;
-mod types;
-
-use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
-use analyze_span::AnalyzeSpanModal;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

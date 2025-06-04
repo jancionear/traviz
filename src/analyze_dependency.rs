@@ -220,6 +220,67 @@ impl AnalyzeDependencyModal {
         self.unique_span_names = unique_names;
     }
 
+    /// Test function: Sets the source span name for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_source_span_name(&mut self, name: Option<String>) {
+        self.source_span_name = name;
+    }
+
+    /// Test function: Sets the target span name for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_target_span_name(&mut self, name: Option<String>) {
+        self.target_span_name = name;
+    }
+
+    /// Test function: Sets the threshold for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_threshold(&mut self, threshold: usize) {
+        self.threshold = threshold;
+        self.threshold_edit_str = threshold.to_string();
+    }
+
+    /// Test function: Sets the source scope for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_source_scope(&mut self, scope: SourceScope) {
+        self.source_scope = scope;
+    }
+
+    /// Test function: Sets the analysis cardinality for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_analysis_cardinality(&mut self, cardinality: AnalysisCardinality) {
+        self.analysis_cardinality = cardinality;
+    }
+
+    /// Test function: Sets the linking attribute for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_linking_attribute(&mut self, attribute: String) {
+        self.linking_attribute = attribute;
+    }
+
+    /// Test function: Sets the group by attribute for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_group_by_attribute(&mut self, attribute: String) {
+        self.group_by_attribute = attribute;
+    }
+
+    /// Test function: Sets the source timing strategy for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_source_timing_strategy(&mut self, strategy: SourceTimingStrategy) {
+        self.source_timing_strategy = strategy;
+    }
+
+    /// Test function: Sets the group aggregation strategy for testing purposes.
+    #[allow(dead_code)]
+    pub fn set_group_aggregation_strategy(&mut self, strategy: GroupAggregationStrategy) {
+        self.group_aggregation_strategy = strategy;
+    }
+
+    /// Test function: Gets the error message for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_error_message(&self) -> Option<&String> {
+        self.error_message.as_ref()
+    }
+
     /// Selects a subset of source spans based on the configured timing strategy and threshold.
     fn select_spans_for_link_formation(&self, available_spans: &[Rc<Span>]) -> Vec<Rc<Span>> {
         assert!(self.threshold >= 1);
@@ -325,7 +386,7 @@ impl AnalyzeDependencyModal {
         true
     }
 
-    fn analyze_dependencies(&mut self) {
+    pub fn analyze_dependencies(&mut self) {
         self.analysis_result = None;
 
         let analysis_start = Instant::now();
