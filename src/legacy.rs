@@ -33,6 +33,7 @@ impl From<RelationV0> for Relation {
             max_time_diff: relation.max_time_diff,
             nodes_config: relation.nodes_config,
             match_type: relation.match_type,
+            min_time_diff: 0.0,
             is_builtin: relation.is_builtin,
         }
     }

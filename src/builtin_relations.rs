@@ -19,6 +19,7 @@ pub fn produce_block_on_head_to_preprocess_block_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::AllNodes,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -38,6 +39,7 @@ pub fn preprocess_block_to_postprocess_ready_block_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -57,6 +59,7 @@ pub fn postprocess_ready_block_to_produce_block_on_head_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -76,6 +79,7 @@ pub fn postprocess_ready_block_to_next_preprocess_block_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -105,6 +109,7 @@ pub fn preprocess_block_to_apply_new_chunk_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -134,6 +139,7 @@ pub fn apply_new_chunk_normal_to_postprocess_ready_block_relation() -> Relation 
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -166,6 +172,7 @@ pub fn apply_new_chunk_optimistic_to_postprocess_ready_block_relation() -> Relat
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -185,6 +192,7 @@ pub fn postprocess_ready_block_to_produce_chunk_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -211,6 +219,7 @@ pub fn produce_chunk_to_send_chunk_state_witness_relation() -> Relation {
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -237,6 +246,7 @@ pub fn send_chunk_state_witness_to_validate_chunk_state_witness_relation() -> Re
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::AllNodes,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -263,6 +273,7 @@ pub fn validate_chunk_state_witness_to_send_chunk_endorsement_relation() -> Rela
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -294,6 +305,7 @@ pub fn send_chunk_endorsement_to_validate_chunk_endorsement_relation() -> Relati
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::AllNodes,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -312,6 +324,7 @@ pub fn validate_chunk_endorsement_to_produce_block_on_head_relation() -> Relatio
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -331,6 +344,7 @@ pub fn postprocess_ready_block_to_produce_optimistic_block_on_head_relation() ->
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -350,6 +364,7 @@ pub fn produce_optimistic_block_on_head_to_process_optimistic_block_relation() -
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::AllNodes,
         match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
         is_builtin: true,
     }
 }
@@ -382,6 +397,7 @@ pub fn process_optimistic_block_to_apply_new_chunk_optimistic_relation() -> Rela
         max_time_diff: Some(5.0), // 5 seconds
         nodes_config: RelationNodesConfig::SameNode,
         match_type: MatchType::MatchAll,
+        min_time_diff: -0.010, // apply_new_chunk sometimes happens a few ms before the process_optimistic_block that spawns it.
         is_builtin: true,
     }
 }
