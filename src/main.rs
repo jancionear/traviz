@@ -1736,7 +1736,7 @@ impl App {
                     let distance_ms =
                         (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
 
-                    if distance_ms < 0.0 {
+                    if distance_ms <= 0.0 {
                         // Ensure source ends before target starts
                         continue;
                     }
