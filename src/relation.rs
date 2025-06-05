@@ -4,6 +4,8 @@ use std::rc::{Rc, Weak};
 use sha2::Digest;
 use uuid::Uuid;
 
+use crate::builtin_relations;
+use crate::structured_modes::SpanSelector;
 use crate::task_timer::TaskTimer;
 use crate::types::{value_to_text, Span};
 
@@ -18,13 +20,19 @@ pub struct Relation {
     pub id: Uuid,
 
     pub name: String,
-    pub from_span_name: String,
-    pub to_span_name: String,
+    pub description: String,
+    pub from_span_selector: SpanSelector,
+    pub to_span_selector: SpanSelector,
     pub attribute_relations: Vec<AttributeRelation>,
     pub max_time_diff: Option<f64>,
 
     pub nodes_config: RelationNodesConfig,
     pub match_type: MatchType,
+
+    /// Minimum distance between the end of the "from" span and the start of the "to" span.
+    /// to_span.start_time - from_span.end_time >= min_time_diff
+    /// Setting it to a negative value allows relations to match even if the "to" span starts before the "from" span ends.
+    pub min_time_diff: f64,
 
     pub is_builtin: bool,
 }
@@ -57,10 +65,10 @@ pub enum MatchType {
 
 impl Relation {
     pub fn matches(&self, from_span: &Span, to_span: &Span) -> bool {
-        if from_span.original_name() != self.from_span_name {
+        if !self.from_span_selector.matches(from_span) {
             return false;
         }
-        if to_span.original_name() != self.to_span_name {
+        if !self.to_span_selector.matches(to_span) {
             return false;
         }
 
@@ -173,54 +181,81 @@ pub fn find_relations(
         };
         let relation = Rc::new(relation.clone());
 
-        let Some(from_spans) = spans_by_name.get(&relation.from_span_name) else {
-            continue;
-        };
-        let Some(to_spans) = spans_by_name.get(&relation.to_span_name) else {
-            continue;
-        };
+        let matching_from_span_names = spans_by_name
+            .keys()
+            .filter(|name| {
+                relation
+                    .from_span_selector
+                    .span_name_condition
+                    .matches(name)
+            })
+            .collect::<Vec<_>>();
+        let matching_to_span_names = spans_by_name
+            .keys()
+            .filter(|name| relation.to_span_selector.span_name_condition.matches(name))
+            .collect::<Vec<_>>();
 
-        for from_span in from_spans {
-            let first_to_span_index = find_first_span_after(to_spans, from_span.end_time);
-            for to_span in &to_spans[first_to_span_index..] {
-                if let Some(max_time_diff) = relation.max_time_diff {
-                    if to_span.start_time - from_span.start_time > max_time_diff {
-                        break;
-                    }
-                }
-
-                if !relation.matches(from_span, to_span) {
+        let mut found_relation_instances = 0;
+        for from_span_name in &matching_from_span_names {
+            let Some(from_spans) = spans_by_name.get(from_span_name.as_str()) else {
+                continue;
+            };
+            for to_span_name in &matching_to_span_names {
+                let Some(to_spans) = spans_by_name.get(to_span_name.as_str()) else {
                     continue;
-                }
-
-                let instance = RelationInstance {
-                    from_span: Rc::<Span>::downgrade(from_span),
-                    to_span: Rc::<Span>::downgrade(to_span),
-                    relation: relation.clone(),
                 };
 
-                from_span
-                    .outgoing_relations
-                    .borrow_mut()
-                    .push(instance.clone());
-                to_span
-                    .incoming_relations
-                    .borrow_mut()
-                    .push(instance.clone());
-                res.push(instance);
+                for from_span in from_spans {
+                    let first_to_span_index = find_first_span_after(
+                        to_spans,
+                        from_span.end_time + relation.min_time_diff,
+                    );
+                    for to_span in &to_spans[first_to_span_index..] {
+                        if let Some(max_time_diff) = relation.max_time_diff {
+                            if to_span.start_time - from_span.start_time > max_time_diff {
+                                break;
+                            }
+                        }
 
-                match relation.match_type {
-                    MatchType::MatchAll => {
-                        // For MatchAll, we continue to find more matches
-                        continue;
-                    }
-                    MatchType::MatchClosest => {
-                        // For MatchClosest, we break after the first match
-                        break;
+                        if !relation.matches(from_span, to_span) {
+                            continue;
+                        }
+
+                        let instance = RelationInstance {
+                            from_span: Rc::<Span>::downgrade(from_span),
+                            to_span: Rc::<Span>::downgrade(to_span),
+                            relation: relation.clone(),
+                        };
+
+                        from_span
+                            .outgoing_relations
+                            .borrow_mut()
+                            .push(instance.clone());
+                        to_span
+                            .incoming_relations
+                            .borrow_mut()
+                            .push(instance.clone());
+                        res.push(instance);
+                        found_relation_instances += 1;
+
+                        match relation.match_type {
+                            MatchType::MatchAll => {
+                                // For MatchAll, we continue to find more matches
+                                continue;
+                            }
+                            MatchType::MatchClosest => {
+                                // For MatchClosest, we break after the first match
+                                break;
+                            }
+                        }
                     }
                 }
             }
         }
+        println!(
+            "Found {} instances of relation '{}'",
+            found_relation_instances, relation.name
+        );
     }
 
     task_timer.stop();
@@ -247,87 +282,6 @@ fn find_first_span_after(spans: &[Rc<Span>], start_time: f64) -> usize {
         .unwrap_or(spans.len())
 }
 
-fn pre_post_process_block_relation() -> Relation {
-    Relation {
-        id: make_uuid_from_seed("pre-post-process block"),
-        name: "pre-post-process block".to_string(),
-        from_span_name: "preprocess_block".to_string(),
-        to_span_name: "postprocess_ready_block".to_string(),
-        attribute_relations: vec![AttributeRelation {
-            from_attribute: "height".to_string(),
-            to_attribute: "height".to_string(),
-            relation: AttributeRelationOp::Equal,
-        }],
-        max_time_diff: Some(5.0), // 5 seconds
-        nodes_config: RelationNodesConfig::SameNode,
-        match_type: MatchType::MatchClosest,
-        is_builtin: true,
-    }
-}
-
-fn send_receive_witness_relation() -> Relation {
-    Relation {
-        id: make_uuid_from_seed("send-validate witness"),
-        name: "send-receive witness".to_string(),
-        from_span_name: "send_chunk_state_witness".to_string(),
-        to_span_name: "validate_chunk_state_witness".to_string(),
-        attribute_relations: vec![
-            AttributeRelation {
-                from_attribute: "height".to_string(),
-                to_attribute: "height".to_string(),
-                relation: AttributeRelationOp::Equal,
-            },
-            AttributeRelation {
-                from_attribute: "shard_id".to_string(),
-                to_attribute: "shard_id".to_string(),
-                relation: AttributeRelationOp::Equal,
-            },
-        ],
-        max_time_diff: Some(5.0), // 5 seconds
-        nodes_config: RelationNodesConfig::AllNodes,
-        match_type: MatchType::MatchAll,
-        is_builtin: true,
-    }
-}
-
-fn send_validate_chunk_endorsement() -> Relation {
-    Relation {
-        id: make_uuid_from_seed("send-validate chunk endorsement"),
-        name: "send-validate chunk endorsement".to_string(),
-        from_span_name: "send_chunk_endorsement".to_string(),
-        to_span_name: "validate_chunk_endorsement".to_string(),
-        attribute_relations: vec![
-            AttributeRelation {
-                from_attribute: "height".to_string(),
-                to_attribute: "height".to_string(),
-                relation: AttributeRelationOp::Equal,
-            },
-            AttributeRelation {
-                from_attribute: "shard_id".to_string(),
-                to_attribute: "shard_id".to_string(),
-                relation: AttributeRelationOp::Equal,
-            },
-            AttributeRelation {
-                from_attribute: "validator".to_string(),
-                to_attribute: "validator".to_string(),
-                relation: AttributeRelationOp::Equal,
-            },
-        ],
-        max_time_diff: Some(5.0), // 5 seconds
-        nodes_config: RelationNodesConfig::AllNodes,
-        match_type: MatchType::MatchAll,
-        is_builtin: true,
-    }
-}
-
-pub fn builtin_relations() -> Vec<Relation> {
-    vec![
-        pre_post_process_block_relation(),
-        send_receive_witness_relation(),
-        send_validate_chunk_endorsement(),
-    ]
-}
-
 pub fn builtin_relation_views() -> Vec<RelationView> {
     vec![
         RelationView {
@@ -337,22 +291,47 @@ pub fn builtin_relation_views() -> Vec<RelationView> {
         },
         RelationView {
             name: "Pre-Post Process Block".to_string(),
-            enabled_relations: vec![pre_post_process_block_relation().id],
+            enabled_relations: vec![
+                crate::builtin_relations::preprocess_block_to_postprocess_ready_block_relation().id,
+            ],
             is_builtin: true,
         },
         RelationView {
             name: "Send-Receive Witness".to_string(),
-            enabled_relations: vec![send_receive_witness_relation().id],
+            enabled_relations: vec![builtin_relations::send_chunk_state_witness_to_validate_chunk_state_witness_relation().id],
             is_builtin: true,
         },
         RelationView {
             name: "Send-Validate Chunk Endorsement".to_string(),
-            enabled_relations: vec![send_validate_chunk_endorsement().id],
+            enabled_relations: vec![builtin_relations::send_chunk_endorsement_to_validate_chunk_endorsement_relation().id],
+            is_builtin: true,
+        },
+        RelationView {
+            name: "Block production without witness and endorsement distribution".to_string(),
+            enabled_relations: vec![
+                builtin_relations::produce_block_on_head_to_preprocess_block_relation().id,
+                builtin_relations::preprocess_block_to_postprocess_ready_block_relation().id,
+                builtin_relations::postprocess_ready_block_to_produce_block_on_head_relation().id,
+                builtin_relations::postprocess_ready_block_to_next_preprocess_block_relation().id,
+                builtin_relations::preprocess_block_to_apply_new_chunk_relation().id,
+                builtin_relations::apply_new_chunk_normal_to_postprocess_ready_block_relation().id,
+                builtin_relations::apply_new_chunk_optimistic_to_postprocess_ready_block_relation().id,
+                builtin_relations::postprocess_ready_block_to_produce_chunk_relation().id,
+                builtin_relations::produce_chunk_to_send_chunk_state_witness_relation().id,
+                builtin_relations::validate_chunk_state_witness_to_send_chunk_endorsement_relation().id,
+                builtin_relations::validate_chunk_endorsement_to_produce_block_on_head_relation().id,
+                builtin_relations::postprocess_ready_block_to_produce_optimistic_block_on_head_relation().id,
+                builtin_relations::produce_optimistic_block_on_head_to_process_optimistic_block_relation().id,
+                builtin_relations::process_optimistic_block_to_apply_new_chunk_optimistic_relation().id,
+            ],
             is_builtin: true,
         },
         RelationView {
             name: "All builtin Relations".to_string(),
-            enabled_relations: builtin_relations().iter().map(|r| r.id).collect(),
+            enabled_relations: builtin_relations::builtin_relations()
+                .iter()
+                .map(|r| r.id)
+                .collect(),
             is_builtin: true,
         },
     ]

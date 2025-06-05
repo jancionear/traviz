@@ -17,10 +17,7 @@ use eframe::epaint::PathShape;
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-use relation::{
-    builtin_relation_views, builtin_relations, find_relations, Relation, RelationInstance,
-    RelationView,
-};
+use relation::{builtin_relation_views, find_relations, Relation, RelationInstance, RelationView};
 use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
 use types::{
@@ -31,9 +28,11 @@ use types::{
 mod analyze_dependency;
 mod analyze_span;
 mod analyze_utils;
+mod builtin_relations;
 mod colors;
 mod edit_modes;
 mod edit_relations;
+mod legacy;
 mod modes;
 mod node_filter;
 mod persistent;
@@ -250,7 +249,7 @@ impl Default for App {
             hovered_arrow_key: None,
             cached_produce_block_starts: None,
             cached_node_spans: None,
-            defined_relations: builtin_relations(),
+            defined_relations: builtin_relations::builtin_relations(),
             relation_views: builtin_relation_views(),
             current_relation_view_index: 0,
             active_relations: vec![],

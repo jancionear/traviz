@@ -76,7 +76,7 @@ pub enum MatchOperator {
 
 impl SpanSelector {
     pub fn matches(&self, span: &Span) -> bool {
-        if !self.span_name_condition.matches(&span.name) {
+        if !self.span_name_condition.matches(span.original_name()) {
             return false;
         }
 
@@ -102,6 +102,17 @@ impl SpanSelector {
 
         true
     }
+
+    pub fn new_equal_name(name: &str) -> SpanSelector {
+        SpanSelector {
+            span_name_condition: MatchCondition {
+                operator: MatchOperator::EqualTo,
+                value: name.to_string(),
+            },
+            node_name_condition: MatchCondition::any(),
+            attribute_conditions: vec![],
+        }
+    }
 }
 
 impl MatchCondition {
@@ -109,6 +120,13 @@ impl MatchCondition {
         MatchCondition {
             operator: MatchOperator::Any,
             value: String::new(),
+        }
+    }
+
+    pub fn equal_to(value: &str) -> MatchCondition {
+        MatchCondition {
+            operator: MatchOperator::EqualTo,
+            value: value.to_string(),
         }
     }
 
@@ -284,6 +302,36 @@ pub fn block_production_structured_mode() -> StructuredMode {
     }
 }
 
+fn block_production_without_vce_structured_mode() -> StructuredMode {
+    let mut mode = block_production_structured_mode();
+    mode.name = "Block Production without VCE".to_string();
+
+    let hide_vce_rule = SpanRule {
+        name: "Hide validate_chunk_endorsement".to_string(),
+        selector: SpanSelector {
+            span_name_condition: MatchCondition {
+                operator: MatchOperator::EqualTo,
+                value: "validate_chunk_endorsement".to_string(),
+            },
+            node_name_condition: MatchCondition::any(),
+            attribute_conditions: vec![],
+        },
+        decision: SpanDecision {
+            visible: false,
+            display_length: DisplayLength::Time,
+            replace_name: String::new(),
+            add_height_to_name: false,
+            add_shard_id_to_name: false,
+        },
+    };
+
+    mode.span_rules = std::iter::once(hide_vce_rule)
+        .chain(mode.span_rules)
+        .collect();
+
+    mode
+}
+
 fn show_span(name: &str) -> SpanRule {
     SpanRule {
         name: format!("Show {}", name),
@@ -311,5 +359,6 @@ pub fn builtin_structured_modes() -> Vec<StructuredMode> {
         chain_structured_mode(),
         everything_structured_mode(),
         block_production_structured_mode(),
+        block_production_without_vce_structured_mode(),
     ]
 }

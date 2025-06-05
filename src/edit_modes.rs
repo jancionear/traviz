@@ -361,57 +361,12 @@ impl EditDisplayModes {
             ui.text_edit_singleline(&mut self.current_span_rule.name);
         });
         self.draw_short_separator(ui);
-        ui.label("Span name condition");
-        Self::draw_edit_match_condition(
+        Self::draw_edit_span_selector(
+            &mut self.current_span_rule.selector,
             ui,
-            &mut self.current_span_rule.selector.span_name_condition,
-            "span name condition",
+            self.max_width,
+            "span rule selector",
         );
-        self.draw_short_separator(ui);
-        ui.label("Node name condition");
-        Self::draw_edit_match_condition(
-            ui,
-            &mut self.current_span_rule.selector.node_name_condition,
-            "node name condition",
-        );
-        self.draw_short_separator(ui);
-        ui.label("Attribute Conditions");
-        let mut attribute_condition_to_remove = None;
-        for (i, attr_condition) in &mut self
-            .current_span_rule
-            .selector
-            .attribute_conditions
-            .iter_mut()
-            .enumerate()
-        {
-            ui.horizontal(|ui| {
-                ui.label("Attribute Name:");
-                ui.text_edit_singleline(&mut attr_condition.0);
-                Self::draw_edit_match_condition(
-                    ui,
-                    &mut attr_condition.1,
-                    format!("attribute condition {}", i).as_str(),
-                );
-                if ui.button("Remove").clicked() {
-                    attribute_condition_to_remove = Some(i);
-                }
-            });
-        }
-        if let Some(idx) = attribute_condition_to_remove {
-            self.current_span_rule
-                .selector
-                .attribute_conditions
-                .remove(idx);
-        }
-        if ui.button("New Attribute Condition").clicked() {
-            self.current_span_rule.selector.attribute_conditions.push((
-                "<attribute name>".to_string(),
-                MatchCondition {
-                    operator: MatchOperator::EqualTo,
-                    value: "val".to_string(),
-                },
-            ));
-        }
         self.draw_short_separator(ui);
         ui.label("Decision");
         ui.horizontal(|ui| {
@@ -510,6 +465,62 @@ impl EditDisplayModes {
                     ui.text_edit_singleline(&mut condition.value);
                 });
             }
+        }
+    }
+
+    pub fn draw_edit_span_selector(
+        selector: &mut SpanSelector,
+        ui: &mut Ui,
+        max_width: f32,
+        ui_seed: &str,
+    ) {
+        let draw_short_separator = |ui: &mut Ui| {
+            ui.set_max_width(10.0);
+            ui.separator();
+            ui.set_max_width(max_width);
+        };
+
+        ui.label("Span name condition");
+        Self::draw_edit_match_condition(
+            ui,
+            &mut selector.span_name_condition,
+            &format!("span name condition {ui_seed}"),
+        );
+        draw_short_separator(ui);
+        ui.label("Node name condition");
+        Self::draw_edit_match_condition(
+            ui,
+            &mut selector.node_name_condition,
+            &format!("node name condition {ui_seed}"),
+        );
+        draw_short_separator(ui);
+        ui.label("Attribute Conditions");
+        let mut attribute_condition_to_remove = None;
+        for (i, attr_condition) in &mut selector.attribute_conditions.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label("Attribute Name:");
+                ui.text_edit_singleline(&mut attr_condition.0);
+                Self::draw_edit_match_condition(
+                    ui,
+                    &mut attr_condition.1,
+                    format!("attribute condition {} {}", ui_seed, i).as_str(),
+                );
+                if ui.button("Remove").clicked() {
+                    attribute_condition_to_remove = Some(i);
+                }
+            });
+        }
+        if let Some(idx) = attribute_condition_to_remove {
+            selector.attribute_conditions.remove(idx);
+        }
+        if ui.button("New Attribute Condition").clicked() {
+            selector.attribute_conditions.push((
+                "<attribute name>".to_string(),
+                MatchCondition {
+                    operator: MatchOperator::EqualTo,
+                    value: "val".to_string(),
+                },
+            ));
         }
     }
 }
