@@ -1,6 +1,7 @@
 use approx::assert_abs_diff_eq;
 use traviz::analyze_dependency::{
     AnalysisCardinality, AnalyzeDependencyModal, GroupAggregationStrategy, SourceScope,
+    SourceTimingStrategy,
 };
 
 mod test_helpers;
@@ -340,9 +341,7 @@ fn test_earliest_first_timing_strategy() {
     modal.set_threshold(2);
     modal.set_source_scope(SourceScope::SameNode);
     modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
-    modal.set_source_timing_strategy(
-        traviz::analyze_dependency::SourceTimingStrategy::EarliestFirst,
-    );
+    modal.set_source_timing_strategy(SourceTimingStrategy::EarliestFirst);
 
     modal.analyze_dependencies();
 
@@ -380,7 +379,7 @@ fn test_latest_first_timing_strategy() {
     modal.set_threshold(2); // Select 2 out of 3 available sources
     modal.set_source_scope(SourceScope::SameNode);
     modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
-    modal.set_source_timing_strategy(traviz::analyze_dependency::SourceTimingStrategy::LatestFirst);
+    modal.set_source_timing_strategy(SourceTimingStrategy::LatestFirst);
 
     modal.analyze_dependencies();
 
@@ -1230,7 +1229,7 @@ fn test_complex_all_features_combined() {
     modal.set_linking_attribute("env".to_string());
     modal.set_group_by_attribute("batch_id".to_string());
     modal.set_group_aggregation_strategy(GroupAggregationStrategy::WaitForLastGroup);
-    modal.set_source_timing_strategy(traviz::analyze_dependency::SourceTimingStrategy::LatestFirst);
+    modal.set_source_timing_strategy(SourceTimingStrategy::LatestFirst);
 
     modal.analyze_dependencies();
 
@@ -2556,4 +2555,121 @@ fn test_min_max_delay_link_identification() {
 
     assert_abs_diff_eq!(overall_min_link.delay_seconds, 0.5);
     assert_abs_diff_eq!(overall_max_link.delay_seconds, 3.0);
+}
+
+#[test]
+fn test_parse_analysis_description() {
+    let mut modal = AnalyzeDependencyModal::new();
+
+    // Test basic parsing
+    let description = "Analysis of dependency: 'send_chunk_state_witness' -> 'validate_chunk_state_witness' (cardinality: 1-to-N, threshold: 4, linking by: height,shard_id, group by: none, scope: all nodes, timing: Earliest First, group aggregation: First Completed Group)";
+
+    let result = modal.parse_and_fill_from_description(description);
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
+
+    // Verify all fields were set correctly
+    assert_eq!(
+        modal.get_source_span_name(),
+        Some(&"send_chunk_state_witness".to_string())
+    );
+    assert_eq!(
+        modal.get_target_span_name(),
+        Some(&"validate_chunk_state_witness".to_string())
+    );
+    assert_eq!(
+        *modal.get_analysis_cardinality(),
+        AnalysisCardinality::OneToN
+    );
+    assert_eq!(modal.get_threshold(), 4);
+    assert_eq!(modal.get_linking_attribute(), "height,shard_id");
+    assert_eq!(modal.get_group_by_attribute(), "");
+    assert_eq!(*modal.get_source_scope(), SourceScope::AllNodes);
+    assert_eq!(
+        *modal.get_source_timing_strategy(),
+        SourceTimingStrategy::EarliestFirst
+    );
+    assert_eq!(
+        *modal.get_group_aggregation_strategy(),
+        GroupAggregationStrategy::FirstCompletedGroup
+    );
+
+    // Verify search text was updated
+    assert_eq!(modal.get_source_search_text(), "send_chunk_state_witness");
+    assert_eq!(
+        modal.get_target_search_text(),
+        "validate_chunk_state_witness"
+    );
+}
+
+#[test]
+fn test_parse_analysis_description_with_grouping() {
+    let mut modal = AnalyzeDependencyModal::new();
+
+    let description = "Analysis of dependency: 'worker' -> 'processor' (cardinality: N-to-1, threshold: 2, linking by: none, group by: batch_id, scope: self, timing: Latest First, group aggregation: Wait For Last Group)";
+
+    let result = modal.parse_and_fill_from_description(description);
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
+
+    // Verify fields
+    assert_eq!(modal.get_source_span_name(), Some(&"worker".to_string()));
+    assert_eq!(modal.get_target_span_name(), Some(&"processor".to_string()));
+    assert_eq!(
+        *modal.get_analysis_cardinality(),
+        AnalysisCardinality::NToOne
+    );
+    assert_eq!(modal.get_threshold(), 2);
+    assert_eq!(modal.get_linking_attribute(), "");
+    assert_eq!(modal.get_group_by_attribute(), "batch_id");
+    assert_eq!(*modal.get_source_scope(), SourceScope::SameNode);
+    assert_eq!(
+        *modal.get_source_timing_strategy(),
+        SourceTimingStrategy::LatestFirst
+    );
+    assert_eq!(
+        *modal.get_group_aggregation_strategy(),
+        GroupAggregationStrategy::WaitForLastGroup
+    );
+}
+
+#[test]
+fn test_parse_analysis_description_errors() {
+    let mut modal = AnalyzeDependencyModal::new();
+
+    // Test invalid prefix
+    let result = modal.parse_and_fill_from_description("Invalid prefix: 'source' -> 'target'");
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .contains("must start with 'Analysis of dependency:'"));
+
+    // Test missing arrow pattern
+    let result = modal.parse_and_fill_from_description(
+        "Analysis of dependency: source -> target (cardinality: N-to-1)",
+    );
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .contains("Could not find 'source' -> 'target' pattern in quotes"));
+
+    // Test missing parentheses
+    let result =
+        modal.parse_and_fill_from_description("Analysis of dependency: 'source' -> 'target'");
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .contains("Could not find opening parenthesis"));
+
+    // Test invalid cardinality
+    let result = modal.parse_and_fill_from_description(
+        "Analysis of dependency: 'source' -> 'target' (cardinality: invalid)",
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Unknown cardinality"));
+
+    // Test invalid threshold
+    let result = modal.parse_and_fill_from_description(
+        "Analysis of dependency: 'source' -> 'target' (threshold: invalid)",
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Invalid threshold"));
 }

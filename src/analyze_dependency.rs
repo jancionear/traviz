@@ -10,6 +10,7 @@ use eframe::egui::{
     self, Button, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit, Ui, Vec2,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
+use regex;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
@@ -170,6 +171,8 @@ pub struct AnalyzeDependencyModal {
     pub focus_node: Option<String>,
     /// If set, shows a popup with details of a specific dependency link.
     show_link_details_popup: Option<LinkDetailsPopupInfo>,
+    /// Input for parsing analysis descriptions.
+    description_input: String,
 }
 
 type PreparedAnalysisInput = (
@@ -189,6 +192,7 @@ impl AnalyzeDependencyModal {
             threshold: initial_threshold,
             threshold_edit_str: initial_threshold.to_string(),
             group_aggregation_strategy: GroupAggregationStrategy::default(),
+            description_input: String::new(),
             ..Default::default()
         }
     }
@@ -279,6 +283,72 @@ impl AnalyzeDependencyModal {
     #[allow(dead_code)]
     pub fn get_error_message(&self) -> Option<&String> {
         self.error_message.as_ref()
+    }
+
+    /// Test function: Gets the source span name for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_source_span_name(&self) -> Option<&String> {
+        self.source_span_name.as_ref()
+    }
+
+    /// Test function: Gets the target span name for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_target_span_name(&self) -> Option<&String> {
+        self.target_span_name.as_ref()
+    }
+
+    /// Test function: Gets the analysis cardinality for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_analysis_cardinality(&self) -> &AnalysisCardinality {
+        &self.analysis_cardinality
+    }
+
+    /// Test function: Gets the threshold for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_threshold(&self) -> usize {
+        self.threshold
+    }
+
+    /// Test function: Gets the linking attribute for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_linking_attribute(&self) -> &String {
+        &self.linking_attribute
+    }
+
+    /// Test function: Gets the group by attribute for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_group_by_attribute(&self) -> &String {
+        &self.group_by_attribute
+    }
+
+    /// Test function: Gets the source scope for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_source_scope(&self) -> &SourceScope {
+        &self.source_scope
+    }
+
+    /// Test function: Gets the source timing strategy for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_source_timing_strategy(&self) -> &SourceTimingStrategy {
+        &self.source_timing_strategy
+    }
+
+    /// Test function: Gets the group aggregation strategy for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_group_aggregation_strategy(&self) -> &GroupAggregationStrategy {
+        &self.group_aggregation_strategy
+    }
+
+    /// Test function: Gets the source search text for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_source_search_text(&self) -> &String {
+        &self.source_search_text
+    }
+
+    /// Test function: Gets the target search text for testing purposes.
+    #[allow(dead_code)]
+    pub fn get_target_search_text(&self) -> &String {
+        &self.target_search_text
     }
 
     /// Selects a subset of source spans based on the configured timing strategy and threshold.
@@ -1166,6 +1236,11 @@ impl AnalyzeDependencyModal {
                 ui_main_column.heading("Analyze Dependency");
                 ui_main_column.add_space(10.0);
 
+                // Quick setup section for parsing analysis descriptions
+                self.show_quick_setup_parsing_ui(ui_main_column);
+
+                ui_main_column.add_space(10.0);
+
                 Grid::new("source_target_grid")
                     .num_columns(2)
                     .spacing([20.0, 10.0])
@@ -1592,6 +1667,7 @@ impl AnalyzeDependencyModal {
             self.group_aggregation_strategy = GroupAggregationStrategy::default();
             self.analysis_cardinality = AnalysisCardinality::default();
             self.error_message = None;
+            self.description_input = String::new();
         }
 
         // Show the link details popup if requested
@@ -1650,6 +1726,232 @@ impl AnalyzeDependencyModal {
         if close_requested {
             self.show_link_details_popup = None;
         }
+    }
+
+    /// EXPERIMENTAL FEATURE: Quick setup from analysis description parsing
+    ///
+    /// Parse an analysis description string and populate the modal fields
+    pub fn parse_and_fill_from_description(&mut self, description: &str) -> Result<(), String> {
+        // Clear any previous parse error
+        self.error_message = None;
+
+        // Trim whitespace
+        let desc = description.trim();
+
+        // Check if it starts with the expected prefix
+        if !desc.starts_with("Analysis of dependency:") {
+            return Err("Description must start with 'Analysis of dependency:'".to_string());
+        }
+
+        // Parse source and target span names
+        let after_prefix = desc.strip_prefix("Analysis of dependency:").unwrap().trim();
+
+        // Find the arrow pattern 'source' -> 'target'
+        let arrow_regex = regex::Regex::new(r"'([^']+)'\s*->\s*'([^']+)'").unwrap();
+        let arrow_captures = arrow_regex
+            .captures(after_prefix)
+            .ok_or("Could not find 'source' -> 'target' pattern in quotes")?;
+        let source_name = arrow_captures.get(1).unwrap().as_str().to_string();
+        let target_name = arrow_captures.get(2).unwrap().as_str().to_string();
+
+        // Extract the parameters part (everything in parentheses)
+        let params_start = after_prefix
+            .find('(')
+            .ok_or("Could not find opening parenthesis for parameters")?;
+        let params_end = after_prefix
+            .rfind(')')
+            .ok_or("Could not find closing parenthesis for parameters")?;
+        let params_str = &after_prefix[params_start + 1..params_end];
+
+        // Parse individual parameters
+        let mut cardinality = None;
+        let mut threshold = None;
+        let mut linking_by = None;
+        let mut group_by = None;
+        let mut scope = None;
+        let mut timing = None;
+        let mut group_aggregation = None;
+
+        // Define the expected parameter names in order
+        let param_names = [
+            "cardinality:",
+            "threshold:",
+            "linking by:",
+            "group by:",
+            "scope:",
+            "timing:",
+            "group aggregation:",
+        ];
+
+        // Parse parameters by finding each parameter name and taking everything until the next parameter name
+        let mut remaining = params_str;
+
+        for (i, &param_name) in param_names.iter().enumerate() {
+            if let Some(start_pos) = remaining.find(param_name) {
+                // Move past the parameter name
+                let value_start = start_pos + param_name.len();
+                let value_part = &remaining[value_start..];
+
+                // Find the next parameter name to determine where this value ends
+                let mut value_end = value_part.len();
+                for &next_param_name in &param_names[i + 1..] {
+                    if let Some(next_pos) = value_part.find(next_param_name) {
+                        value_end = value_end.min(next_pos);
+                    }
+                }
+
+                // Extract and trim the value
+                let value = value_part[..value_end].trim().trim_end_matches(',').trim();
+
+                // Parse the specific parameter
+                match param_name {
+                    "cardinality:" => {
+                        cardinality = Some(match value {
+                            "N-to-1" => AnalysisCardinality::NToOne,
+                            "1-to-N" => AnalysisCardinality::OneToN,
+                            _ => return Err(format!("Unknown cardinality: {}", value)),
+                        });
+                    }
+                    "threshold:" => {
+                        threshold = Some(
+                            value
+                                .parse::<usize>()
+                                .map_err(|_| format!("Invalid threshold: {}", value))?,
+                        );
+                    }
+                    "linking by:" => {
+                        linking_by = Some(if value == "none" {
+                            String::new()
+                        } else {
+                            value.to_string()
+                        });
+                    }
+                    "group by:" => {
+                        group_by = Some(if value == "none" {
+                            String::new()
+                        } else {
+                            value.to_string()
+                        });
+                    }
+                    "scope:" => {
+                        scope = Some(match value {
+                            "self" => SourceScope::SameNode,
+                            "all nodes" => SourceScope::AllNodes,
+                            _ => return Err(format!("Unknown scope: {}", value)),
+                        });
+                    }
+                    "timing:" => {
+                        timing = Some(match value {
+                            "Earliest First" => SourceTimingStrategy::EarliestFirst,
+                            "Latest First" => SourceTimingStrategy::LatestFirst,
+                            _ => return Err(format!("Unknown timing strategy: {}", value)),
+                        });
+                    }
+                    "group aggregation:" => {
+                        group_aggregation = Some(match value {
+                            "Wait For Last Group" => GroupAggregationStrategy::WaitForLastGroup,
+                            "First Completed Group" => {
+                                GroupAggregationStrategy::FirstCompletedGroup
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "Unknown group aggregation strategy: {}",
+                                    value
+                                ))
+                            }
+                        });
+                    }
+                    _ => {}
+                }
+
+                // Move the remaining string forward to avoid processing the same parameter again
+                remaining = &remaining[value_start + value_end..];
+            }
+        }
+
+        // Apply the parsed values
+        self.source_span_name = Some(source_name);
+        self.target_span_name = Some(target_name);
+
+        if let Some(card) = cardinality {
+            self.analysis_cardinality = card;
+        }
+
+        if let Some(thresh) = threshold {
+            self.threshold = thresh.max(1);
+            self.threshold_edit_str = self.threshold.to_string();
+        }
+
+        if let Some(linking) = linking_by {
+            self.linking_attribute = linking;
+        }
+
+        if let Some(grouping) = group_by {
+            self.group_by_attribute = grouping;
+        }
+
+        if let Some(sc) = scope {
+            self.source_scope = sc;
+        }
+
+        if let Some(tim) = timing {
+            self.source_timing_strategy = tim;
+        }
+
+        if let Some(agg) = group_aggregation {
+            self.group_aggregation_strategy = agg;
+        }
+
+        // Update search text to match the selected spans
+        if let Some(ref source) = self.source_span_name {
+            self.source_search_text = source.clone();
+        }
+        if let Some(ref target) = self.target_span_name {
+            self.target_search_text = target.clone();
+        }
+
+        Ok(())
+    }
+
+    /// EXPERIMENTAL FEATURE: Quick setup from analysis description parsing
+    fn show_quick_setup_parsing_ui(&mut self, ui_main_column: &mut Ui) {
+        ui_main_column.collapsing("Quick Setup from Analysis Description", |ui_quick_setup| {
+            ui_quick_setup.label("Paste an analysis description to automatically fill all fields:");
+            ui_quick_setup.add_space(5.0);
+
+            ui_quick_setup.horizontal(|ui_input_row| {
+                ui_input_row.add(
+                    TextEdit::multiline(&mut self.description_input)
+                        .desired_width(ui_input_row.available_width() - 120.0)
+                        .desired_rows(3)
+                        .hint_text("Analysis of dependency: 'source_span' -> 'target_span' (cardinality: 1-to-N, threshold: 1, linking by: none, group by: none, scope: all nodes, timing: Earliest First, group aggregation: First Completed Group)")
+                );
+
+                ui_input_row.vertical(|ui_button_col| {
+                    if ui_button_col.button("Parse, Fill and Analyze").clicked() {
+                        if let Err(err) = self.parse_and_fill_from_description(&self.description_input.clone()) {
+                            self.error_message = Some(format!("Parse error: {}", err));
+                        } else {
+                            // Clear parse errors but keep other error messages
+                            if let Some(ref msg) = self.error_message {
+                                if msg.starts_with("Parse error:") {
+                                    self.error_message = None;
+                                }
+                            }
+                            // After successful parsing, run the analysis
+                            self.analyze_dependencies();
+                        }
+                    }
+                });
+            });
+
+            if let Some(ref error) = self.error_message {
+                if error.starts_with("Parse error:") {
+                    ui_quick_setup.add_space(5.0);
+                    ui_quick_setup.colored_label(colors::MILD_RED, error);
+                }
+            }
+        });
     }
 }
 
