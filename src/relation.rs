@@ -30,7 +30,7 @@ pub struct Relation {
     pub match_type: MatchType,
 
     /// Minimum distance between the end of the "from" span and the start of the "to" span.
-    /// to_span.end_time - from_span.start_time >= min_time_diff
+    /// to_span.start_time - from_span.end_time >= min_time_diff
     /// Setting it to a negative value allows relations to match even if the "to" span starts before the "from" span ends.
     pub min_time_diff: f64,
 
