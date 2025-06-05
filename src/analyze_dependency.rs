@@ -1118,19 +1118,37 @@ impl AnalyzeDependencyModal {
         let mut expected_group_keys_set: Option<HashSet<String>> = None;
         if !self.group_by_attribute.is_empty() {
             let mut keys_found = HashSet::new();
-            for s_span in &source_spans {
+
+            // Choose which spans to check based on cardinality mode
+            let (spans_to_check, span_type_name) = match self.analysis_cardinality {
+                AnalysisCardinality::NToOne => (&source_spans, &source_name),
+                AnalysisCardinality::OneToN => (&target_spans, &target_name),
+            };
+
+            for span in spans_to_check {
                 if let Some(Some(Value::StringValue(s_val))) =
-                    s_span.attributes.get(&self.group_by_attribute)
+                    span.attributes.get(&self.group_by_attribute)
                 {
                     keys_found.insert(s_val.clone());
                 }
             }
 
             if keys_found.is_empty() {
-                return Err(format!(
-                    "The \'Group By Attribute\' (\'{}\') was not found in any source spans named \'{}\', or no such source spans have this attribute.",
-                    self.group_by_attribute, source_name
-                ));
+                let error_message = match self.analysis_cardinality {
+                    AnalysisCardinality::NToOne => {
+                        format!(
+                            "The \'Group By Attribute\' (\'{}\') was not found in any source spans named \'{}\', or no such source spans have this attribute.",
+                            self.group_by_attribute, span_type_name
+                        )
+                    }
+                    AnalysisCardinality::OneToN => {
+                        format!(
+                            "The \'Group By Attribute\' (\'{}\') was not found in any target spans named \'{}\', or no such target spans have this attribute.",
+                            self.group_by_attribute, span_type_name
+                        )
+                    }
+                };
+                return Err(error_message);
             }
             expected_group_keys_set = Some(keys_found);
         }
