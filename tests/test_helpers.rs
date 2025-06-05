@@ -125,39 +125,11 @@ pub struct TimeInterval {
 }
 
 impl TimeInterval {
-    pub fn new(start: TimePoint, end: TimePoint) -> Self {
-        Self { start, end }
-    }
-
     /// Creates an interval with specified duration
     pub fn with_duration(start: TimePoint, duration: f64) -> Self {
         Self {
             start,
             end: start + duration,
-        }
-    }
-
-    /// Creates an interval that precedes another interval by a gap
-    pub fn before(other: &TimeInterval, gap: f64, duration: f64) -> Self {
-        Self {
-            start: other.start - gap - duration,
-            end: other.start - gap,
-        }
-    }
-
-    /// Creates an interval that follows another interval by a gap
-    pub fn after(other: &TimeInterval, gap: f64, duration: f64) -> Self {
-        Self {
-            start: other.end + gap,
-            end: other.end + gap + duration,
-        }
-    }
-
-    /// Creates an overlapping interval
-    pub fn overlapping(other: &TimeInterval, start_offset: f64, duration: f64) -> Self {
-        Self {
-            start: other.start + start_offset,
-            end: other.start + start_offset + duration,
         }
     }
 }
@@ -199,25 +171,6 @@ impl SpanConfig {
     /// Add a string attribute
     pub fn with_string_attr(self, key: &str, value: &str) -> Self {
         self.with_attr(key, string_attr(value))
-    }
-
-    /// Add an integer attribute
-    pub fn with_int_attr(self, key: &str, value: i64) -> Self {
-        self.with_attr(key, int_attr(value))
-    }
-
-    /// Add multiple attributes from a slice of (key, value) pairs
-    pub fn with_attrs(mut self, attrs: &[(&str, Option<Value>)]) -> Self {
-        for (key, value) in attrs {
-            self.attributes.insert(key.to_string(), value.clone());
-        }
-        self
-    }
-
-    /// Set a custom span ID
-    pub fn with_span_id(mut self, span_id: &[u8]) -> Self {
-        self.span_id = span_id.to_vec();
-        self
     }
 }
 
@@ -268,26 +221,6 @@ impl ScenarioBuilder {
     ) -> &mut Self {
         for timing in timings {
             self.add_span(SpanConfig::new(name, node_name, timing.clone()));
-        }
-        self
-    }
-
-    /// Add spans with sequential timing (each span starts after the previous ends)
-    pub fn add_sequential_spans(
-        &mut self,
-        base_name: &str,
-        node_name: &str,
-        start_time: TimePoint,
-        count: usize,
-        duration: f64,
-        gap: f64,
-    ) -> &mut Self {
-        let mut current_time = start_time;
-        for i in 0..count {
-            let span_name = format!("{}_{}", base_name, i + 1);
-            let timing = TimeInterval::with_duration(current_time, duration);
-            self.add_span(SpanConfig::new(&span_name, node_name, timing));
-            current_time += duration + gap;
         }
         self
     }
@@ -446,120 +379,6 @@ impl TestScenario {
         builder.add_span(
             SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.5, 1.0))
                 .with_string_attr("height", "300"), // no match
-        );
-
-        builder.build()
-    }
-
-    /// Creates a scenario for testing grouping
-    pub fn with_grouping_attributes() -> Self {
-        let mut builder = ScenarioBuilder::new();
-        builder.add_node("node_a");
-
-        // Source spans with different group attributes
-        builder.add_span(
-            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
-                .with_string_attr("shard_id", "shard_1"),
-        );
-        builder.add_span(
-            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
-                .with_string_attr("shard_id", "shard_1"),
-        );
-        builder.add_span(
-            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.4, 1.0))
-                .with_string_attr("shard_id", "shard_2"),
-        );
-        builder.add_span(
-            SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.6, 1.0))
-                .with_string_attr("shard_id", "shard_2"),
-        );
-
-        // Target span
-        builder.add_span(SpanConfig::new(
-            "target",
-            "node_a",
-            TimeInterval::with_duration(3.0, 1.0),
-        ));
-
-        builder.build()
-    }
-
-    /// Creates a scenario with overlapping spans (invalid timing)
-    pub fn with_overlapping_timing() -> Self {
-        let mut builder = ScenarioBuilder::new();
-        builder.add_node("node_a");
-
-        // Source span that ends AFTER target starts (invalid)
-        builder.add_span(SpanConfig::new(
-            "source",
-            "node_a",
-            TimeInterval::with_duration(1.0, 2.0),
-        )); // ends at 3.0
-
-        // Target span that starts before source ends
-        builder.add_span(SpanConfig::new(
-            "target",
-            "node_a",
-            TimeInterval::with_duration(2.0, 1.0),
-        )); // starts at 2.0
-
-        builder.build()
-    }
-
-    /// Creates a scenario with identical timing
-    pub fn with_identical_timing() -> Self {
-        let mut builder = ScenarioBuilder::new();
-        builder.add_node("node_a");
-
-        // Spans with identical start/end times
-        builder.add_span(SpanConfig::new(
-            "source",
-            "node_a",
-            TimeInterval::with_duration(1.0, 0.0),
-        )); // zero duration
-        builder.add_span(SpanConfig::new(
-            "target",
-            "node_a",
-            TimeInterval::with_duration(1.0, 0.0),
-        )); // same timing
-
-        builder.build()
-    }
-
-    /// Creates an empty scenario
-    pub fn empty() -> Self {
-        Self {
-            source_spans: Vec::new(),
-            target_spans: Vec::new(),
-            all_spans: Vec::new(),
-        }
-    }
-
-    /// Creates a complex scenario combining multiple features
-    pub fn complex_all_features() -> Self {
-        let mut builder = ScenarioBuilder::new();
-        builder.add_nodes(2); // node_1, node_2
-
-        // Source spans on node_1 with grouping and linking attributes
-        builder.add_span(
-            SpanConfig::new("source", "node_1", TimeInterval::with_duration(0.0, 1.0))
-                .with_string_attr("shard_id", "shard_1")
-                .with_string_attr("height", "100"),
-        );
-        builder.add_span(
-            SpanConfig::new("source", "node_1", TimeInterval::with_duration(0.5, 1.0))
-                .with_string_attr("shard_id", "shard_2")
-                .with_string_attr("height", "100"),
-        );
-
-        // Target spans on node_2 with matching attributes
-        builder.add_span(
-            SpanConfig::new("target", "node_2", TimeInterval::with_duration(3.0, 1.0))
-                .with_string_attr("height", "100"),
-        );
-        builder.add_span(
-            SpanConfig::new("target", "node_2", TimeInterval::with_duration(3.5, 1.0))
-                .with_string_attr("height", "100"),
         );
 
         builder.build()

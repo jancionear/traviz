@@ -1260,7 +1260,7 @@ fn test_complex_all_features_combined() {
     }
 
     // Verify all features working together
-    for (i, link) in node_result.links.iter().enumerate() {
+    for link in node_result.links.iter() {
         // Cross-node: sources and targets should be on different nodes
         assert_ne!(
             link.source_spans[0].node.name, link.target_spans[0].node.name,
@@ -2035,11 +2035,10 @@ fn test_all_nodes_scope_single_node_scenario() {
     );
 
     // Compare each link's properties
-    for (i, (link_same, link_all)) in node_result_same
+    for (link_same, link_all) in node_result_same
         .links
         .iter()
         .zip(node_result_all.links.iter())
-        .enumerate()
     {
         assert_abs_diff_eq!(
             link_same.delay_seconds,
