@@ -146,6 +146,7 @@ impl EditRelations {
             }
             if ui.button("Clone Relation").clicked() {
                 let mut new_relation = self.relations[self.selected_relation_idx].clone();
+                new_relation.id = Uuid::new_v4();
                 new_relation.name = format!("{} Clone", new_relation.name);
                 new_relation.is_builtin = false;
                 self.relations.push(new_relation);
