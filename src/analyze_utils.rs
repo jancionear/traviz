@@ -158,6 +158,12 @@ impl Statistics {
     }
 }
 
+impl Default for Statistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Processes a slice of spans to collect a deduplicated list of all spans (including children)
 /// and a sorted list of unique span names.
 ///

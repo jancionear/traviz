@@ -408,7 +408,6 @@ impl AnalyzeDependencyModal {
 
         match self.analysis_cardinality {
             AnalysisCardinality::NToOne => {
-                // Existing N-to-1 logic (preserved)
                 let node_names = if self.source_scope == SourceScope::SameNode {
                     // Only analyze nodes that have both source and target spans
                     source_spans_by_node
@@ -451,7 +450,6 @@ impl AnalyzeDependencyModal {
                 }
             }
             AnalysisCardinality::OneToN => {
-                // New 1-to-N logic
                 let node_names = if self.source_scope == SourceScope::SameNode {
                     // Only analyze nodes that have both source and target spans
                     source_spans_by_node
@@ -686,7 +684,7 @@ impl AnalyzeDependencyModal {
 
             // Check if each group that exists in eligible sources meets threshold
             // (Don't require all originally expected groups - some may be filtered out by linking attributes)
-            for (_group_key, group_spans) in &grouped_potential_sources {
+            for group_spans in grouped_potential_sources.values() {
                 if group_spans.len() >= self.threshold && self.threshold > 0 {
                     let selected_from_group = self.select_spans_for_link_formation(group_spans);
                     spans_for_this_grouped_link.extend(selected_from_group);
@@ -932,7 +930,7 @@ impl AnalyzeDependencyModal {
 
             // Check if each group that exists in eligible targets meets threshold
             // (Don't require all originally expected groups - some may be filtered out by linking attributes)
-            for (_group_key, group_targets) in &grouped_potential_targets {
+            for group_targets in grouped_potential_targets.values() {
                 if group_targets.len() >= self.threshold && self.threshold > 0 {
                     let selected_from_group =
                         self.select_targets_for_one_to_n_link_formation(group_targets);

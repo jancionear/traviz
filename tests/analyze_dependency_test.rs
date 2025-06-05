@@ -1881,7 +1881,7 @@ fn test_identical_timing_edge_cases() {
 
     // Zero-duration source (ends at 1.0) should link to targets starting at 1.0 and later
     // Should find links to targets starting at 1.0, 3.0, and 5.0
-    assert!(node_result.links.len() >= 1,
+    assert!(!node_result.links.is_empty(),
            "Zero-duration source should be able to form links with targets starting at or after its end time");
 
     // Test one specific case: zero-duration source ending at 1.0 linking to target starting at 1.0

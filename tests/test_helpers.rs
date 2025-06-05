@@ -279,6 +279,12 @@ impl ScenarioBuilder {
     }
 }
 
+impl Default for ScenarioBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Represents a complete test scenario with source and target spans
 pub struct TestScenario {
     #[allow(dead_code)]
