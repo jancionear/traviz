@@ -1605,25 +1605,43 @@ impl App {
         // Clear previous highlights
         self.highlighted_spans.clear();
 
-        // Get the links to highlight by cloning them to avoid borrow conflicts
+        // Get all dependency links and filter for those involving the focused node
         let links_to_highlight = match &self.analyze_dependency_modal.analysis_result {
-            Some(analysis) => match analysis.per_node_results.get(&focus_node_name) {
-                Some(node_result) => {
-                    println!("Found node result with {} links", node_result.links.len());
-                    node_result.links.clone()
+            Some(analysis) => {
+                let mut relevant_links = Vec::new();
+
+                // Look through all nodes' dependency results
+                for (_node_name, node_result) in &analysis.per_node_results {
+                    for link in &node_result.links {
+                        // Check if this link involves the focused node (either as source or target)
+                        let involves_focused_node = link
+                            .source_spans
+                            .iter()
+                            .any(|s| s.node.name == focus_node_name)
+                            || link
+                                .target_spans
+                                .iter()
+                                .any(|s| s.node.name == focus_node_name);
+
+                        if involves_focused_node {
+                            relevant_links.push(link.clone());
+                        }
+                    }
                 }
-                None => {
-                    println!("Node result not found for: {}", focus_node_name);
-                    return;
-                }
-            },
+
+                println!(
+                    "Found {} links involving focused node '{}'",
+                    relevant_links.len(),
+                    focus_node_name
+                );
+                relevant_links
+            }
             None => {
                 println!("No analysis result available!");
                 return;
             }
         };
 
-        // Use the existing method instead of duplicating the logic
         self.highlight_spans_for_dependency_links(&links_to_highlight);
     }
 
@@ -1681,8 +1699,15 @@ impl App {
             .map(|s| s.span_id.clone())
             .collect();
 
+        // Find the focused node from the highlighted spans
+        let focused_node_names: HashSet<String> = self
+            .highlighted_spans
+            .iter()
+            .map(|s| s.node.name.clone())
+            .collect();
+
         // Look through all nodes that have dependency analysis results
-        // and find links that involve any of the highlighted spans
+        // and find links that involve both highlighted spans AND the focused node
         let analysis_result = match &self.analyze_dependency_modal.analysis_result {
             Some(result) => result,
             None => return,
@@ -1701,7 +1726,17 @@ impl App {
                         .iter()
                         .any(|s| highlighted_span_ids_set.contains(&s.span_id));
 
-                if link_involves_highlighted {
+                // Also check if this link involves any of the focused nodes
+                let link_involves_focused_node = link
+                    .source_spans
+                    .iter()
+                    .any(|s| focused_node_names.contains(&s.node.name))
+                    || link
+                        .target_spans
+                        .iter()
+                        .any(|s| focused_node_names.contains(&s.node.name));
+
+                if link_involves_highlighted && link_involves_focused_node {
                     all_links_to_draw.push(link);
                 }
             }
