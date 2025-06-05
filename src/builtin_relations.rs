@@ -122,10 +122,7 @@ pub fn apply_new_chunk_normal_to_postprocess_ready_block_relation() -> Relation 
                     "apply_reason".to_string(),
                     MatchCondition::equal_to("UpdateTrackedShard"),
                 ),
-                (
-                    "block_type".to_string(),
-                    MatchCondition::equal_to("Optimistic"),
-                ),
+                ("block_type".to_string(), MatchCondition::equal_to("Normal")),
             ],
         },
         to_span_selector: SpanSelector::new_equal_name("postprocess_ready_block"),
