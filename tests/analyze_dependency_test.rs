@@ -1234,6 +1234,14 @@ fn test_complex_all_features_combined() {
 
     modal.analyze_dependencies();
 
+    if modal.analysis_result.is_none() {
+        if let Some(error) = modal.get_error_message() {
+            panic!("Analysis failed with error: {}", error);
+        } else {
+            panic!("Analysis failed with no error message");
+        }
+    }
+
     let result = modal
         .analysis_result
         .as_ref()

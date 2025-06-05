@@ -669,13 +669,6 @@ impl AnalyzeDependencyModal {
         // Branch based on grouping
         if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
             // GROUPING LOGIC
-            let current_expected_group_attribute_keys = expected_group_keys_set.as_ref().unwrap();
-            if current_expected_group_attribute_keys.is_empty() {
-                // This case implies grouping is active but no valid group keys were found initially.
-                // This should have been caught by prepare_analysis_inputs, but as a safeguard:
-                return;
-            }
-
             let mut grouped_potential_sources: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
             for s_span in &eligible_sources_before_target {
                 if let Some(Some(Value::StringValue(s_val))) =
@@ -691,28 +684,20 @@ impl AnalyzeDependencyModal {
             let mut all_groups_meet_threshold = true;
             let mut spans_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
 
-            // Check if all expected groups are present in the potential sources for this target
-            if grouped_potential_sources.len() < current_expected_group_attribute_keys.len() {
-                all_groups_meet_threshold = false;
-            } else {
-                for expected_key_val in current_expected_group_attribute_keys {
-                    match grouped_potential_sources.get(expected_key_val) {
-                        Some(group_spans)
-                            if group_spans.len() >= self.threshold && self.threshold > 0 =>
-                        {
-                            let selected_from_group =
-                                self.select_spans_for_link_formation(group_spans);
-                            spans_for_this_grouped_link.extend(selected_from_group);
-                        }
-                        _ => {
-                            all_groups_meet_threshold = false;
-                            break;
-                        }
-                    }
+            // Check if each group that exists in eligible sources meets threshold
+            // (Don't require all originally expected groups - some may be filtered out by linking attributes)
+            for (_group_key, group_spans) in &grouped_potential_sources {
+                if group_spans.len() >= self.threshold && self.threshold > 0 {
+                    let selected_from_group = self.select_spans_for_link_formation(group_spans);
+                    spans_for_this_grouped_link.extend(selected_from_group);
+                } else {
+                    all_groups_meet_threshold = false;
+                    break;
                 }
             }
 
-            if all_groups_meet_threshold && !spans_for_this_grouped_link.is_empty() {
+            // Only proceed if we have at least some groups and all present groups meet threshold
+            if all_groups_meet_threshold && !grouped_potential_sources.is_empty() && !spans_for_this_grouped_link.is_empty() {
                 // Calculate link delay based on aggregation strategy for groups
                 let link_delay = match self.group_aggregation_strategy {
                     GroupAggregationStrategy::WaitForLastGroup => {
@@ -927,11 +912,6 @@ impl AnalyzeDependencyModal {
         // Branch based on grouping
         if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
             // GROUPING LOGIC
-            let current_expected_group_attribute_keys = expected_group_keys_set.as_ref().unwrap();
-            if current_expected_group_attribute_keys.is_empty() {
-                return;
-            }
-
             let mut grouped_potential_targets: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
             for t_span in &eligible_targets_after_source {
                 if let Some(Some(Value::StringValue(t_val))) =
@@ -947,28 +927,21 @@ impl AnalyzeDependencyModal {
             let mut all_groups_meet_threshold = true;
             let mut targets_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
 
-            // Check if all expected groups are present in the potential targets for this source
-            if grouped_potential_targets.len() < current_expected_group_attribute_keys.len() {
-                all_groups_meet_threshold = false;
-            } else {
-                for expected_key_val in current_expected_group_attribute_keys {
-                    match grouped_potential_targets.get(expected_key_val) {
-                        Some(group_targets)
-                            if group_targets.len() >= self.threshold && self.threshold > 0 =>
-                        {
-                            let selected_from_group =
-                                self.select_targets_for_one_to_n_link_formation(group_targets);
-                            targets_for_this_grouped_link.extend(selected_from_group);
-                        }
-                        _ => {
-                            all_groups_meet_threshold = false;
-                            break;
-                        }
-                    }
+            // Check if each group that exists in eligible targets meets threshold
+            // (Don't require all originally expected groups - some may be filtered out by linking attributes)
+            for (_group_key, group_targets) in &grouped_potential_targets {
+                if group_targets.len() >= self.threshold && self.threshold > 0 {
+                    let selected_from_group =
+                        self.select_targets_for_one_to_n_link_formation(group_targets);
+                    targets_for_this_grouped_link.extend(selected_from_group);
+                } else {
+                    all_groups_meet_threshold = false;
+                    break;
                 }
             }
 
-            if all_groups_meet_threshold && !targets_for_this_grouped_link.is_empty() {
+            // Only proceed if we have at least some groups and all present groups meet threshold
+            if all_groups_meet_threshold && !grouped_potential_targets.is_empty() && !targets_for_this_grouped_link.is_empty() {
                 // Create a single link with one source and multiple targets
                 // For consistency with N-to-1 mode, always use the LATEST target start time
                 // (representing "how long until ALL targets have started")
