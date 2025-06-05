@@ -658,7 +658,7 @@ impl AnalyzeDependencyModal {
             }
 
             // Basic time validity
-            if s_span.end_time < target_span.start_time {
+            if s_span.end_time <= target_span.start_time {
                 // Check linking attribute compatibility using the new multi-attribute function
                 if self.spans_match_linking_attributes(s_span, target_span) {
                     eligible_sources_before_target.push(s_span.clone());
@@ -697,7 +697,10 @@ impl AnalyzeDependencyModal {
             }
 
             // Only proceed if we have at least some groups and all present groups meet threshold
-            if all_groups_meet_threshold && !grouped_potential_sources.is_empty() && !spans_for_this_grouped_link.is_empty() {
+            if all_groups_meet_threshold
+                && !grouped_potential_sources.is_empty()
+                && !spans_for_this_grouped_link.is_empty()
+            {
                 // Calculate link delay based on aggregation strategy for groups
                 let link_delay = match self.group_aggregation_strategy {
                     GroupAggregationStrategy::WaitForLastGroup => {
@@ -902,7 +905,7 @@ impl AnalyzeDependencyModal {
             }
 
             // Basic time validity: target must start after source ends
-            if t_span.start_time > source_span.end_time
+            if t_span.start_time >= source_span.end_time
                 && self.spans_match_linking_attributes(source_span, t_span)
             {
                 eligible_targets_after_source.push(t_span.clone());
@@ -941,7 +944,10 @@ impl AnalyzeDependencyModal {
             }
 
             // Only proceed if we have at least some groups and all present groups meet threshold
-            if all_groups_meet_threshold && !grouped_potential_targets.is_empty() && !targets_for_this_grouped_link.is_empty() {
+            if all_groups_meet_threshold
+                && !grouped_potential_targets.is_empty()
+                && !targets_for_this_grouped_link.is_empty()
+            {
                 // Create a single link with one source and multiple targets
                 // For consistency with N-to-1 mode, always use the LATEST target start time
                 // (representing "how long until ALL targets have started")
