@@ -1674,24 +1674,47 @@ impl App {
         }
         let mut new_hovered_arrow_key = None;
 
-        // Determine the focused node from the highlighted spans
-        let focused_target_node_name = match self.highlighted_spans.first() {
-            Some(span) => span.node.name.clone(),
+        // Get all highlighted span IDs for efficient lookup
+        let highlighted_span_ids_set: HashSet<Vec<u8>> = self
+            .highlighted_spans
+            .iter()
+            .map(|s| s.span_id.clone())
+            .collect();
+
+        // Look through all nodes that have dependency analysis results
+        // and find links that involve any of the highlighted spans
+        let analysis_result = match &self.analyze_dependency_modal.analysis_result {
+            Some(result) => result,
             None => return,
         };
 
-        let links_to_draw = match self
-            .analyze_dependency_modal
-            .get_links_for_node(&focused_target_node_name)
-        {
-            Some(links) => links,
-            None => return,
-        };
+        let mut all_links_to_draw = Vec::new();
+        for (_node_name, node_metrics) in &analysis_result.per_node_results {
+            for link in &node_metrics.links {
+                // Check if this link involves any highlighted spans
+                let link_involves_highlighted = link
+                    .source_spans
+                    .iter()
+                    .any(|s| highlighted_span_ids_set.contains(&s.span_id))
+                    || link
+                        .target_spans
+                        .iter()
+                        .any(|s| highlighted_span_ids_set.contains(&s.span_id));
+
+                if link_involves_highlighted {
+                    all_links_to_draw.push(link);
+                }
+            }
+        }
+
+        if all_links_to_draw.is_empty() {
+            return;
+        }
 
         let arrow_color = colors::INTENSE_BLUE;
         let base_arrow_stroke = Stroke::new(2.0, arrow_color);
 
-        for link in links_to_draw.iter() {
+        for link in all_links_to_draw.iter() {
             if link.source_spans.is_empty() || link.target_spans.is_empty() {
                 continue;
             }
@@ -2041,8 +2064,9 @@ impl App {
             max_time = max_time.max(span.end_time);
         }
 
-        // Limit the range to 4 seconds maximum
-        let desired_max_time = min_time + 4.0;
+        // Limit the range to 3 seconds maximum
+        const MAX_HIGHLIGHT_SPAN_TIMELINE_ZOOM: f64 = 3.0;
+        let desired_max_time = min_time + MAX_HIGHLIGHT_SPAN_TIMELINE_ZOOM;
         if max_time > desired_max_time {
             max_time = desired_max_time;
         }
