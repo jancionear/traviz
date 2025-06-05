@@ -17,8 +17,8 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 #[cfg(feature = "profiling")]
 use traviz::profiling;
 use traviz::{
-    analyze_dependency, analyze_span, colors, edit_modes, edit_relations, modes, node_filter,
-    persistent, relation, structured_modes, task_timer, types,
+    analyze_dependency, analyze_span, builtin_relations, colors, edit_modes, edit_relations, modes,
+    node_filter, persistent, relation, structured_modes, task_timer, types,
 };
 
 use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
@@ -27,10 +27,7 @@ use edit_modes::EditDisplayModes;
 use edit_relations::{EditRelationViews, EditRelations};
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
-use relation::{
-    builtin_relation_views, builtin_relations, find_relations, Relation, RelationInstance,
-    RelationView,
-};
+use relation::{builtin_relation_views, find_relations, Relation, RelationInstance, RelationView};
 use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
 use types::{
@@ -245,7 +242,7 @@ impl Default for App {
             hovered_arrow_key: None,
             cached_produce_block_starts: None,
             cached_node_spans: None,
-            defined_relations: builtin_relations(),
+            defined_relations: builtin_relations::builtin_relations(),
             relation_views: builtin_relation_views(),
             current_relation_view_index: 0,
             active_relations: vec![],
@@ -1611,7 +1608,7 @@ impl App {
                 let mut relevant_links = Vec::new();
 
                 // Look through all nodes' dependency results
-                for (_node_name, node_result) in &analysis.per_node_results {
+                for node_result in analysis.per_node_results.values() {
                     for link in &node_result.links {
                         // Check if this link involves the focused node (either as source or target)
                         let involves_focused_node = link
@@ -1714,7 +1711,7 @@ impl App {
         };
 
         let mut all_links_to_draw = Vec::new();
-        for (_node_name, node_metrics) in &analysis_result.per_node_results {
+        for node_metrics in analysis_result.per_node_results.values() {
             for link in &node_metrics.links {
                 // Check if this link involves any highlighted spans
                 let link_involves_highlighted = link
@@ -1893,7 +1890,7 @@ impl App {
                 None => continue, // Skip if the span position is not found
             };
 
-            let distance_ms = (to_span.end_time - from_span.start_time) * MILLISECONDS_PER_SECOND;
+            let distance_ms = (to_span.start_time - from_span.end_time) * MILLISECONDS_PER_SECOND;
 
             let arrow_key = ArrowKey {
                 source_span_id: from_span.span_id.clone(),

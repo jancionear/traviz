@@ -1,9 +1,11 @@
 pub mod analyze_dependency;
 pub mod analyze_span;
 pub mod analyze_utils;
+pub mod builtin_relations;
 pub mod colors;
 pub mod edit_modes;
 pub mod edit_relations;
+pub mod legacy;
 pub mod modes;
 pub mod node_filter;
 pub mod persistent;

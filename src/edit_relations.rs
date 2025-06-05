@@ -2,10 +2,11 @@ use eframe::egui::{self, Button, ComboBox, Modal, ScrollArea, Ui, Vec2, Widget};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::edit_modes::{AddingOrEditing, HIGHLIGHT_COLOR};
+use crate::edit_modes::{AddingOrEditing, EditDisplayModes, HIGHLIGHT_COLOR};
 use crate::relation::{
     AttributeRelation, AttributeRelationOp, MatchType, Relation, RelationNodesConfig, RelationView,
 };
+use crate::structured_modes::SpanSelector;
 
 #[derive(Clone, Debug)]
 pub struct EditRelations {
@@ -16,7 +17,8 @@ pub struct EditRelations {
     current_relation: Relation,
     editing_or_adding_relation: AddingOrEditing,
     not_editable_message: String,
-    time_difference_string: String,
+    min_time_difference_string: String,
+    max_time_difference_string: String,
     max_width: f32,
     max_scrollarea_size: egui::Vec2,
 }
@@ -30,6 +32,12 @@ enum EditRelationsState {
     EditingRelation,
 }
 
+impl Default for EditRelations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EditRelations {
     pub fn new() -> EditRelations {
         EditRelations {
@@ -40,7 +48,8 @@ impl EditRelations {
             current_relation: Self::new_relation(),
             editing_or_adding_relation: AddingOrEditing::Editing,
             not_editable_message: String::new(),
-            time_difference_string: String::new(),
+            min_time_difference_string: "0.0".to_string(),
+            max_time_difference_string: String::new(),
             max_width: 0.0,
             max_scrollarea_size: egui::Vec2::ZERO,
         }
@@ -123,7 +132,7 @@ impl EditRelations {
             if ui.button("New Relation").clicked() {
                 let new_relation = Self::new_relation();
                 self.current_relation = new_relation.clone();
-                self.set_time_difference_string();
+                self.set_time_difference_strings();
                 self.selected_relation_idx = 0;
                 self.editing_or_adding_relation = AddingOrEditing::Adding;
                 self.state = EditRelationsState::EditingRelation;
@@ -137,7 +146,7 @@ impl EditRelations {
                         self.state = EditRelationsState::NotEditableError;
                     } else {
                         self.current_relation = relation.clone();
-                        self.set_time_difference_string();
+                        self.set_time_difference_strings();
                         self.editing_or_adding_relation = AddingOrEditing::Editing;
                         self.state = EditRelationsState::EditingRelation;
                     }
@@ -145,6 +154,7 @@ impl EditRelations {
             }
             if ui.button("Clone Relation").clicked() {
                 let mut new_relation = self.relations[self.selected_relation_idx].clone();
+                new_relation.id = Uuid::new_v4();
                 new_relation.name = format!("{} Clone", new_relation.name);
                 new_relation.is_builtin = false;
                 self.relations.push(new_relation);
@@ -217,21 +227,33 @@ impl EditRelations {
     }
 
     fn draw_editing_relation(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
-        ui.label("Editing Relation");
+        ui.heading("Editing Relation");
         self.draw_short_separator(ui);
         ui.horizontal(|ui| {
             ui.label("Relation name:");
             ui.text_edit_singleline(&mut self.current_relation.name);
         });
-        ui.horizontal(|ui| {
-            ui.label("From Span Name:");
-            ui.text_edit_singleline(&mut self.current_relation.from_span_name);
-        });
-        ui.horizontal(|ui| {
-            ui.label("To Span Name:");
-            ui.text_edit_singleline(&mut self.current_relation.to_span_name);
-        });
-        ui.label("Attribute Relations");
+        // TODO - description
+        self.draw_short_separator(ui);
+        ui.strong("From span selector");
+        EditDisplayModes::draw_edit_span_selector(
+            &mut self.current_relation.from_span_selector,
+            ui,
+            self.max_width,
+            "from span selector",
+        );
+        ui.add_space(20.0);
+        self.draw_short_separator(ui);
+        ui.strong("To span selector");
+        EditDisplayModes::draw_edit_span_selector(
+            &mut self.current_relation.to_span_selector,
+            ui,
+            self.max_width,
+            "to span selector",
+        );
+        ui.add_space(20.0);
+        self.draw_short_separator(ui);
+        ui.strong("Attribute Relations");
         let mut attribute_relation_to_remove = None;
         for (i, attr_condition) in &mut self
             .current_relation
@@ -281,12 +303,27 @@ impl EditRelations {
         }
 
         self.draw_short_separator(ui);
+        ui.strong("Other options");
+        ui.horizontal(|ui| {
+            ui.horizontal(|ui| {
+                ui.label("Min time difference (seconds) (can be negative to support backward relations):");
+                ui.text_edit_singleline(&mut self.min_time_difference_string);
+                if self.min_time_difference_string.is_empty() {
+                    self.current_relation.min_time_diff = 0.0;
+                } else if let Ok(value) = self.min_time_difference_string.parse::<f64>() {
+                    self.current_relation.min_time_diff = value;
+                } else {
+                    ui.label("Can't parse value!");
+                    self.current_relation.min_time_diff = 0.0;
+                }
+            })
+        });
         ui.horizontal(|ui| {
             ui.label("Max time difference (seconds):");
-            ui.text_edit_singleline(&mut self.time_difference_string);
-            if self.time_difference_string.is_empty() {
+            ui.text_edit_singleline(&mut self.max_time_difference_string);
+            if self.max_time_difference_string.is_empty() {
                 self.current_relation.max_time_diff = None;
-            } else if let Ok(value) = self.time_difference_string.parse::<f64>() {
+            } else if let Ok(value) = self.max_time_difference_string.parse::<f64>() {
                 self.current_relation.max_time_diff = Some(value);
             } else {
                 ui.label("Can't parse value!");
@@ -371,22 +408,26 @@ impl EditRelations {
         Relation {
             id: Uuid::new_v4(),
             name: "New relation".to_string(),
-            from_span_name: "from span".to_string(),
-            to_span_name: "to span".to_string(),
+            description: String::new(),
+            from_span_selector: SpanSelector::new_equal_name("from span"),
+            to_span_selector: SpanSelector::new_equal_name("to span"),
             attribute_relations: vec![],
             max_time_diff: Some(10.0),
             nodes_config: RelationNodesConfig::AllNodes,
             match_type: MatchType::MatchAll,
+            min_time_diff: 0.0,
             is_builtin: false,
         }
     }
 
-    fn set_time_difference_string(&mut self) {
+    fn set_time_difference_strings(&mut self) {
         if let Some(max_time_diff) = self.current_relation.max_time_diff {
-            self.time_difference_string = max_time_diff.to_string();
+            self.max_time_difference_string = format!("{:.6}", max_time_diff.to_string());
         } else {
-            self.time_difference_string = String::new();
+            self.max_time_difference_string = String::new();
         }
+        self.min_time_difference_string =
+            format!("{:.6}", self.current_relation.min_time_diff.to_string());
     }
 }
 
@@ -410,6 +451,12 @@ enum EditRelationViewsState {
     EditingRelationView,
     NotEditableError,
     ConfirmDeletion,
+}
+
+impl Default for EditRelationViews {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EditRelationViews {
