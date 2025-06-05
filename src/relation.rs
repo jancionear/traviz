@@ -190,6 +190,7 @@ pub fn find_relations(
             .filter(|name| relation.to_span_selector.span_name_condition.matches(name))
             .collect::<Vec<_>>();
 
+        let mut found_relation_instances = 0;
         for from_span_name in &matching_from_span_names {
             let Some(from_spans) = spans_by_name.get(from_span_name.as_str()) else {
                 continue;
@@ -227,6 +228,7 @@ pub fn find_relations(
                             .borrow_mut()
                             .push(instance.clone());
                         res.push(instance);
+                        found_relation_instances += 1;
 
                         match relation.match_type {
                             MatchType::MatchAll => {
@@ -242,6 +244,10 @@ pub fn find_relations(
                 }
             }
         }
+        println!(
+            "Found {} instances of relation '{}'",
+            found_relation_instances, relation.name
+        );
     }
 
     task_timer.stop();
