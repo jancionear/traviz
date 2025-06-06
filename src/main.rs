@@ -6,17 +6,27 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use anyhow::Result;
-use edit_modes::EditDisplayModes;
-use edit_relations::{EditRelationViews, EditRelations};
 use eframe::egui::scroll_area::ScrollBarVisibility;
 use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
     ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
 use eframe::epaint::PathShape;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+
+#[cfg(feature = "profiling")]
+use traviz::profiling;
+use traviz::{
+    analyze_dependency, analyze_span, builtin_relations, colors, edit_modes, edit_relations, modes,
+    node_filter, persistent, relation, structured_modes, task_timer, types,
+};
+
+use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
+use analyze_span::AnalyzeSpanModal;
+use edit_modes::EditDisplayModes;
+use edit_relations::{EditRelationViews, EditRelations};
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
-use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use relation::{builtin_relation_views, find_relations, Relation, RelationInstance, RelationView};
 use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
@@ -24,27 +34,6 @@ use types::{
     time_point_to_utc_string, value_to_text, DisplayLength, Event, HeightLevel, Node, Span,
     TimePoint, MILLISECONDS_PER_SECOND,
 };
-
-mod analyze_dependency;
-mod analyze_span;
-mod analyze_utils;
-mod builtin_relations;
-mod colors;
-mod edit_modes;
-mod edit_relations;
-mod legacy;
-mod modes;
-mod node_filter;
-mod persistent;
-#[cfg(feature = "profiling")]
-mod profiling;
-mod relation;
-mod structured_modes;
-mod task_timer;
-mod types;
-
-use analyze_dependency::AnalyzeDependencyModal;
-use analyze_span::AnalyzeSpanModal;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -160,6 +149,9 @@ struct App {
     // Spans highlighting
     highlighted_spans: Vec<Rc<Span>>,
 
+    // Cache for span ID to root span lookup (for highlighted spans performance)
+    span_id_to_root_cache: Option<HashMap<Vec<u8>, Rc<Span>>>,
+
     // Dependency arrow interactivity
     clicked_arrow_info: Option<ArrowInfo>,
     hovered_arrow_key: Option<ArrowKey>,
@@ -245,6 +237,7 @@ impl Default for App {
             analyze_span_modal: AnalyzeSpanModal::default(),
             analyze_dependency_modal: AnalyzeDependencyModal::new(),
             highlighted_spans: Vec::new(),
+            span_id_to_root_cache: None,
             clicked_arrow_info: None,
             hovered_arrow_key: None,
             cached_produce_block_starts: None,
@@ -543,6 +536,7 @@ impl App {
         self.spans_to_display.clear();
         self.clicked_span = None;
         self.highlighted_spans.clear();
+        self.span_id_to_root_cache = None;
         self.analyze_span_modal = AnalyzeSpanModal::default();
         self.analyze_dependency_modal = AnalyzeDependencyModal::new();
         self.cached_produce_block_starts = None;
@@ -916,10 +910,25 @@ impl App {
 
         let mut final_spans_for_drawing_owned: Option<Vec<Rc<Span>>> = None;
         if !self.highlighted_spans.is_empty() {
-            // This block ensures that if any spans are highlighted, their complete hierarchical context
-            // (i.e., their root span from the `all_spans_for_analysis` list) is included for drawing.
-            // A new vector is created only if highlighted spans necessitate adding roots not already
-            // present in the current display mode's spans.
+            #[cfg(feature = "profiling")]
+            let _timing_guard_highlight =
+                profiling::GLOBAL_PROFILER.start_timing("highlighted_spans_processing");
+
+            // Build the cache if it doesn't exist
+            if self.span_id_to_root_cache.is_none() {
+                #[cfg(feature = "profiling")]
+                let _timing_guard_cache_build =
+                    profiling::GLOBAL_PROFILER.start_timing("build_span_id_cache");
+
+                let mut cache = HashMap::new();
+                for root_span in &self.all_spans_for_analysis {
+                    populate_span_cache_recursive(root_span, root_span, &mut cache);
+                }
+                self.span_id_to_root_cache = Some(cache);
+            }
+
+            // Use the cache for fast lookups
+            let cache = self.span_id_to_root_cache.as_ref().unwrap();
             let mut roots_to_add_if_highlighted: Vec<Rc<Span>> = Vec::new();
             let mut current_display_plus_new_root_ids: HashSet<Vec<u8>> = self
                 .spans_to_display
@@ -928,19 +937,9 @@ impl App {
                 .collect();
 
             for highlighted_span_rc in &self.highlighted_spans {
-                let mut containing_root_from_all_spans: Option<Rc<Span>> = None;
-                for root_candidate_from_all in &self.all_spans_for_analysis {
-                    if root_candidate_from_all.is_ancestor_or_self(&highlighted_span_rc.span_id) {
-                        containing_root_from_all_spans = Some(root_candidate_from_all.clone());
-                        break;
-                    }
-                }
-
-                if let Some(root_to_potentially_add) = containing_root_from_all_spans {
-                    if current_display_plus_new_root_ids
-                        .insert(root_to_potentially_add.span_id.clone())
-                    {
-                        roots_to_add_if_highlighted.push(root_to_potentially_add);
+                if let Some(root_span) = cache.get(&highlighted_span_rc.span_id) {
+                    if current_display_plus_new_root_ids.insert(root_span.span_id.clone()) {
+                        roots_to_add_if_highlighted.push(root_span.clone());
                     }
                 }
             }
@@ -959,6 +958,10 @@ impl App {
         let node_spans_items_for_loop: NodeSpansVec;
 
         if final_spans_for_drawing_owned.is_some() {
+            #[cfg(feature = "profiling")]
+            let _timing_guard_node_map =
+                profiling::GLOBAL_PROFILER.start_timing("build_temp_node_map_for_highlights");
+
             // Highlights are active and modified the span list, build a temporary map
             let mut temp_map_for_highlight: NodeSpansMap = BTreeMap::new();
             for span_ref in spans_to_render {
@@ -1117,6 +1120,11 @@ impl App {
                             &spans_in_range,
                             &self.highlighted_spans,
                         );
+
+                        #[cfg(feature = "profiling")]
+                        let _timing_guard_display_params = profiling::GLOBAL_PROFILER
+                            .start_timing("set_display_params_with_highlights");
+
                         Self::set_display_params_with_highlights(
                             &spans_in_range,
                             &highlighted_span_ids_set,
@@ -1126,10 +1134,24 @@ impl App {
                             under_time_points_area.max.x,
                             ui,
                         );
-                        let bbox = arrange_spans(&spans_in_range, true);
+
+                        #[cfg(feature = "profiling")]
+                        let _timing_guard_arrange =
+                            profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
+
+                        let bbox = arrange_spans_with_viewport(
+                            &spans_in_range,
+                            true,
+                            self.timeline.selected_start,
+                            self.timeline.selected_end,
+                        );
 
                         if !highlighted_span_ids_set.is_empty() || !self.active_relations.is_empty()
                         {
+                            #[cfg(feature = "profiling")]
+                            let _timing_guard_positions =
+                                profiling::GLOBAL_PROFILER.start_timing("collect_span_positions");
+
                             self.collect_span_positions(
                                 &spans_in_range,
                                 cur_height,
@@ -1174,6 +1196,10 @@ impl App {
 
                     // Draw dependency arrows if needed
                     if !highlighted_span_ids_set.is_empty() {
+                        #[cfg(feature = "profiling")]
+                        let _timing_guard_arrows =
+                            profiling::GLOBAL_PROFILER.start_timing("draw_dependency_links");
+
                         self.draw_dependency_links(ui, &span_positions, &time_params, ctx);
                     }
 
@@ -1265,8 +1291,23 @@ impl App {
             span.display_length.set(display_len);
             span.time_display_length.set(time_display_len);
 
+            // Filter children to only include those that intersect with the viewport
+            let all_children = span.display_children.borrow();
+            let viewport_culled_children: Vec<Rc<Span>> = all_children
+                .iter()
+                .filter(|child| {
+                    is_intersecting(
+                        child.min_start_time.get(),
+                        child.max_end_time.get(),
+                        start_time,
+                        end_time,
+                    )
+                })
+                .cloned()
+                .collect();
+
             Self::set_display_params_with_highlights(
-                span.display_children.borrow().as_slice(),
+                &viewport_culled_children,
                 highlighted_span_ids,
                 start_time,
                 end_time,
@@ -1561,94 +1602,44 @@ impl App {
         // Clear previous highlights
         self.highlighted_spans.clear();
 
-        // Get the analysis result
-        let analysis = match &self.analyze_dependency_modal.analysis_result {
-            Some(res) => res,
+        // Get all dependency links and filter for those involving the focused node
+        let links_to_highlight = match &self.analyze_dependency_modal.analysis_result {
+            Some(analysis) => {
+                let mut relevant_links = Vec::new();
+
+                // Look through all nodes' dependency results
+                for node_result in analysis.per_node_results.values() {
+                    for link in &node_result.links {
+                        // Check if this link involves the focused node (either as source or target)
+                        let involves_focused_node = link
+                            .source_spans
+                            .iter()
+                            .any(|s| s.node.name == focus_node_name)
+                            || link
+                                .target_spans
+                                .iter()
+                                .any(|s| s.node.name == focus_node_name);
+
+                        if involves_focused_node {
+                            relevant_links.push(link.clone());
+                        }
+                    }
+                }
+
+                println!(
+                    "Found {} links involving focused node '{}'",
+                    relevant_links.len(),
+                    focus_node_name
+                );
+                relevant_links
+            }
             None => {
                 println!("No analysis result available!");
                 return;
             }
         };
 
-        let node_result = match analysis.per_node_results.get(&focus_node_name) {
-            Some(res) => res,
-            None => {
-                println!("Node result not found for: {}", focus_node_name);
-                return;
-            }
-        };
-
-        println!("Found node result with {} links", node_result.links.len());
-
-        let mut spans_to_highlight = Vec::new();
-        let mut unique_span_ids_to_highlight: HashSet<Vec<u8>> = HashSet::new();
-
-        // Iterate through links and directly collect unique spans
-        for (i, link) in node_result.links.iter().enumerate() {
-            // Process source spans
-            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
-                println!(
-                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
-                    i,
-                    s_idx + 1,
-                    link.source_spans.len(),
-                    source_s.original_name,
-                    source_s.node.name,
-                    hex::encode(&source_s.span_id)
-                );
-                if unique_span_ids_to_highlight.insert(source_s.span_id.clone()) {
-                    spans_to_highlight.push(source_s.clone());
-                }
-            }
-
-            // Process target span
-            let target_s = &link.target_span;
-            println!(
-                "[Link {}][Target] Name: {} (node: {}, ID: {:?})",
-                i,
-                target_s.original_name,
-                target_s.node.name,
-                hex::encode(&target_s.span_id)
-            );
-            if unique_span_ids_to_highlight.insert(target_s.span_id.clone()) {
-                spans_to_highlight.push(target_s.clone());
-            }
-        }
-
-        // Assign the collected unique spans
-        self.highlighted_spans = spans_to_highlight;
-
-        // Adjust timeline to show these spans if needed
-        if self.highlighted_spans.is_empty() {
-            println!("No spans were highlighted!");
-            return;
-        }
-
-        let mut min_time = f64::MAX;
-        let mut max_time = f64::MIN;
-
-        for span in &self.highlighted_spans {
-            min_time = min_time.min(span.start_time);
-            max_time = max_time.max(span.end_time);
-        }
-
-        // Limit the range to 4 seconds maximum
-        let desired_max_time = min_time + 4.0;
-        if max_time > desired_max_time {
-            max_time = desired_max_time;
-        }
-
-        // Add padding around the time range
-        let padding = (max_time - min_time) * 0.2;
-        min_time -= padding;
-        max_time += padding;
-
-        // Update timeline if needed
-        if min_time < self.timeline.selected_start || max_time > self.timeline.selected_end {
-            self.timeline.selected_start = min_time;
-            self.timeline.selected_end = max_time;
-            self.set_timeline_end_bars_to_selected();
-        }
+        self.highlight_spans_for_dependency_links(&links_to_highlight);
     }
 
     // Collect positions of spans in a node, including children
@@ -1698,47 +1689,69 @@ impl App {
         }
         let mut new_hovered_arrow_key = None;
 
-        // Determine the focused node from the highlighted spans
-        let focused_target_node_name = match self.highlighted_spans.first() {
-            Some(span) => span.node.name.clone(),
+        // Get all highlighted span IDs for efficient lookup
+        let highlighted_span_ids_set: HashSet<Vec<u8>> = self
+            .highlighted_spans
+            .iter()
+            .map(|s| s.span_id.clone())
+            .collect();
+
+        // Find the focused node from the highlighted spans
+        let focused_node_names: HashSet<String> = self
+            .highlighted_spans
+            .iter()
+            .map(|s| s.node.name.clone())
+            .collect();
+
+        // Look through all nodes that have dependency analysis results
+        // and find links that involve both highlighted spans AND the focused node
+        let analysis_result = match &self.analyze_dependency_modal.analysis_result {
+            Some(result) => result,
             None => return,
         };
 
-        let links_to_draw = match self
-            .analyze_dependency_modal
-            .get_links_for_node(&focused_target_node_name)
-        {
-            Some(links) => links,
-            None => return,
-        };
+        let mut all_links_to_draw = Vec::new();
+        for node_metrics in analysis_result.per_node_results.values() {
+            for link in &node_metrics.links {
+                // Check if this link involves any highlighted spans
+                let link_involves_highlighted = link
+                    .source_spans
+                    .iter()
+                    .any(|s| highlighted_span_ids_set.contains(&s.span_id))
+                    || link
+                        .target_spans
+                        .iter()
+                        .any(|s| highlighted_span_ids_set.contains(&s.span_id));
+
+                // Also check if this link involves any of the focused nodes
+                let link_involves_focused_node = link
+                    .source_spans
+                    .iter()
+                    .any(|s| focused_node_names.contains(&s.node.name))
+                    || link
+                        .target_spans
+                        .iter()
+                        .any(|s| focused_node_names.contains(&s.node.name));
+
+                if link_involves_highlighted && link_involves_focused_node {
+                    all_links_to_draw.push(link);
+                }
+            }
+        }
+
+        if all_links_to_draw.is_empty() {
+            return;
+        }
 
         let arrow_color = colors::INTENSE_BLUE;
         let base_arrow_stroke = Stroke::new(2.0, arrow_color);
 
-        for link in links_to_draw.iter() {
-            if link.source_spans.is_empty() {
+        for link in all_links_to_draw.iter() {
+            if link.source_spans.is_empty() || link.target_spans.is_empty() {
                 continue;
             }
 
-            let target_span = &link.target_span;
-
-            // Ensure target span y_center_on_screen is available
-            let target_y_center_on_screen = match span_positions.get(&target_span.span_id) {
-                Some(&y_center) => y_center,
-                None => continue, // Target span not found in positions, skip this link
-            };
-
-            // Calculate the x-coordinate for the arrow tip based on the target span's start time
-            let target_x_for_arrow_tip = time_to_screen(
-                target_span.start_time,
-                time_params.visual_start_x,
-                time_params.visual_end_x,
-                time_params.selected_start_time,
-                time_params.selected_end_time,
-            );
-            // The arrow points to the vertical center of the target span
-            let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
-
+            // Draw arrows from each source to each target
             for source_span in &link.source_spans {
                 // Ensure source span y_center_on_screen is available
                 let source_y_center_on_screen = match span_positions.get(&source_span.span_id) {
@@ -1757,52 +1770,72 @@ impl App {
                 // The arrow originates from the vertical center of the source span
                 let from_pos = Pos2::new(source_x_for_arrow_origin, source_y_center_on_screen);
 
-                let distance_ms =
-                    (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
+                for target_span in &link.target_spans {
+                    // Ensure target span y_center_on_screen is available
+                    let target_y_center_on_screen = match span_positions.get(&target_span.span_id) {
+                        Some(&y_center) => y_center,
+                        None => continue, // Target span not found in positions, skip this target
+                    };
 
-                if distance_ms < 0.0 {
-                    // Ensure source ends before target starts
-                    continue;
-                }
+                    // Calculate the x-coordinate for the arrow tip based on the target span's start time
+                    let target_x_for_arrow_tip = time_to_screen(
+                        target_span.start_time,
+                        time_params.visual_start_x,
+                        time_params.visual_end_x,
+                        time_params.selected_start_time,
+                        time_params.selected_end_time,
+                    );
+                    // The arrow points to the vertical center of the target span
+                    let to_pos = Pos2::new(target_x_for_arrow_tip, target_y_center_on_screen);
 
-                let arrow_key = ArrowKey {
-                    source_span_id: source_span.span_id.clone(),
-                    source_node_name: source_span.node.name.clone(),
-                    target_span_id: target_span.span_id.clone(),
-                    target_node_name: target_span.node.name.clone(),
-                };
+                    let distance_ms =
+                        (target_span.start_time - source_span.end_time) * MILLISECONDS_PER_SECOND;
 
-                // Draw the arrow based on the hover state from the PREVIOUS frame
-                // (or the most recent state if multiple repaints happened quickly)
-                let should_draw_highlighted = self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+                    if distance_ms <= 0.0 {
+                        // Ensure source ends before target starts
+                        continue;
+                    }
 
-                let arrow_interaction_result = draw_dependency_arrow(
-                    ui,
-                    from_pos,
-                    to_pos,
-                    base_arrow_stroke,
-                    format!("{:.2} ms", distance_ms),
-                    should_draw_highlighted,
-                    &arrow_key,
-                );
-
-                if arrow_interaction_result.is_precisely_hovered {
-                    // This arrow is being hovered in the current frame's input processing pass
-                    new_hovered_arrow_key = Some(arrow_key.clone());
-                }
-
-                if arrow_interaction_result.response.clicked() {
-                    self.clicked_arrow_info = Some(ArrowInfo {
-                        source_span_name: source_span.name.clone(),
+                    let arrow_key = ArrowKey {
+                        source_span_id: source_span.span_id.clone(),
                         source_node_name: source_span.node.name.clone(),
-                        source_start_time: source_span.start_time,
-                        source_end_time: source_span.end_time,
-                        target_span_name: target_span.name.clone(),
+                        target_span_id: target_span.span_id.clone(),
                         target_node_name: target_span.node.name.clone(),
-                        target_start_time: target_span.start_time,
-                        target_end_time: target_span.end_time,
-                        duration: target_span.start_time - source_span.end_time,
-                    });
+                    };
+
+                    // Draw the arrow based on the hover state from the PREVIOUS frame
+                    // (or the most recent state if multiple repaints happened quickly)
+                    let should_draw_highlighted =
+                        self.hovered_arrow_key.as_ref() == Some(&arrow_key);
+
+                    let arrow_interaction_result = draw_dependency_arrow(
+                        ui,
+                        from_pos,
+                        to_pos,
+                        base_arrow_stroke,
+                        format!("{:.2} ms", distance_ms),
+                        should_draw_highlighted,
+                        &arrow_key,
+                    );
+
+                    if arrow_interaction_result.is_precisely_hovered {
+                        // This arrow is being hovered in the current frame's input processing pass
+                        new_hovered_arrow_key = Some(arrow_key.clone());
+                    }
+
+                    if arrow_interaction_result.response.clicked() {
+                        self.clicked_arrow_info = Some(ArrowInfo {
+                            source_span_name: source_span.name.clone(),
+                            source_node_name: source_span.node.name.clone(),
+                            source_start_time: source_span.start_time,
+                            source_end_time: source_span.end_time,
+                            target_span_name: target_span.name.clone(),
+                            target_node_name: target_span.node.name.clone(),
+                            target_start_time: target_span.start_time,
+                            target_end_time: target_span.end_time,
+                            duration: target_span.start_time - source_span.end_time,
+                        });
+                    }
                 }
             }
         }
@@ -2003,6 +2036,98 @@ impl App {
             eprintln!("Failed to save persistent data: {}", err);
         }
     }
+
+    fn highlight_spans_for_dependency_links(&mut self, links: &[DependencyLink]) {
+        #[cfg(feature = "profiling")]
+        let _timing_guard =
+            profiling::GLOBAL_PROFILER.start_timing("highlight_spans_for_dependency_links");
+
+        let mut spans_to_highlight = Vec::new();
+        let mut unique_span_ids_to_highlight = HashSet::new();
+
+        for (i, link) in links.iter().enumerate() {
+            // Process source spans
+            for (s_idx, source_s) in link.source_spans.iter().enumerate() {
+                println!(
+                    "[Link {}][Source {}/{}] Name: {} (node: {}, ID: {:?})",
+                    i,
+                    s_idx + 1,
+                    link.source_spans.len(),
+                    source_s.original_name,
+                    source_s.node.name,
+                    hex::encode(&source_s.span_id)
+                );
+                if unique_span_ids_to_highlight.insert(source_s.span_id.clone()) {
+                    spans_to_highlight.push(source_s.clone());
+                }
+            }
+
+            // Process target spans
+            for (t_idx, target_s) in link.target_spans.iter().enumerate() {
+                println!(
+                    "[Link {}][Target {}/{}] Name: {} (node: {}, ID: {:?})",
+                    i,
+                    t_idx + 1,
+                    link.target_spans.len(),
+                    target_s.original_name,
+                    target_s.node.name,
+                    hex::encode(&target_s.span_id)
+                );
+                if unique_span_ids_to_highlight.insert(target_s.span_id.clone()) {
+                    spans_to_highlight.push(target_s.clone());
+                }
+            }
+        }
+
+        // Assign the collected unique spans
+        self.highlighted_spans = spans_to_highlight;
+
+        // Adjust timeline to show these spans if needed
+        if self.highlighted_spans.is_empty() {
+            println!("No spans were highlighted!");
+            return;
+        }
+
+        let mut min_time = f64::MAX;
+        let mut max_time = f64::MIN;
+
+        for span in &self.highlighted_spans {
+            min_time = min_time.min(span.start_time);
+            max_time = max_time.max(span.end_time);
+        }
+
+        // Limit the range to 3 seconds maximum
+        const MAX_HIGHLIGHT_SPAN_TIMELINE_ZOOM: f64 = 3.0;
+        let desired_max_time = min_time + MAX_HIGHLIGHT_SPAN_TIMELINE_ZOOM;
+        if max_time > desired_max_time {
+            max_time = desired_max_time;
+        }
+
+        // Add padding around the time range
+        let padding = (max_time - min_time) * 0.2;
+        min_time -= padding;
+        max_time += padding;
+
+        // Update timeline if needed
+        if min_time < self.timeline.selected_start || max_time > self.timeline.selected_end {
+            self.timeline.selected_start = min_time;
+            self.timeline.selected_end = max_time;
+            self.set_timeline_end_bars_to_selected();
+        }
+    }
+}
+
+/// Recursively populates the span ID to root span cache
+fn populate_span_cache_recursive(
+    current_span: &Rc<Span>,
+    root_span: &Rc<Span>,
+    cache: &mut HashMap<Vec<u8>, Rc<Span>>,
+) {
+    cache.insert(current_span.span_id.clone(), root_span.clone());
+
+    for child in current_span.children.borrow().iter() {
+        populate_span_cache_recursive(child, root_span, cache);
+    }
 }
 
 fn get_min_max_time(spans: &[Rc<Span>]) -> Option<(TimePoint, TimePoint)> {
@@ -2030,8 +2155,12 @@ struct SpanBoundingBox {
     height: HeightLevel,
 }
 
-/// Sets relative_display_pos for all spans and their children
-fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundingBox {
+fn arrange_spans_with_viewport(
+    input_spans: &[Rc<Span>],
+    first_invocation: bool,
+    viewport_start: f64,
+    viewport_end: f64,
+) -> SpanBoundingBox {
     #[cfg(feature = "profiling")]
     let _timing_guard = profiling::GLOBAL_PROFILER.start_timing("arrange_spans");
 
@@ -2059,7 +2188,7 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
     let mut active_spans: Vec<usize> = Vec::new();
 
     for (i, span) in sorted_spans.iter().enumerate() {
-        let mut span_bbox = arrange_span(span);
+        let mut span_bbox = arrange_span_with_viewport(span, viewport_start, viewport_end);
         if first_invocation && span_bbox.height > 0 {
             span_bbox.height += 1; // Top-level spans have one unit of padding below them
         }
@@ -2131,7 +2260,11 @@ fn arrange_spans(input_spans: &[Rc<Span>], first_invocation: bool) -> SpanBoundi
     final_bbox
 }
 
-fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
+fn arrange_span_with_viewport(
+    span: &Rc<Span>,
+    viewport_start: f64,
+    viewport_end: f64,
+) -> SpanBoundingBox {
     let span_start = span.display_start.get();
     let span_end = span_start + span.display_length.get();
 
@@ -2142,7 +2275,27 @@ fn arrange_span(span: &Rc<Span>) -> SpanBoundingBox {
             height: 1,
         }
     } else {
-        let children_bbox = arrange_spans(span.display_children.borrow().as_slice(), false);
+        // Filter children to only include those that intersect with the viewport
+        let all_children = span.display_children.borrow();
+        let viewport_culled_children: Vec<Rc<Span>> = all_children
+            .iter()
+            .filter(|child| {
+                is_intersecting(
+                    child.min_start_time.get(),
+                    child.max_end_time.get(),
+                    viewport_start,
+                    viewport_end,
+                )
+            })
+            .cloned()
+            .collect();
+
+        let children_bbox = arrange_spans_with_viewport(
+            &viewport_culled_children,
+            false,
+            viewport_start,
+            viewport_end,
+        );
         SpanBoundingBox {
             start: span_start.min(children_bbox.start),
             end: span_end.max(children_bbox.end),
@@ -2247,6 +2400,10 @@ fn get_time_dots(start_time: TimePoint, end_time: TimePoint) -> Vec<TimePoint> {
 }
 
 fn set_display_children_with_highlights(spans: &[Rc<Span>], highlighted_spans: &[Rc<Span>]) {
+    #[cfg(feature = "profiling")]
+    let _timing_guard =
+        profiling::GLOBAL_PROFILER.start_timing("set_display_children_with_highlights");
+
     // First, set dont_collapse_this_span for all highlighted spans
     for span in highlighted_spans {
         span.dont_collapse_this_span.set(true);

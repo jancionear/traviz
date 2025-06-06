@@ -32,6 +32,12 @@ enum EditRelationsState {
     EditingRelation,
 }
 
+impl Default for EditRelations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EditRelations {
     pub fn new() -> EditRelations {
         EditRelations {
@@ -445,6 +451,12 @@ enum EditRelationViewsState {
     EditingRelationView,
     NotEditableError,
     ConfirmDeletion,
+}
+
+impl Default for EditRelationViews {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EditRelationViews {

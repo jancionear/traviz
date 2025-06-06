@@ -10,6 +10,7 @@ use eframe::egui::{
     self, Button, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, TextEdit, Ui, Vec2,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
+use regex;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
@@ -18,7 +19,7 @@ use std::time::Instant;
 #[derive(Clone)]
 pub struct DependencyLink {
     pub source_spans: Vec<Rc<Span>>,
-    pub target_span: Rc<Span>,
+    pub target_spans: Vec<Rc<Span>>,
     pub delay_seconds: f64,
 }
 
@@ -82,6 +83,25 @@ impl std::fmt::Display for GroupAggregationStrategy {
     }
 }
 
+/// Defines the analysis cardinality mode.
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub enum AnalysisCardinality {
+    /// N-to-1: Find N source spans for each target span (existing mode).
+    #[default]
+    NToOne,
+    /// 1-to-N: Find N target spans for each source span (new mode).
+    OneToN,
+}
+
+impl std::fmt::Display for AnalysisCardinality {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnalysisCardinality::NToOne => write!(f, "N-to-1"),
+            AnalysisCardinality::OneToN => write!(f, "1-to-N"),
+        }
+    }
+}
+
 pub struct DependencyAnalysisResult {
     pub source_span_name: String,
     pub target_span_name: String,
@@ -91,6 +111,7 @@ pub struct DependencyAnalysisResult {
     pub source_timing_strategy: SourceTimingStrategy,
     pub group_by_attribute: String,
     pub group_aggregation_strategy: GroupAggregationStrategy,
+    pub analysis_cardinality: AnalysisCardinality,
     pub per_node_results: HashMap<String, NodeDependencyMetrics>,
     pub analysis_duration_ms: u128,
     pub overall_stats: Statistics,
@@ -134,6 +155,8 @@ pub struct AnalyzeDependencyModal {
     group_by_attribute: String,
     /// How to aggregate timings from multiple groups for link delay calculation.
     group_aggregation_strategy: GroupAggregationStrategy,
+    /// Analysis cardinality mode: N-to-1 or 1-to-N.
+    analysis_cardinality: AnalysisCardinality,
     /// A sorted list of unique span names found in the current trace data.
     unique_span_names: Vec<String>,
     /// Flag indicating if the span list for the modal has been processed from the current trace data.
@@ -148,6 +171,8 @@ pub struct AnalyzeDependencyModal {
     pub focus_node: Option<String>,
     /// If set, shows a popup with details of a specific dependency link.
     show_link_details_popup: Option<LinkDetailsPopupInfo>,
+    /// Input for parsing analysis descriptions.
+    description_input: String,
 }
 
 type PreparedAnalysisInput = (
@@ -167,6 +192,7 @@ impl AnalyzeDependencyModal {
             threshold: initial_threshold,
             threshold_edit_str: initial_threshold.to_string(),
             group_aggregation_strategy: GroupAggregationStrategy::default(),
+            description_input: String::new(),
             ..Default::default()
         }
     }
@@ -198,6 +224,112 @@ impl AnalyzeDependencyModal {
         self.unique_span_names = unique_names;
     }
 
+    /// Test function: Sets the source span name for testing purposes.
+    pub fn set_source_span_name(&mut self, name: Option<String>) {
+        self.source_span_name = name;
+    }
+
+    /// Test function: Sets the target span name for testing purposes.
+    pub fn set_target_span_name(&mut self, name: Option<String>) {
+        self.target_span_name = name;
+    }
+
+    /// Test function: Sets the threshold for testing purposes.
+    pub fn set_threshold(&mut self, threshold: usize) {
+        self.threshold = threshold;
+        self.threshold_edit_str = threshold.to_string();
+    }
+
+    /// Test function: Sets the source scope for testing purposes.
+    pub fn set_source_scope(&mut self, scope: SourceScope) {
+        self.source_scope = scope;
+    }
+
+    /// Test function: Sets the analysis cardinality for testing purposes.
+    pub fn set_analysis_cardinality(&mut self, cardinality: AnalysisCardinality) {
+        self.analysis_cardinality = cardinality;
+    }
+
+    /// Test function: Sets the linking attribute for testing purposes.
+    pub fn set_linking_attribute(&mut self, attribute: String) {
+        self.linking_attribute = attribute;
+    }
+
+    /// Test function: Sets the group by attribute for testing purposes.
+    pub fn set_group_by_attribute(&mut self, attribute: String) {
+        self.group_by_attribute = attribute;
+    }
+
+    /// Test function: Sets the source timing strategy for testing purposes.
+    pub fn set_source_timing_strategy(&mut self, strategy: SourceTimingStrategy) {
+        self.source_timing_strategy = strategy;
+    }
+
+    /// Test function: Sets the group aggregation strategy for testing purposes.
+    pub fn set_group_aggregation_strategy(&mut self, strategy: GroupAggregationStrategy) {
+        self.group_aggregation_strategy = strategy;
+    }
+
+    /// Test function: Gets the error message for testing purposes.
+    pub fn get_error_message(&self) -> Option<&String> {
+        self.error_message.as_ref()
+    }
+
+    /// Test function: Gets the source span name for testing purposes.
+    pub fn get_source_span_name(&self) -> Option<&String> {
+        self.source_span_name.as_ref()
+    }
+
+    /// Test function: Gets the target span name for testing purposes.
+    pub fn get_target_span_name(&self) -> Option<&String> {
+        self.target_span_name.as_ref()
+    }
+
+    /// Test function: Gets the analysis cardinality for testing purposes.
+    pub fn get_analysis_cardinality(&self) -> &AnalysisCardinality {
+        &self.analysis_cardinality
+    }
+
+    /// Test function: Gets the threshold for testing purposes.
+    pub fn get_threshold(&self) -> usize {
+        self.threshold
+    }
+
+    /// Test function: Gets the linking attribute for testing purposes.
+    pub fn get_linking_attribute(&self) -> &String {
+        &self.linking_attribute
+    }
+
+    /// Test function: Gets the group by attribute for testing purposes.
+    pub fn get_group_by_attribute(&self) -> &String {
+        &self.group_by_attribute
+    }
+
+    /// Test function: Gets the source scope for testing purposes.
+    pub fn get_source_scope(&self) -> &SourceScope {
+        &self.source_scope
+    }
+
+    /// Test function: Gets the source timing strategy for testing purposes.
+    pub fn get_source_timing_strategy(&self) -> &SourceTimingStrategy {
+        &self.source_timing_strategy
+    }
+
+    /// Test function: Gets the group aggregation strategy for testing purposes.
+    pub fn get_group_aggregation_strategy(&self) -> &GroupAggregationStrategy {
+        &self.group_aggregation_strategy
+    }
+
+    /// Test function: Gets the source search text for testing purposes.
+    pub fn get_source_search_text(&self) -> &String {
+        &self.source_search_text
+    }
+
+    /// Test function: Gets the target search text for testing purposes.
+    pub fn get_target_search_text(&self) -> &String {
+        &self.target_search_text
+    }
+
     /// Selects a subset of source spans based on the configured timing strategy and threshold.
     fn select_spans_for_link_formation(&self, available_spans: &[Rc<Span>]) -> Vec<Rc<Span>> {
         assert!(self.threshold >= 1);
@@ -224,12 +356,12 @@ impl AnalyzeDependencyModal {
         max_link_for_node: &mut Option<DependencyLink>,
         formed_link: &DependencyLink,
         link_delay: f64,
-        used_target_spans: &mut HashSet<Vec<u8>>,
-        target_span_id: &[u8],
+        used_spans: &mut HashSet<Vec<u8>>,
+        span_id: &[u8],
     ) {
         stats.add_value(link_delay);
         node_links.push(formed_link.clone());
-        used_target_spans.insert(target_span_id.to_vec());
+        used_spans.insert(span_id.to_vec());
 
         // Update min/max links
         // stats.count, stats.min, stats.max are updated by stats.add_value()
@@ -264,7 +396,46 @@ impl AnalyzeDependencyModal {
         }
     }
 
-    fn analyze_dependencies(&mut self) {
+    /// Checks if two spans have matching values for all specified linking attributes.
+    fn spans_match_linking_attributes(
+        &self,
+        source_span: &Rc<Span>,
+        target_span: &Rc<Span>,
+    ) -> bool {
+        if self.linking_attribute.is_empty() {
+            return true;
+        }
+
+        let attribute_names: Vec<&str> = self
+            .linking_attribute
+            .split(',')
+            .map(|s| s.trim())
+            .collect();
+
+        for attr_name in attribute_names {
+            if attr_name.is_empty() {
+                continue;
+            }
+
+            // Both spans must have the attribute
+            if !source_span.attributes.contains_key(attr_name)
+                || !target_span.attributes.contains_key(attr_name)
+            {
+                return false;
+            }
+
+            // Values must match
+            let source_value = &source_span.attributes[attr_name];
+            let target_value = &target_span.attributes[attr_name];
+            if source_value != target_value {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn analyze_dependencies(&mut self) {
         self.analysis_result = None;
 
         let analysis_start = Instant::now();
@@ -283,43 +454,87 @@ impl AnalyzeDependencyModal {
 
         // Per-node dependency analysis
         let mut per_node_results = HashMap::new();
-        let node_names = if self.source_scope == SourceScope::SameNode {
-            // Only analyze nodes that have both source and target spans
-            source_spans_by_node
-                .keys()
-                .filter(|node_name| target_spans_by_node.contains_key(*node_name))
-                .cloned()
-                .collect::<Vec<String>>()
-        } else {
-            // "all nodes"
-            // Use source nodes and target nodes
-            let mut all_nodes = HashSet::new();
-            all_nodes.extend(source_spans_by_node.keys().cloned());
-            all_nodes.extend(target_spans_by_node.keys().cloned());
-            all_nodes.into_iter().collect()
-        };
 
-        // This set is for 'self' mode: if a source span is a potential candidate for any target, it's marked used globally
-        let mut global_used_source_span_ids_for_self_mode: HashSet<Vec<u8>> = HashSet::new();
+        match self.analysis_cardinality {
+            AnalysisCardinality::NToOne => {
+                let node_names = if self.source_scope == SourceScope::SameNode {
+                    // Only analyze nodes that have both source and target spans
+                    source_spans_by_node
+                        .keys()
+                        .filter(|node_name| target_spans_by_node.contains_key(*node_name))
+                        .cloned()
+                        .collect::<Vec<String>>()
+                } else {
+                    // "all nodes"
+                    // Use source nodes and target nodes
+                    let mut all_nodes = HashSet::new();
+                    all_nodes.extend(source_spans_by_node.keys().cloned());
+                    all_nodes.extend(target_spans_by_node.keys().cloned());
+                    all_nodes.into_iter().collect()
+                };
 
-        for node_name_str in node_names {
-            let current_target_spans_for_node = target_spans_by_node
-                .get(&node_name_str)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
+                // This set is for 'self' mode: if a source span is a potential candidate for any target, it's marked used globally
+                let mut global_used_source_span_ids_for_self_mode: HashSet<Vec<u8>> =
+                    HashSet::new();
 
-            if current_target_spans_for_node.is_empty() {
-                continue;
+                for node_name_str in node_names {
+                    let current_target_spans_for_node = target_spans_by_node
+                        .get(&node_name_str)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
+
+                    if current_target_spans_for_node.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(metrics) = self.analyze_dependencies_for_single_node_n_to_one(
+                        &node_name_str,
+                        &source_spans_by_node,
+                        current_target_spans_for_node,
+                        &mut global_used_source_span_ids_for_self_mode,
+                        &expected_group_keys_set,
+                    ) {
+                        per_node_results.insert(node_name_str.clone(), metrics);
+                    }
+                }
             }
+            AnalysisCardinality::OneToN => {
+                let node_names = if self.source_scope == SourceScope::SameNode {
+                    // Only analyze nodes that have both source and target spans
+                    source_spans_by_node
+                        .keys()
+                        .filter(|node_name| target_spans_by_node.contains_key(*node_name))
+                        .cloned()
+                        .collect::<Vec<String>>()
+                } else {
+                    // "all nodes" - analyze all source nodes
+                    source_spans_by_node.keys().cloned().collect()
+                };
 
-            if let Some(metrics) = self.analyze_dependencies_for_single_node(
-                &node_name_str,
-                &source_spans_by_node,
-                current_target_spans_for_node,
-                &mut global_used_source_span_ids_for_self_mode,
-                &expected_group_keys_set,
-            ) {
-                per_node_results.insert(node_name_str.clone(), metrics);
+                // For 1-to-N: each source span can link to multiple targets
+                let mut global_used_target_span_ids_for_self_mode: HashSet<Vec<u8>> =
+                    HashSet::new();
+
+                for node_name_str in node_names {
+                    let current_source_spans_for_node = source_spans_by_node
+                        .get(&node_name_str)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
+
+                    if current_source_spans_for_node.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(metrics) = self.analyze_dependencies_for_single_node_one_to_n(
+                        &node_name_str,
+                        current_source_spans_for_node,
+                        &target_spans_by_node,
+                        &mut global_used_target_span_ids_for_self_mode,
+                        &expected_group_keys_set,
+                    ) {
+                        per_node_results.insert(node_name_str.clone(), metrics);
+                    }
+                }
             }
         }
 
@@ -336,6 +551,7 @@ impl AnalyzeDependencyModal {
             source_timing_strategy: self.source_timing_strategy.clone(),
             group_by_attribute: self.group_by_attribute.clone(),
             group_aggregation_strategy: self.group_aggregation_strategy.clone(),
+            analysis_cardinality: self.analysis_cardinality.clone(),
             per_node_results,
             analysis_duration_ms: analysis_duration,
             overall_stats: Statistics::new(),
@@ -381,7 +597,7 @@ impl AnalyzeDependencyModal {
     }
 
     /// Analyzes dependencies for a single node.
-    fn analyze_dependencies_for_single_node(
+    fn analyze_dependencies_for_single_node_n_to_one(
         &mut self,
         node_name: &str,
         source_spans_by_node: &HashMap<String, Vec<Rc<Span>>>,
@@ -470,16 +686,7 @@ impl AnalyzeDependencyModal {
         max_link_for_current_node: &mut Option<DependencyLink>,
         used_target_spans: &mut HashSet<Vec<u8>>,
     ) {
-        // Check linking attribute for target_span if specified
-        if !self.linking_attribute.is_empty()
-            && !target_span.attributes.contains_key(&self.linking_attribute)
-        {
-            // Target itself must have the linking attribute to be a candidate
-            return;
-        }
-
         // Common logic to find all temporally valid, attribute-matching, and not-yet-used source spans
-        // for the current target_span, regardless of grouping.
         let mut eligible_sources_before_target: Vec<Rc<Span>> = Vec::new();
         for s_span in current_source_node_spans.iter() {
             let mut skip_source = false;
@@ -498,34 +705,17 @@ impl AnalyzeDependencyModal {
             }
 
             // Basic time validity
-            if s_span.end_time < target_span.start_time {
-                // Check linking attribute compatibility if field is specified
-                if !self.linking_attribute.is_empty() {
-                    // Source must also have the linking attribute
-                    if !s_span.attributes.contains_key(&self.linking_attribute) {
-                        continue;
-                    }
-                    // Values must match (target_span's linking attribute existence already checked)
-                    let source_value = &s_span.attributes[&self.linking_attribute];
-                    let target_value = &target_span.attributes[&self.linking_attribute];
-                    if source_value != target_value {
-                        continue;
-                    }
+            if s_span.end_time <= target_span.start_time {
+                // Check linking attribute compatibility using the new multi-attribute function
+                if self.spans_match_linking_attributes(s_span, target_span) {
+                    eligible_sources_before_target.push(s_span.clone());
                 }
-                eligible_sources_before_target.push(s_span.clone());
             }
         }
 
         // Branch based on grouping
         if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
             // GROUPING LOGIC
-            let current_expected_group_attribute_keys = expected_group_keys_set.as_ref().unwrap();
-            if current_expected_group_attribute_keys.is_empty() {
-                // This case implies grouping is active but no valid group keys were found initially.
-                // This should have been caught by prepare_analysis_inputs, but as a safeguard:
-                return;
-            }
-
             let mut grouped_potential_sources: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
             for s_span in &eligible_sources_before_target {
                 if let Some(Some(Value::StringValue(s_val))) =
@@ -541,28 +731,23 @@ impl AnalyzeDependencyModal {
             let mut all_groups_meet_threshold = true;
             let mut spans_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
 
-            // Check if all expected groups are present in the potential sources for this target
-            if grouped_potential_sources.len() < current_expected_group_attribute_keys.len() {
-                all_groups_meet_threshold = false;
-            } else {
-                for expected_key_val in current_expected_group_attribute_keys {
-                    match grouped_potential_sources.get(expected_key_val) {
-                        Some(group_spans)
-                            if group_spans.len() >= self.threshold && self.threshold > 0 =>
-                        {
-                            let selected_from_group =
-                                self.select_spans_for_link_formation(group_spans);
-                            spans_for_this_grouped_link.extend(selected_from_group);
-                        }
-                        _ => {
-                            all_groups_meet_threshold = false;
-                            break;
-                        }
-                    }
+            // Check if each group that exists in eligible sources meets threshold
+            // (Don't require all originally expected groups - some may be filtered out by linking attributes)
+            for group_spans in grouped_potential_sources.values() {
+                if group_spans.len() >= self.threshold && self.threshold > 0 {
+                    let selected_from_group = self.select_spans_for_link_formation(group_spans);
+                    spans_for_this_grouped_link.extend(selected_from_group);
+                } else {
+                    all_groups_meet_threshold = false;
+                    break;
                 }
             }
 
-            if all_groups_meet_threshold && !spans_for_this_grouped_link.is_empty() {
+            // Only proceed if we have at least some groups and all present groups meet threshold
+            if all_groups_meet_threshold
+                && !grouped_potential_sources.is_empty()
+                && !spans_for_this_grouped_link.is_empty()
+            {
                 // Calculate link delay based on aggregation strategy for groups
                 let link_delay = match self.group_aggregation_strategy {
                     GroupAggregationStrategy::WaitForLastGroup => {
@@ -594,7 +779,7 @@ impl AnalyzeDependencyModal {
 
                 let new_formed_link = DependencyLink {
                     source_spans: spans_for_this_grouped_link.clone(),
-                    target_span: target_span.clone(),
+                    target_spans: vec![target_span.clone()],
                     delay_seconds: link_delay,
                 };
 
@@ -632,7 +817,7 @@ impl AnalyzeDependencyModal {
 
                     let new_formed_link = DependencyLink {
                         source_spans: selected_source_spans_group.clone(),
-                        target_span: target_span.clone(),
+                        target_spans: vec![target_span.clone()],
                         delay_seconds: link_distance,
                     };
 
@@ -653,6 +838,267 @@ impl AnalyzeDependencyModal {
                         used_source_ids_for_current_node_all_scope,
                     );
                 }
+            }
+        }
+    }
+
+    /// Analyzes dependencies for a single node in 1-to-N mode.
+    fn analyze_dependencies_for_single_node_one_to_n(
+        &mut self,
+        node_name: &str,
+        current_source_node_spans: &[Rc<Span>],
+        target_spans_by_node: &HashMap<String, Vec<Rc<Span>>>,
+        global_used_target_span_ids_for_self_mode: &mut HashSet<Vec<u8>>,
+        expected_group_keys_set: &Option<HashSet<String>>,
+    ) -> Option<NodeDependencyMetrics> {
+        // Get all potential target spans based on source scope
+        let current_target_spans = if self.source_scope == SourceScope::SameNode {
+            // Only use targets from this same node
+            target_spans_by_node
+                .get(node_name)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            // Use targets from all nodes, sorted by time
+            let mut all_t_spans: Vec<Rc<Span>> =
+                target_spans_by_node.values().flatten().cloned().collect();
+            all_t_spans.sort_by(|a, b| {
+                a.start_time
+                    .partial_cmp(&b.start_time)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            all_t_spans
+        };
+
+        // Skip if no target spans for this scope
+        if current_target_spans.is_empty() {
+            return None;
+        }
+
+        // Find valid links for the current source node
+        let mut node_links_for_current_node = Vec::new();
+        let mut stats_for_current_node = Statistics::new();
+        let mut min_link_for_current_node: Option<DependencyLink> = None;
+        let mut max_link_for_current_node: Option<DependencyLink> = None;
+
+        let mut used_source_spans: HashSet<Vec<u8>> = HashSet::new();
+        // This is specific to the current node when in "all nodes" scope
+        let mut used_target_ids_for_current_node_all_scope: HashSet<Vec<u8>> = HashSet::new();
+
+        for source_span_rc in current_source_node_spans.iter() {
+            if used_source_spans.contains(&source_span_rc.span_id) {
+                // This source has already been processed
+                continue;
+            }
+
+            self.process_source_span_for_one_to_n_links(
+                source_span_rc,
+                &current_target_spans,
+                expected_group_keys_set,
+                global_used_target_span_ids_for_self_mode,
+                &mut used_target_ids_for_current_node_all_scope,
+                &mut node_links_for_current_node,
+                &mut stats_for_current_node,
+                &mut min_link_for_current_node,
+                &mut max_link_for_current_node,
+                &mut used_source_spans,
+            );
+        }
+
+        // Add result for this node if any links were formed
+        if !node_links_for_current_node.is_empty() || stats_for_current_node.count > 0 {
+            Some(NodeDependencyMetrics {
+                link_delay_statistics: stats_for_current_node,
+                links: node_links_for_current_node,
+                min_delay_link: min_link_for_current_node,
+                max_delay_link: max_link_for_current_node,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Processes a single source span to find and record dependency links in 1-to-N mode.
+    #[allow(clippy::too_many_arguments)]
+    fn process_source_span_for_one_to_n_links(
+        &self,
+        source_span: &Rc<Span>,
+        current_target_spans: &[Rc<Span>],
+        expected_group_keys_set: &Option<HashSet<String>>,
+        global_used_target_span_ids_for_self_mode: &mut HashSet<Vec<u8>>,
+        used_target_ids_for_current_node_all_scope: &mut HashSet<Vec<u8>>,
+        node_links_for_current_node: &mut Vec<DependencyLink>,
+        stats_for_current_node: &mut Statistics,
+        min_link_for_current_node: &mut Option<DependencyLink>,
+        max_link_for_current_node: &mut Option<DependencyLink>,
+        used_source_spans: &mut HashSet<Vec<u8>>,
+    ) {
+        // Common logic to find all temporally valid, attribute-matching, and not-yet-used target spans
+        let mut eligible_targets_after_source: Vec<Rc<Span>> = Vec::new();
+        for t_span in current_target_spans.iter() {
+            let mut skip_target = false;
+            if self.source_scope == SourceScope::SameNode {
+                if global_used_target_span_ids_for_self_mode.contains(&t_span.span_id) {
+                    skip_target = true;
+                }
+            } else {
+                // "all nodes" mode
+                if used_target_ids_for_current_node_all_scope.contains(&t_span.span_id) {
+                    skip_target = true;
+                }
+            }
+            if skip_target {
+                continue;
+            }
+
+            // Basic time validity: target must start after source ends
+            if t_span.start_time >= source_span.end_time
+                && self.spans_match_linking_attributes(source_span, t_span)
+            {
+                eligible_targets_after_source.push(t_span.clone());
+            }
+        }
+
+        // Branch based on grouping
+        if !self.group_by_attribute.is_empty() && expected_group_keys_set.is_some() {
+            // GROUPING LOGIC
+            let mut grouped_potential_targets: HashMap<String, Vec<Rc<Span>>> = HashMap::new();
+            for t_span in &eligible_targets_after_source {
+                if let Some(Some(Value::StringValue(t_val))) =
+                    t_span.attributes.get(&self.group_by_attribute)
+                {
+                    grouped_potential_targets
+                        .entry(t_val.clone())
+                        .or_default()
+                        .push(t_span.clone());
+                }
+            }
+
+            let mut all_groups_meet_threshold = true;
+            let mut targets_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
+
+            // Check if each group that exists in eligible targets meets threshold
+            // (Don't require all originally expected groups - some may be filtered out by linking attributes)
+            for group_targets in grouped_potential_targets.values() {
+                if group_targets.len() >= self.threshold && self.threshold > 0 {
+                    let selected_from_group =
+                        self.select_targets_for_one_to_n_link_formation(group_targets);
+                    targets_for_this_grouped_link.extend(selected_from_group);
+                } else {
+                    all_groups_meet_threshold = false;
+                    break;
+                }
+            }
+
+            // Only proceed if we have at least some groups and all present groups meet threshold
+            if all_groups_meet_threshold
+                && !grouped_potential_targets.is_empty()
+                && !targets_for_this_grouped_link.is_empty()
+            {
+                // Create a single link with one source and multiple targets
+                // For consistency with N-to-1 mode, always use the LATEST target start time
+                // (representing "how long until ALL targets have started")
+                let link_delay = (targets_for_this_grouped_link
+                    .iter()
+                    .map(|t| t.start_time)
+                    .fold(f64::NEG_INFINITY, f64::max)
+                    - source_span.end_time)
+                    .abs();
+
+                let new_formed_link = DependencyLink {
+                    source_spans: vec![source_span.clone()],
+                    target_spans: targets_for_this_grouped_link.clone(),
+                    delay_seconds: link_delay,
+                };
+
+                self.record_formed_link(
+                    stats_for_current_node,
+                    node_links_for_current_node,
+                    min_link_for_current_node,
+                    max_link_for_current_node,
+                    &new_formed_link,
+                    link_delay,
+                    used_source_spans,
+                    &source_span.span_id,
+                );
+
+                // Mark all targets as used
+                for target_span in &targets_for_this_grouped_link {
+                    if self.source_scope == SourceScope::SameNode {
+                        global_used_target_span_ids_for_self_mode
+                            .insert(target_span.span_id.clone());
+                    } else {
+                        used_target_ids_for_current_node_all_scope
+                            .insert(target_span.span_id.clone());
+                    }
+                }
+            }
+        } else {
+            // NON-GROUPING LOGIC
+            if eligible_targets_after_source.len() >= self.threshold && self.threshold > 0 {
+                let selected_target_spans_group =
+                    self.select_targets_for_one_to_n_link_formation(&eligible_targets_after_source);
+
+                if !selected_target_spans_group.is_empty() {
+                    // Create a single link with one source and multiple targets
+                    // For consistency with N-to-1 mode, always use the LATEST target start time
+                    // (representing "how long until ALL targets have started")
+                    let link_delay = (selected_target_spans_group
+                        .iter()
+                        .map(|t| t.start_time)
+                        .fold(f64::NEG_INFINITY, f64::max)
+                        - source_span.end_time)
+                        .abs();
+
+                    let new_formed_link = DependencyLink {
+                        source_spans: vec![source_span.clone()],
+                        target_spans: selected_target_spans_group.clone(),
+                        delay_seconds: link_delay,
+                    };
+
+                    self.record_formed_link(
+                        stats_for_current_node,
+                        node_links_for_current_node,
+                        min_link_for_current_node,
+                        max_link_for_current_node,
+                        &new_formed_link,
+                        link_delay,
+                        used_source_spans,
+                        &source_span.span_id,
+                    );
+
+                    // Mark all targets as used
+                    for target_span in &selected_target_spans_group {
+                        if self.source_scope == SourceScope::SameNode {
+                            global_used_target_span_ids_for_self_mode
+                                .insert(target_span.span_id.clone());
+                        } else {
+                            used_target_ids_for_current_node_all_scope
+                                .insert(target_span.span_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Selects a subset of target spans based on the configured timing strategy and threshold for 1-to-N analysis.
+    fn select_targets_for_one_to_n_link_formation(
+        &self,
+        available_targets: &[Rc<Span>],
+    ) -> Vec<Rc<Span>> {
+        assert!(self.threshold >= 1);
+        let num_to_take = self.threshold;
+
+        match self.source_timing_strategy {
+            SourceTimingStrategy::EarliestFirst => available_targets
+                .iter()
+                .take(num_to_take)
+                .cloned()
+                .collect(),
+            SourceTimingStrategy::LatestFirst => {
+                let skip_count = available_targets.len().saturating_sub(num_to_take);
+                available_targets.iter().skip(skip_count).cloned().collect()
             }
         }
     }
@@ -698,19 +1144,37 @@ impl AnalyzeDependencyModal {
         let mut expected_group_keys_set: Option<HashSet<String>> = None;
         if !self.group_by_attribute.is_empty() {
             let mut keys_found = HashSet::new();
-            for s_span in &source_spans {
+
+            // Choose which spans to check based on cardinality mode
+            let (spans_to_check, span_type_name) = match self.analysis_cardinality {
+                AnalysisCardinality::NToOne => (&source_spans, &source_name),
+                AnalysisCardinality::OneToN => (&target_spans, &target_name),
+            };
+
+            for span in spans_to_check {
                 if let Some(Some(Value::StringValue(s_val))) =
-                    s_span.attributes.get(&self.group_by_attribute)
+                    span.attributes.get(&self.group_by_attribute)
                 {
                     keys_found.insert(s_val.clone());
                 }
             }
 
             if keys_found.is_empty() {
-                return Err(format!(
-                    "The \'Group By Attribute\' (\'{}\') was not found in any source spans named \'{}\', or no such source spans have this attribute.",
-                    self.group_by_attribute, source_name
-                ));
+                let error_message = match self.analysis_cardinality {
+                    AnalysisCardinality::NToOne => {
+                        format!(
+                            "The \'Group By Attribute\' (\'{}\') was not found in any source spans named \'{}\', or no such source spans have this attribute.",
+                            self.group_by_attribute, span_type_name
+                        )
+                    }
+                    AnalysisCardinality::OneToN => {
+                        format!(
+                            "The \'Group By Attribute\' (\'{}\') was not found in any target spans named \'{}\', or no such target spans have this attribute.",
+                            self.group_by_attribute, span_type_name
+                        )
+                    }
+                };
+                return Err(error_message);
             }
             expected_group_keys_set = Some(keys_found);
         }
@@ -749,6 +1213,11 @@ impl AnalyzeDependencyModal {
                 ui_main_column.set_max_height(max_height);
 
                 ui_main_column.heading("Analyze Dependency");
+                ui_main_column.add_space(10.0);
+
+                // Quick setup section for parsing analysis descriptions
+                self.show_quick_setup_parsing_ui(ui_main_column);
+
                 ui_main_column.add_space(10.0);
 
                 Grid::new("source_target_grid")
@@ -838,6 +1307,23 @@ impl AnalyzeDependencyModal {
                         ui_row1.add_space(10.0);
                         ui_row1.vertical(|ui| {
                             ui.horizontal(|ui| {
+                                ui.label("Cardinality:");
+                                let card_resp = ComboBox::new(ui.id().with("analysis_cardinality"), "")
+                                    .selected_text(self.analysis_cardinality.to_string())
+                                    .width(80.0)
+                                    .show_ui(ui, |ui_combo_card| {
+                                        ui_combo_card.selectable_value(&mut self.analysis_cardinality, AnalysisCardinality::NToOne, AnalysisCardinality::NToOne.to_string());
+                                        ui_combo_card.selectable_value(&mut self.analysis_cardinality, AnalysisCardinality::OneToN, AnalysisCardinality::OneToN.to_string());
+                                    });
+                                card_resp.response.on_hover_text(concat!(
+                                    "N-to-1: Find N source spans for each target span (existing mode). ",
+                                    "1-to-N: Find N target spans for each source span (new mode)."
+                                ));
+                            });
+                        });
+                        ui_row1.add_space(10.0);
+                        ui_row1.vertical(|ui| {
+                            ui.horizontal(|ui| {
                                 ui.label("Link by Attribute:");
                                 let response = ui.add(
                                     TextEdit::singleline(&mut self.linking_attribute)
@@ -847,7 +1333,8 @@ impl AnalyzeDependencyModal {
                                 if response.hovered() {
                                     response.on_hover_text(concat!(
                                         "Optional. If provided, only spans with matching values for this ",
-                                        "attribute field can form links. Leave empty to ignore attribute matching."
+                                        "attribute field can form links. Leave empty to ignore attribute matching. ",
+                                        "Use comma-separated names (e.g., 'height,shard_id') to match multiple attributes."
                                     ));
                                 }
                             });
@@ -963,8 +1450,8 @@ impl AnalyzeDependencyModal {
                 if let Some(result) = &self.analysis_result {
                     ui_main_column.horizontal_wrapped(|ui_summary_wrap| {
                         ui_summary_wrap.label(format!(
-                            "Analysis of dependency: '{}' -> '{}' (threshold: {}, linking by: {}, group by: {}, scope: {}, timing: {}, group aggregation: {})",
-                            result.source_span_name, result.target_span_name, result.threshold,
+                            "Analysis of dependency: '{}' -> '{}' (cardinality: {}, threshold: {}, linking by: {}, group by: {}, scope: {}, timing: {}, group aggregation: {})",
+                            result.source_span_name, result.target_span_name, result.analysis_cardinality, result.threshold,
                             if result.linking_attribute.is_empty() { "none" } else { &result.linking_attribute },
                             if result.group_by_attribute.is_empty() { "none" } else { &result.group_by_attribute },
                             result.source_scope, result.source_timing_strategy, result.group_aggregation_strategy
@@ -983,7 +1470,11 @@ impl AnalyzeDependencyModal {
                         .striped(true)
                         .min_col_width(0.0)
                         .show(ui_main_column, |ui_header_grid| {
-                            draw_left_aligned_text_cell(ui_header_grid, col_widths[0], "Node", true);
+                            let node_header = match self.analysis_result.as_ref().map(|r| &r.analysis_cardinality) {
+                                Some(AnalysisCardinality::OneToN) => "Source Node",
+                                _ => "Node",
+                            };
+                            draw_left_aligned_text_cell(ui_header_grid, col_widths[0], node_header, true);
                             draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[1], "Count", true, None, false);
                             draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[2], "Min (ms)", true, None, false);
                             draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[3], "Max (ms)", true, None, false);
@@ -1093,8 +1584,8 @@ impl AnalyzeDependencyModal {
                                                 if let Some(link) = &result.overall_min_delay_link {
                                                     self.show_link_details_popup = Some(LinkDetailsPopupInfo {
                                                         link: link.clone(),
-                                                        title: format!("Overall Minimum Delay Link Details (Node: {})", link.target_span.node.name),
-                                                        node_name: link.target_span.node.name.clone(),
+                                                        title: format!("Overall Minimum Delay Link Details (Node: {})", link.target_spans[0].node.name),
+                                                        node_name: link.target_spans[0].node.name.clone(),
                                                         group_by_attribute_name: result.group_by_attribute.clone(),
                                                         linking_attribute_name: result.linking_attribute.clone(),
                                                         delay_ms: result.overall_stats.min * MILLISECONDS_PER_SECOND,
@@ -1109,8 +1600,8 @@ impl AnalyzeDependencyModal {
                                                 if let Some(link) = &result.overall_max_delay_link {
                                                     self.show_link_details_popup = Some(LinkDetailsPopupInfo {
                                                         link: link.clone(),
-                                                        title: format!("Overall Maximum Delay Link Details (Node: {})", link.target_span.node.name),
-                                                        node_name: link.target_span.node.name.clone(),
+                                                        title: format!("Overall Maximum Delay Link Details (Node: {})", link.target_spans[0].node.name),
+                                                        node_name: link.target_spans[0].node.name.clone(),
                                                         group_by_attribute_name: result.group_by_attribute.clone(),
                                                         linking_attribute_name: result.linking_attribute.clone(),
                                                         delay_ms: result.overall_stats.max * MILLISECONDS_PER_SECOND,
@@ -1153,7 +1644,9 @@ impl AnalyzeDependencyModal {
             self.source_scope = SourceScope::default();
             self.source_timing_strategy = SourceTimingStrategy::default();
             self.group_aggregation_strategy = GroupAggregationStrategy::default();
+            self.analysis_cardinality = AnalysisCardinality::default();
             self.error_message = None;
+            self.description_input = String::new();
         }
 
         // Show the link details popup if requested
@@ -1213,6 +1706,232 @@ impl AnalyzeDependencyModal {
             self.show_link_details_popup = None;
         }
     }
+
+    /// EXPERIMENTAL FEATURE: Quick setup from analysis description parsing
+    ///
+    /// Parse an analysis description string and populate the modal fields
+    pub fn parse_and_fill_from_description(&mut self, description: &str) -> Result<(), String> {
+        // Clear any previous parse error
+        self.error_message = None;
+
+        // Trim whitespace
+        let desc = description.trim();
+
+        // Check if it starts with the expected prefix
+        if !desc.starts_with("Analysis of dependency:") {
+            return Err("Description must start with 'Analysis of dependency:'".to_string());
+        }
+
+        // Parse source and target span names
+        let after_prefix = desc.strip_prefix("Analysis of dependency:").unwrap().trim();
+
+        // Find the arrow pattern 'source' -> 'target'
+        let arrow_regex = regex::Regex::new(r"'([^']+)'\s*->\s*'([^']+)'").unwrap();
+        let arrow_captures = arrow_regex
+            .captures(after_prefix)
+            .ok_or("Could not find 'source' -> 'target' pattern in quotes")?;
+        let source_name = arrow_captures.get(1).unwrap().as_str().to_string();
+        let target_name = arrow_captures.get(2).unwrap().as_str().to_string();
+
+        // Extract the parameters part (everything in parentheses)
+        let params_start = after_prefix
+            .find('(')
+            .ok_or("Could not find opening parenthesis for parameters")?;
+        let params_end = after_prefix
+            .rfind(')')
+            .ok_or("Could not find closing parenthesis for parameters")?;
+        let params_str = &after_prefix[params_start + 1..params_end];
+
+        // Parse individual parameters
+        let mut cardinality = None;
+        let mut threshold = None;
+        let mut linking_by = None;
+        let mut group_by = None;
+        let mut scope = None;
+        let mut timing = None;
+        let mut group_aggregation = None;
+
+        // Define the expected parameter names in order
+        let param_names = [
+            "cardinality:",
+            "threshold:",
+            "linking by:",
+            "group by:",
+            "scope:",
+            "timing:",
+            "group aggregation:",
+        ];
+
+        // Parse parameters by finding each parameter name and taking everything until the next parameter name
+        let mut remaining = params_str;
+
+        for (i, &param_name) in param_names.iter().enumerate() {
+            if let Some(start_pos) = remaining.find(param_name) {
+                // Move past the parameter name
+                let value_start = start_pos + param_name.len();
+                let value_part = &remaining[value_start..];
+
+                // Find the next parameter name to determine where this value ends
+                let mut value_end = value_part.len();
+                for &next_param_name in &param_names[i + 1..] {
+                    if let Some(next_pos) = value_part.find(next_param_name) {
+                        value_end = value_end.min(next_pos);
+                    }
+                }
+
+                // Extract and trim the value
+                let value = value_part[..value_end].trim().trim_end_matches(',').trim();
+
+                // Parse the specific parameter
+                match param_name {
+                    "cardinality:" => {
+                        cardinality = Some(match value {
+                            "N-to-1" => AnalysisCardinality::NToOne,
+                            "1-to-N" => AnalysisCardinality::OneToN,
+                            _ => return Err(format!("Unknown cardinality: {}", value)),
+                        });
+                    }
+                    "threshold:" => {
+                        threshold = Some(
+                            value
+                                .parse::<usize>()
+                                .map_err(|_| format!("Invalid threshold: {}", value))?,
+                        );
+                    }
+                    "linking by:" => {
+                        linking_by = Some(if value == "none" {
+                            String::new()
+                        } else {
+                            value.to_string()
+                        });
+                    }
+                    "group by:" => {
+                        group_by = Some(if value == "none" {
+                            String::new()
+                        } else {
+                            value.to_string()
+                        });
+                    }
+                    "scope:" => {
+                        scope = Some(match value {
+                            "self" => SourceScope::SameNode,
+                            "all nodes" => SourceScope::AllNodes,
+                            _ => return Err(format!("Unknown scope: {}", value)),
+                        });
+                    }
+                    "timing:" => {
+                        timing = Some(match value {
+                            "Earliest First" => SourceTimingStrategy::EarliestFirst,
+                            "Latest First" => SourceTimingStrategy::LatestFirst,
+                            _ => return Err(format!("Unknown timing strategy: {}", value)),
+                        });
+                    }
+                    "group aggregation:" => {
+                        group_aggregation = Some(match value {
+                            "Wait For Last Group" => GroupAggregationStrategy::WaitForLastGroup,
+                            "First Completed Group" => {
+                                GroupAggregationStrategy::FirstCompletedGroup
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "Unknown group aggregation strategy: {}",
+                                    value
+                                ))
+                            }
+                        });
+                    }
+                    _ => {}
+                }
+
+                // Move the remaining string forward to avoid processing the same parameter again
+                remaining = &remaining[value_start + value_end..];
+            }
+        }
+
+        // Apply the parsed values
+        self.source_span_name = Some(source_name);
+        self.target_span_name = Some(target_name);
+
+        if let Some(card) = cardinality {
+            self.analysis_cardinality = card;
+        }
+
+        if let Some(thresh) = threshold {
+            self.threshold = thresh.max(1);
+            self.threshold_edit_str = self.threshold.to_string();
+        }
+
+        if let Some(linking) = linking_by {
+            self.linking_attribute = linking;
+        }
+
+        if let Some(grouping) = group_by {
+            self.group_by_attribute = grouping;
+        }
+
+        if let Some(sc) = scope {
+            self.source_scope = sc;
+        }
+
+        if let Some(tim) = timing {
+            self.source_timing_strategy = tim;
+        }
+
+        if let Some(agg) = group_aggregation {
+            self.group_aggregation_strategy = agg;
+        }
+
+        // Update search text to match the selected spans
+        if let Some(ref source) = self.source_span_name {
+            self.source_search_text = source.clone();
+        }
+        if let Some(ref target) = self.target_span_name {
+            self.target_search_text = target.clone();
+        }
+
+        Ok(())
+    }
+
+    /// EXPERIMENTAL FEATURE: Quick setup from analysis description parsing
+    fn show_quick_setup_parsing_ui(&mut self, ui_main_column: &mut Ui) {
+        ui_main_column.collapsing("Quick Setup from Analysis Description", |ui_quick_setup| {
+            ui_quick_setup.label("Paste an analysis description to automatically fill all fields:");
+            ui_quick_setup.add_space(5.0);
+
+            ui_quick_setup.horizontal(|ui_input_row| {
+                ui_input_row.add(
+                    TextEdit::multiline(&mut self.description_input)
+                        .desired_width(ui_input_row.available_width() - 120.0)
+                        .desired_rows(3)
+                        .hint_text("Analysis of dependency: 'source_span' -> 'target_span' (cardinality: 1-to-N, threshold: 1, linking by: none, group by: none, scope: all nodes, timing: Earliest First, group aggregation: First Completed Group)")
+                );
+
+                ui_input_row.vertical(|ui_button_col| {
+                    if ui_button_col.button("Parse, Fill and Analyze").clicked() {
+                        if let Err(err) = self.parse_and_fill_from_description(&self.description_input.clone()) {
+                            self.error_message = Some(format!("Parse error: {}", err));
+                        } else {
+                            // Clear parse errors but keep other error messages
+                            if let Some(ref msg) = self.error_message {
+                                if msg.starts_with("Parse error:") {
+                                    self.error_message = None;
+                                }
+                            }
+                            // After successful parsing, run the analysis
+                            self.analyze_dependencies();
+                        }
+                    }
+                });
+            });
+
+            if let Some(ref error) = self.error_message {
+                if error.starts_with("Parse error:") {
+                    ui_quick_setup.add_space(5.0);
+                    ui_quick_setup.colored_label(colors::MILD_RED, error);
+                }
+            }
+        });
+    }
 }
 
 /// Draws the visualization for a dependency link, including source and target spans.
@@ -1226,7 +1945,13 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
             .then_with(|| a.name.cmp(&b.name))
     });
 
-    let target_start_time_abs = details.link.target_span.start_time;
+    // For calculating time to target, use the earliest target start time
+    let earliest_target_start_time = details
+        .link
+        .target_spans
+        .iter()
+        .map(|t| t.start_time)
+        .fold(f64::INFINITY, f64::min);
 
     ScrollArea::vertical()
         .id_salt("link_details_scroll_area")
@@ -1261,7 +1986,7 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
                         .iter()
                         .map(|s| s.end_time)
                         .fold(f64::NEG_INFINITY, f64::max);
-                    let time_to_target_group_ms = (target_start_time_abs
+                    let time_to_target_group_ms = (earliest_target_start_time
                         - latest_end_time_in_group)
                         * MILLISECONDS_PER_SECOND;
                     sorted_groups.push((group_name, spans_in_group, time_to_target_group_ms));
@@ -1287,7 +2012,7 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
                     for s_span in spans_in_group {
                         ui.indent("source_span_indent_group", |ui| {
                             ui.horizontal(|ui| {
-                                let distance_to_target_ms = (target_start_time_abs
+                                let distance_to_target_ms = (earliest_target_start_time
                                     - s_span.end_time)
                                     * MILLISECONDS_PER_SECOND;
                                 let time_to_target_display =
@@ -1317,8 +2042,8 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
                     ui.horizontal(|ui| {
                         ui.label(format!("{}. ", idx + 1));
 
-                        let distance_to_target_ms =
-                            (target_start_time_abs - s_span.end_time) * MILLISECONDS_PER_SECOND;
+                        let distance_to_target_ms = (earliest_target_start_time - s_span.end_time)
+                            * MILLISECONDS_PER_SECOND;
                         let time_to_target_display =
                             format!("{:.3}ms", distance_to_target_ms.max(0.0));
                         let end_timestamp_str =
@@ -1340,20 +2065,23 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
             }
 
             ui.add_space(8.0);
-            ui.strong("Target Span:");
+            ui.strong("Target Spans:");
             ui.add_space(2.0);
-            let t_span = &details.link.target_span;
-            ui.horizontal(|ui| {
-                ui.strong("Start: ");
-                ui.monospace(crate::types::time_point_to_utc_string(t_span.start_time));
-                ui.strong(" Node: ");
-                ui.monospace(&t_span.node.name);
-                ui.strong(" Name: ");
-                ui.monospace(&t_span.name);
-                let id_label_response = ui.strong(" ID: ");
-                ui.monospace(hex::encode(&t_span.span_id));
-                id_label_response.on_hover_text("This is the Target Span");
-            });
+            let t_spans = &details.link.target_spans;
+            for (idx, t_span) in t_spans.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}. ", idx + 1));
+                    ui.strong("Start: ");
+                    ui.monospace(crate::types::time_point_to_utc_string(t_span.start_time));
+                    ui.strong(" Node: ");
+                    ui.monospace(&t_span.node.name);
+                    ui.strong(" Name: ");
+                    ui.monospace(&t_span.name);
+                    ui.strong(" ID: ");
+                    ui.monospace(hex::encode(&t_span.span_id));
+                });
+                ui.add_space(1.0);
+            }
         });
 }
 

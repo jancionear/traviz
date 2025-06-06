@@ -82,6 +82,12 @@ pub enum EditNodeFiltersState {
     EditingFilterRule,
 }
 
+impl Default for EditNodeFilters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EditNodeFilters {
     pub fn new() -> EditNodeFilters {
         EditNodeFilters {
