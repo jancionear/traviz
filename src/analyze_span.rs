@@ -244,7 +244,7 @@ impl AnalyzeSpanModal {
                 // and the ScrollArea that uses them is only shown in that case.
                 let mut grid_width = 0.0;
                 // Define percentage-based column widths
-                let col_percentages = [0.25, 0.14, 0.14, 0.14, 0.14, 0.14]; // Node, Count, Min, Max, Mean, Median
+                let col_percentages = [0.25, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11]; // Node, Count, Min, Max, Mean, Median
 
                 // Top row with search and analyze button
                 ui.horizontal(|ui| {
@@ -320,7 +320,7 @@ impl AnalyzeSpanModal {
 
                     // Header row - outside scrollable area to make it sticky
                     Grid::new("span_analysis_header_grid")
-                        .num_columns(6)
+                        .num_columns(7)
                         .spacing([10.0, 6.0])
                         .striped(true)
                         .min_col_width(0.0)
@@ -369,6 +369,14 @@ impl AnalyzeSpanModal {
                                 None,
                                 false,
                             );
+                            draw_clickable_right_aligned_text_cell(
+                                ui_grid,
+                                col_widths[6],
+                                "Std Dev (ms)",
+                                true,
+                                None,
+                                false,
+                            );
 
                             ui_grid.end_row();
                         });
@@ -388,7 +396,7 @@ impl AnalyzeSpanModal {
 
                             // Use Grid for tabular data (without headers)
                             Grid::new("span_analysis_grid")
-                                .num_columns(6)
+                                .num_columns(7)
                                 .spacing([10.0, 6.0])
                                 .striped(true)
                                 .min_col_width(0.0)
@@ -462,6 +470,18 @@ impl AnalyzeSpanModal {
                                                 &format!(
                                                     "{:.3}",
                                                     stats.duration_stats.median()
+                                                        * MILLISECONDS_PER_SECOND
+                                                ),
+                                                false,
+                                                None,
+                                                false,
+                                            );
+                                            draw_clickable_right_aligned_text_cell(
+                                                ui_grid,
+                                                col_widths[6],
+                                                &format!(
+                                                    "{:.3}",
+                                                    stats.duration_stats.std_dev()
                                                         * MILLISECONDS_PER_SECOND
                                                 ),
                                                 false,
@@ -542,6 +562,18 @@ impl AnalyzeSpanModal {
                                         &format!(
                                             "{:.3}",
                                             overall.duration_stats.median()
+                                                * MILLISECONDS_PER_SECOND
+                                        ),
+                                        true,
+                                        None,
+                                        false,
+                                    );
+                                    draw_clickable_right_aligned_text_cell(
+                                        ui_grid,
+                                        col_widths[6],
+                                        &format!(
+                                            "{:.3}",
+                                            overall.duration_stats.std_dev()
                                                 * MILLISECONDS_PER_SECOND
                                         ),
                                         true,
