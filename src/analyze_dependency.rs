@@ -1445,7 +1445,7 @@ impl AnalyzeDependencyModal {
                 ui_main_column.label("Dependency Analysis Results:");
 
                 let mut grid_width = 0.0;
-                let col_percentages = [0.25, 0.11, 0.11, 0.11, 0.11, 0.11, 0.1];
+                let col_percentages = [0.25, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11];
 
                 if let Some(result) = &self.analysis_result {
                     ui_main_column.horizontal_wrapped(|ui_summary_wrap| {
