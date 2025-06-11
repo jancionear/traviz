@@ -244,7 +244,7 @@ impl AnalyzeSpanModal {
                 // and the ScrollArea that uses them is only shown in that case.
                 let mut grid_width = 0.0;
                 // Define percentage-based column widths
-                let col_percentages = [0.25, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11]; // Node, Count, Min, Max, Mean, Median
+                let col_percentages = [0.25, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11]; // Node, Count, Min, Max, Mean, Median, Std Dev
 
                 // Top row with search and analyze button
                 ui.horizontal(|ui| {
