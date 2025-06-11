@@ -6,8 +6,10 @@ use crate::analyze_utils::{
 use crate::colors;
 use crate::types::{NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
 use eframe::egui::{
-    Align, Button, Context, Grid, Label, Layout, Modal, RichText, ScrollArea, Sense, Ui, Vec2,
+    Align, Button, Context, Grid, Label, Layout, Modal, RichText, ScrollArea, Sense, TextEdit, Ui,
+    Vec2,
 };
+use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -31,6 +33,8 @@ pub struct AnalyzeSpanModal {
     analysis_summary_message: Option<String>,
     /// Stores the detailed results of the last span analysis performed.
     detailed_span_analysis: Option<SpanAnalysisResult>,
+    /// Filter string for attributes in format: "attr1,attr2=value"
+    attribute_filter: String,
 }
 
 /// Struct to hold duration statistics for spans.
@@ -87,6 +91,7 @@ impl SpanStatistics {
 /// Struct to hold analysis results for all nodes.
 struct SpanAnalysisResult {
     span_name: String,
+    attribute_filter: String,
     per_node_stats: HashMap<String, SpanStatistics>,
     overall_stats: SpanStatistics,
 }
@@ -145,6 +150,7 @@ impl AnalyzeSpanModal {
     pub fn open(&mut self, spans_for_analysis: &[Rc<Span>]) {
         self.show = true;
         self.search_text = String::new();
+        self.attribute_filter = String::new();
         self.update_span_list(spans_for_analysis);
         self.spans_processed = true;
     }
@@ -153,6 +159,45 @@ impl AnalyzeSpanModal {
         let (all_spans, unique_names) = process_spans_for_analysis(spans);
         self.all_spans_for_analysis = all_spans;
         self.unique_span_names = unique_names;
+    }
+
+    /// Checks if a span matches the attribute filter criteria.
+    /// Format: "attr1,attr2=value" where attr1 must exist and attr2 must equal "value"
+    fn span_matches_attribute_filter(&self, span: &Rc<Span>) -> bool {
+        if self.attribute_filter.is_empty() {
+            return true;
+        }
+
+        let filter_specs: Vec<&str> = self.attribute_filter.split(',').map(|s| s.trim()).collect();
+
+        for spec in filter_specs {
+            if spec.is_empty() {
+                continue;
+            }
+
+            if let Some((attr_name, expected_value)) = spec.split_once('=') {
+                // Format: attribute=value
+                let attr_name = attr_name.trim();
+                let expected_value = expected_value.trim();
+
+                if let Some(Some(Value::StringValue(actual_value))) = span.attributes.get(attr_name)
+                {
+                    if actual_value != expected_value {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            } else {
+                // Format: attribute (just check existence)
+                let attr_name = spec.trim();
+                if !span.attributes.contains_key(attr_name) {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     fn perform_span_analysis(&mut self, target_span_name: &str) {
@@ -165,6 +210,11 @@ impl AnalyzeSpanModal {
             &target_name,
             &mut matching_spans,
         );
+
+        // Filter by attributes if filter is specified
+        if !self.attribute_filter.is_empty() {
+            matching_spans.retain(|span| self.span_matches_attribute_filter(span));
+        }
 
         if matching_spans.is_empty() {
             self.analysis_summary_message =
@@ -190,6 +240,7 @@ impl AnalyzeSpanModal {
         // Store analysis results
         self.detailed_span_analysis = Some(SpanAnalysisResult {
             span_name: target_name,
+            attribute_filter: self.attribute_filter.clone(),
             per_node_stats,
             overall_stats,
         });
@@ -298,13 +349,35 @@ impl AnalyzeSpanModal {
                     self.analysis_summary_message = None;
                 }
 
+                ui.add_space(10.0);
+                // Attribute filter row
+                ui.horizontal(|ui| {
+                    ui.label("Attribute filter:");
+                    let response = ui.add(
+                        TextEdit::singleline(&mut self.attribute_filter)
+                            .desired_width(max_width * 0.6)
+                            .hint_text("attr1,attr2=value")
+                    );
+                    if response.hovered() {
+                        response.on_hover_text(
+                            "Filter spans by attributes. Format: 'attr1,attr2=value' where attr1 must exist and attr2 must equal 'value'. Leave empty for no filtering."
+                        );
+                    }
+                });
+
                 ui.separator();
 
                 // Results area
                 ui.label("Analysis Results:");
 
                 if let Some(result) = &self.detailed_span_analysis {
-                    ui.label(format!("Analysis of span: '{}'", result.span_name));
+                    ui.horizontal_wrapped(|ui_summary_wrap| {
+                        ui_summary_wrap.label(format!(
+                            "Analysis of span: '{}' (attribute filter: {})",
+                            result.span_name,
+                            if result.attribute_filter.is_empty() { "none" } else { &result.attribute_filter }
+                        ));
+                    });
                 }
                 if let Some(message) = &self.analysis_summary_message {
                     ui.colored_label(colors::YELLOW, message);
@@ -572,6 +645,7 @@ impl AnalyzeSpanModal {
             self.show = false;
             self.selected_span_name = None;
             self.search_text = String::new();
+            self.attribute_filter = String::new();
             self.detailed_span_analysis = None;
             self.analysis_summary_message = None;
         }
