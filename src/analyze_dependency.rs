@@ -397,6 +397,10 @@ impl AnalyzeDependencyModal {
     }
 
     /// Checks if two spans have matching values for all specified linking attributes.
+    /// Supports both exact matching and relative matching patterns:
+    /// - "height" or "height=+0" - exact match
+    /// - "height=+1" - target height = source height + 1
+    /// - "height=-2" - target height = source height - 2
     fn spans_match_linking_attributes(
         &self,
         source_span: &Rc<Span>,
@@ -406,16 +410,36 @@ impl AnalyzeDependencyModal {
             return true;
         }
 
-        let attribute_names: Vec<&str> = self
+        let attribute_patterns: Vec<&str> = self
             .linking_attribute
             .split(',')
             .map(|s| s.trim())
             .collect();
 
-        for attr_name in attribute_names {
-            if attr_name.is_empty() {
+        for pattern in attribute_patterns {
+            if pattern.is_empty() {
                 continue;
             }
+
+            if !self.check_attribute_pattern(pattern, source_span, target_span) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Checks if a single attribute pattern matches between source and target spans.
+    fn check_attribute_pattern(
+        &self,
+        pattern: &str,
+        source_span: &Rc<Span>,
+        target_span: &Rc<Span>,
+    ) -> bool {
+        // Check if pattern contains a relative offset (e.g., "height=+1")
+        if let Some(equals_pos) = pattern.find('=') {
+            let attr_name = pattern[..equals_pos].trim();
+            let offset_str = pattern[equals_pos + 1..].trim();
 
             // Both spans must have the attribute
             if !source_span.attributes.contains_key(attr_name)
@@ -424,15 +448,82 @@ impl AnalyzeDependencyModal {
                 return false;
             }
 
-            // Values must match
+            // Try to parse as relative offset
+            if let Ok(offset) = self.parse_relative_offset(offset_str) {
+                return self.check_numeric_attribute_with_offset(
+                    attr_name,
+                    source_span,
+                    target_span,
+                    offset,
+                );
+            }
+
+            // If not a valid offset, fall back to exact string matching
             let source_value = &source_span.attributes[attr_name];
             let target_value = &target_span.attributes[attr_name];
-            if source_value != target_value {
+            source_value == target_value
+        } else {
+            // No equals sign, treat as exact match attribute name
+            let attr_name = pattern.trim();
+
+            // Both spans must have the attribute
+            if !source_span.attributes.contains_key(attr_name)
+                || !target_span.attributes.contains_key(attr_name)
+            {
                 return false;
             }
-        }
 
-        true
+            // Values must match exactly
+            let source_value = &source_span.attributes[attr_name];
+            let target_value = &target_span.attributes[attr_name];
+            source_value == target_value
+        }
+    }
+
+    /// Parses a relative offset string like "+1", "-2", "+0"
+    fn parse_relative_offset(&self, offset_str: &str) -> Result<f64, ()> {
+        if let Some(stripped) = offset_str.strip_prefix('+') {
+            stripped.parse::<f64>().map_err(|_| ())
+        } else if let Some(stripped) = offset_str.strip_prefix('-') {
+            stripped.parse::<f64>().map(|v| -v).map_err(|_| ())
+        } else {
+            // Allow plain numbers (treat as positive offset)
+            offset_str.parse::<f64>().map_err(|_| ())
+        }
+    }
+
+    /// Checks if target attribute value equals source attribute value plus offset
+    fn check_numeric_attribute_with_offset(
+        &self,
+        attr_name: &str,
+        source_span: &Rc<Span>,
+        target_span: &Rc<Span>,
+        offset: f64,
+    ) -> bool {
+        let source_value = &source_span.attributes[attr_name];
+        let target_value = &target_span.attributes[attr_name];
+
+        // Extract numeric values from the attributes
+        let source_num = self.extract_numeric_value(source_value);
+        let target_num = self.extract_numeric_value(target_value);
+
+        match (source_num, target_num) {
+            (Some(src), Some(tgt)) => {
+                let expected_target = src + offset;
+                (tgt - expected_target).abs() < 0.0001 // Allow for floating point precision
+            }
+            _ => false, // If either value is not numeric, no match
+        }
+    }
+
+    /// Extracts a numeric value from an OpenTelemetry attribute value
+    fn extract_numeric_value(&self, value: &Option<Value>) -> Option<f64> {
+        match value {
+            Some(Value::IntValue(i)) => Some(*i as f64),
+            Some(Value::DoubleValue(d)) => Some(*d),
+            Some(Value::StringValue(s)) => s.parse::<f64>().ok(),
+            _ => None,
+        }
     }
 
     pub fn analyze_dependencies(&mut self) {
@@ -686,7 +777,7 @@ impl AnalyzeDependencyModal {
         max_link_for_current_node: &mut Option<DependencyLink>,
         used_target_spans: &mut HashSet<Vec<u8>>,
     ) {
-        // Common logic to find all temporally valid, attribute-matching, and not-yet-used source spans
+        // Common logic to find all temporally valid and not-yet-used source spans
         let mut eligible_sources_before_target: Vec<Rc<Span>> = Vec::new();
         for s_span in current_source_node_spans.iter() {
             let mut skip_source = false;
@@ -706,8 +797,15 @@ impl AnalyzeDependencyModal {
 
             // Basic time validity
             if s_span.end_time <= target_span.start_time {
-                // Check linking attribute compatibility using the new multi-attribute function
-                if self.spans_match_linking_attributes(s_span, target_span) {
+                // For grouping mode, defer linking attribute check to after grouping
+                // For non-grouping mode, check linking attribute compatibility here
+                if self.group_by_attribute.is_empty() {
+                    // Check linking attribute compatibility using the new multi-attribute function
+                    if self.spans_match_linking_attributes(s_span, target_span) {
+                        eligible_sources_before_target.push(s_span.clone());
+                    }
+                } else {
+                    // In grouping mode, add all temporally valid sources and check linking later
                     eligible_sources_before_target.push(s_span.clone());
                 }
             }
@@ -728,24 +826,39 @@ impl AnalyzeDependencyModal {
                 }
             }
 
-            let mut all_groups_meet_threshold = true;
+            let mut all_valid_groups_meet_threshold = true;
             let mut spans_for_this_grouped_link: Vec<Rc<Span>> = Vec::new();
+            let mut valid_groups_count = 0;
 
-            // Check if each group that exists in eligible sources meets threshold
-            // (Don't require all originally expected groups - some may be filtered out by linking attributes)
+            // Check each group - only count groups where individually matching sources meet threshold
             for group_spans in grouped_potential_sources.values() {
-                if group_spans.len() >= self.threshold && self.threshold > 0 {
-                    let selected_from_group = self.select_spans_for_link_formation(group_spans);
-                    spans_for_this_grouped_link.extend(selected_from_group);
+                // Filter to only sources that individually match the linking attribute
+                let matching_sources_in_group: Vec<Rc<Span>> = if !self.linking_attribute.is_empty()
+                {
+                    group_spans
+                        .iter()
+                        .filter(|s_span| self.spans_match_linking_attributes(s_span, target_span))
+                        .cloned()
+                        .collect()
                 } else {
-                    all_groups_meet_threshold = false;
+                    group_spans.clone()
+                };
+
+                if matching_sources_in_group.len() >= self.threshold && self.threshold > 0 {
+                    let selected_from_group =
+                        self.select_spans_for_link_formation(&matching_sources_in_group);
+                    spans_for_this_grouped_link.extend(selected_from_group);
+                    valid_groups_count += 1;
+                } else if !matching_sources_in_group.is_empty() {
+                    // This group has matching sources but not enough to meet threshold
+                    all_valid_groups_meet_threshold = false;
                     break;
                 }
             }
 
-            // Only proceed if we have at least some groups and all present groups meet threshold
-            if all_groups_meet_threshold
-                && !grouped_potential_sources.is_empty()
+            // Only proceed if we have at least some valid groups and all valid groups meet threshold
+            if all_valid_groups_meet_threshold
+                && valid_groups_count > 0
                 && !spans_for_this_grouped_link.is_empty()
             {
                 // Calculate link delay based on aggregation strategy for groups
@@ -1334,7 +1447,8 @@ impl AnalyzeDependencyModal {
                                     response.on_hover_text(concat!(
                                         "Optional. If provided, only spans with matching values for this ",
                                         "attribute field can form links. Leave empty to ignore attribute matching. ",
-                                        "Use comma-separated names (e.g., 'height,shard_id') to match multiple attributes."
+                                        "Supports exact matching (e.g., 'height') and relative matching (e.g., 'height=+1', 'height=-2'). ",
+                                        "Use comma-separated patterns (e.g., 'height=+1,shard_id') to match multiple attributes."
                                     ));
                                 }
                             });

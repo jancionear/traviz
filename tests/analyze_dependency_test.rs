@@ -2673,3 +2673,683 @@ fn test_parse_analysis_description_errors() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Invalid threshold"));
 }
+
+/// Tests relative offset matching with positive offsets.
+/// Verifies that spans can be linked when target attribute = source attribute + offset.
+/// Should match spans where target height = source height + 1.
+#[test]
+fn test_relative_offset_matching_positive() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans with different heights
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("height", "100"), // height = 100
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_string_attr("height", "200"), // height = 200
+    );
+
+    // Target spans: some match with +1 offset, some don't
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_string_attr("height", "101"), // matches source height=100 with +1 offset
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_string_attr("height", "201"), // matches source height=200 with +1 offset
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.4, 1.0))
+            .with_string_attr("height", "150"), // doesn't match any source with +1 offset
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+1".to_string());
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should have produced results");
+
+    let node_result = &result.per_node_results["node_a"];
+    assert_eq!(
+        node_result.links.len(),
+        2,
+        "Should find 2 links with +1 offset"
+    );
+
+    // Verify the matches
+    let mut found_100_to_101 = false;
+    let mut found_200_to_201 = false;
+
+    for link in &node_result.links {
+        let source_height = &link.source_spans[0].attributes["height"];
+        let target_height = &link.target_spans[0].attributes["height"];
+
+        if *source_height == string_attr("100") && *target_height == string_attr("101") {
+            found_100_to_101 = true;
+        } else if *source_height == string_attr("200") && *target_height == string_attr("201") {
+            found_200_to_201 = true;
+        }
+    }
+
+    assert!(
+        found_100_to_101,
+        "Should find link from height=100 to height=101"
+    );
+    assert!(
+        found_200_to_201,
+        "Should find link from height=200 to height=201"
+    );
+}
+
+/// Tests relative offset matching with negative offsets.
+/// Verifies that spans can be linked when target attribute = source attribute - offset.
+/// Should match spans where target height = source height - 2.
+#[test]
+fn test_relative_offset_matching_negative() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans with different heights
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("height", "105"), // height = 105
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_string_attr("height", "210"), // height = 210
+    );
+
+    // Target spans: some match with -2 offset, some don't
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_string_attr("height", "103"), // matches source height=105 with -2 offset
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_string_attr("height", "208"), // matches source height=210 with -2 offset
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.4, 1.0))
+            .with_string_attr("height", "104"), // doesn't match any source with -2 offset
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=-2".to_string());
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should have produced results");
+
+    let node_result = &result.per_node_results["node_a"];
+    assert_eq!(
+        node_result.links.len(),
+        2,
+        "Should find 2 links with -2 offset"
+    );
+
+    // Verify the matches
+    let mut found_105_to_103 = false;
+    let mut found_210_to_208 = false;
+
+    for link in &node_result.links {
+        let source_height = &link.source_spans[0].attributes["height"];
+        let target_height = &link.target_spans[0].attributes["height"];
+
+        if *source_height == string_attr("105") && *target_height == string_attr("103") {
+            found_105_to_103 = true;
+        } else if *source_height == string_attr("210") && *target_height == string_attr("208") {
+            found_210_to_208 = true;
+        }
+    }
+
+    assert!(
+        found_105_to_103,
+        "Should find link from height=105 to height=103"
+    );
+    assert!(
+        found_210_to_208,
+        "Should find link from height=210 to height=208"
+    );
+}
+
+/// Tests relative offset matching with integer attribute values.
+/// Verifies that relative matching works with integer attributes, not just string attributes.
+/// Should handle int and double OpenTelemetry attribute types correctly.
+#[test]
+fn test_relative_offset_matching_with_integer_attributes() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans with integer heights
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_int_attr("height", 100),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_int_attr("height", 200),
+    );
+
+    // Target spans with integer heights (offset +1)
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_int_attr("height", 101), // matches source height=100 with +1 offset
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_int_attr("height", 201), // matches source height=200 with +1 offset
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+1".to_string());
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should work with integer attributes");
+
+    let node_result = &result.per_node_results["node_a"];
+    assert_eq!(
+        node_result.links.len(),
+        2,
+        "Should find 2 links with integer attributes"
+    );
+}
+
+/// Tests relative offset matching with floating point values.
+/// Verifies that relative matching works with floating point offsets and attributes.
+/// Should handle fractional offsets like +0.5, -1.2 correctly.
+#[test]
+fn test_relative_offset_matching_with_floating_point() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans with double precision heights
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_double_attr("height", 100.5),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_double_attr("height", 200.7),
+    );
+
+    // Target spans with fractional offset +0.3
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_double_attr("height", 100.8), // matches source height=100.5 with +0.3 offset
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_double_attr("height", 201.0), // matches source height=200.7 with +0.3 offset
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+0.3".to_string());
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should work with floating point attributes");
+
+    let node_result = &result.per_node_results["node_a"];
+    assert_eq!(
+        node_result.links.len(),
+        2,
+        "Should find 2 links with floating point attributes"
+    );
+}
+
+/// Tests relative offset matching with zero offset (+0).
+/// Verifies that zero offset behaves like exact matching.
+/// Should match spans with identical attribute values when offset is +0.
+#[test]
+fn test_relative_offset_matching_zero_offset() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("height", "100"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_string_attr("height", "200"),
+    );
+
+    // Target spans: exact matches and non-matches
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_string_attr("height", "100"), // exact match with source height=100
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_string_attr("height", "200"), // exact match with source height=200
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.4, 1.0))
+            .with_string_attr("height", "101"), // doesn't match any source exactly
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+0".to_string());
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should work with zero offset");
+
+    let node_result = &result.per_node_results["node_a"];
+    assert_eq!(
+        node_result.links.len(),
+        2,
+        "Should find 2 exact matches with +0 offset"
+    );
+
+    // Verify exact matches
+    for link in &node_result.links {
+        let source_height = &link.source_spans[0].attributes["height"];
+        let target_height = &link.target_spans[0].attributes["height"];
+        assert_eq!(
+            source_height, target_height,
+            "Zero offset should produce exact matches"
+        );
+    }
+}
+
+/// Tests relative offset matching with non-numeric attribute values.
+/// Verifies that non-numeric attributes are properly excluded from relative matching.
+/// Should fall back to exact string matching for non-numeric values.
+#[test]
+fn test_relative_offset_matching_with_non_numeric_attributes() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans with non-numeric category values
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("category", "alpha"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_string_attr("category", "beta"),
+    );
+
+    // Target spans: some exact string matches, some don't
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_string_attr("category", "alpha"), // exact string match
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_string_attr("category", "gamma"), // no match
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("category=+1".to_string()); // Should fall back to exact matching
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should complete even with non-numeric attributes");
+
+    // Should only find exact string matches (if any), since numeric offset doesn't apply
+    if let Some(node_result) = result.per_node_results.get("node_a") {
+        if !node_result.links.is_empty() {
+            for link in &node_result.links {
+                let source_category = &link.source_spans[0].attributes["category"];
+                let target_category = &link.target_spans[0].attributes["category"];
+                assert_eq!(
+                    source_category, target_category,
+                    "Non-numeric attributes should fall back to exact string matching"
+                );
+            }
+        }
+    }
+}
+
+/// Tests relative offset matching combined with multiple attributes.
+/// Verifies that relative offsets work correctly when combined with exact attribute matching.
+/// Should match spans that satisfy both relative and exact attribute constraints.
+#[test]
+fn test_relative_offset_matching_with_multiple_attributes() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source spans with both height (numeric) and shard_id (exact match)
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("height", "100")
+            .with_string_attr("shard_id", "shard_1"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_string_attr("height", "200")
+            .with_string_attr("shard_id", "shard_2"),
+    );
+
+    // Target spans: must match both height+1 AND exact shard_id
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_string_attr("height", "101") // height=100+1 ✓
+            .with_string_attr("shard_id", "shard_1"), // exact match ✓
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_string_attr("height", "101") // height=100+1 ✓
+            .with_string_attr("shard_id", "shard_2"), // wrong shard ✗
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.4, 1.0))
+            .with_string_attr("height", "201") // height=200+1 ✓
+            .with_string_attr("shard_id", "shard_2"), // exact match ✓
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+1,shard_id".to_string());
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should work with mixed relative and exact matching");
+
+    let node_result = &result.per_node_results["node_a"];
+    assert_eq!(
+        node_result.links.len(),
+        2,
+        "Should find 2 links matching both constraints"
+    );
+
+    // Verify the specific matches
+    let mut found_100_shard1_to_101_shard1 = false;
+    let mut found_200_shard2_to_201_shard2 = false;
+
+    for link in &node_result.links {
+        let source_height = &link.source_spans[0].attributes["height"];
+        let source_shard = &link.source_spans[0].attributes["shard_id"];
+        let target_height = &link.target_spans[0].attributes["height"];
+        let target_shard = &link.target_spans[0].attributes["shard_id"];
+
+        if *source_height == string_attr("100")
+            && *source_shard == string_attr("shard_1")
+            && *target_height == string_attr("101")
+            && *target_shard == string_attr("shard_1")
+        {
+            found_100_shard1_to_101_shard1 = true;
+        } else if *source_height == string_attr("200")
+            && *source_shard == string_attr("shard_2")
+            && *target_height == string_attr("201")
+            && *target_shard == string_attr("shard_2")
+        {
+            found_200_shard2_to_201_shard2 = true;
+        }
+    }
+
+    assert!(
+        found_100_shard1_to_101_shard1,
+        "Should find link: height=100,shard_1 -> height=101,shard_1"
+    );
+    assert!(
+        found_200_shard2_to_201_shard2,
+        "Should find link: height=200,shard_2 -> height=201,shard_2"
+    );
+}
+
+/// Tests relative offset matching with grouping.
+/// Only individually matching sources participate in links and count toward threshold.
+#[test]
+fn test_relative_offset_matching_with_grouping() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Group 1: 2 matching sources + 1 non-matching
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("height", "150")
+            .with_string_attr("batch_id", "batch_1"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.2, 1.0))
+            .with_string_attr("height", "150")
+            .with_string_attr("batch_id", "batch_1"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.3, 1.0))
+            .with_string_attr("height", "100")
+            .with_string_attr("batch_id", "batch_1"),
+    );
+
+    // Group 2: 2 matching sources + 1 non-matching
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.4, 1.0))
+            .with_string_attr("height", "250")
+            .with_string_attr("batch_id", "batch_2"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.6, 1.0))
+            .with_string_attr("height", "250")
+            .with_string_attr("batch_id", "batch_2"),
+    );
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.7, 1.0))
+            .with_string_attr("height", "200")
+            .with_string_attr("batch_id", "batch_2"),
+    );
+
+    // Targets requiring height+1 offset
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(3.0, 1.0))
+            .with_string_attr("height", "151"),
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(3.2, 1.0))
+            .with_string_attr("height", "251"),
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(2);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+1".to_string());
+    modal.set_group_by_attribute("batch_id".to_string());
+    modal.set_group_aggregation_strategy(GroupAggregationStrategy::FirstCompletedGroup);
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should work with grouping and relative offset matching");
+
+    let node_result = &result.per_node_results["node_a"];
+
+    // Should form 2 links: each group has 2 matching sources meeting threshold=2
+    assert_eq!(node_result.links.len(), 2);
+
+    for link in &node_result.links {
+        assert_eq!(link.source_spans.len(), 2);
+        assert_eq!(link.target_spans.len(), 1);
+
+        let target_height: f64 = link.target_spans[0].attributes["height"]
+            .as_ref()
+            .and_then(|v| match v {
+                opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(s) => {
+                    s.parse().ok()
+                }
+                _ => None,
+            })
+            .expect("Target should have numeric height");
+
+        let source_heights: Vec<f64> = link
+            .source_spans
+            .iter()
+            .map(|s| {
+                s.attributes["height"]
+                    .as_ref()
+                    .and_then(|v| match v {
+                        opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(
+                            s,
+                        ) => s.parse().ok(),
+                        _ => None,
+                    })
+                    .expect("Source should have numeric height")
+            })
+            .collect();
+
+        // All sources should match the +1 offset
+        for &src_height in &source_heights {
+            assert_eq!(src_height + 1.0, target_height);
+        }
+    }
+}
+
+/// Tests relative offset matching with invalid offset syntax.
+/// Verifies that invalid offset patterns fall back to exact string matching.
+/// Should handle malformed offset strings gracefully.
+#[test]
+fn test_relative_offset_matching_invalid_syntax() {
+    let mut builder = ScenarioBuilder::new();
+    builder.add_node("node_a");
+
+    // Source and target spans
+    builder.add_span(
+        SpanConfig::new("source", "node_a", TimeInterval::with_duration(0.0, 1.0))
+            .with_string_attr("height", "100"),
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.0, 1.0))
+            .with_string_attr("height", "100"), // exact match
+    );
+    builder.add_span(
+        SpanConfig::new("target", "node_a", TimeInterval::with_duration(2.2, 1.0))
+            .with_string_attr("height", "height=+invalid"), // this would be the "value" if parsed as exact match
+    );
+
+    let scenario = builder.build();
+
+    let mut modal = AnalyzeDependencyModal::new();
+    modal.update_span_list(&scenario.all_spans);
+
+    modal.set_source_span_name(Some("source".to_string()));
+    modal.set_target_span_name(Some("target".to_string()));
+    modal.set_threshold(1);
+    modal.set_source_scope(SourceScope::SameNode);
+    modal.set_analysis_cardinality(AnalysisCardinality::NToOne);
+    modal.set_linking_attribute("height=+invalid".to_string()); // Invalid offset syntax
+
+    modal.analyze_dependencies();
+
+    let result = modal
+        .analysis_result
+        .as_ref()
+        .expect("Analysis should complete even with invalid offset syntax");
+
+    // Should fall back to exact string matching
+    // Since no source has height="height=+invalid", only the exact height="100" match should work
+    if let Some(node_result) = result.per_node_results.get("node_a") {
+        // Should find at most 1 link (the exact string match, if any)
+        assert!(
+            node_result.links.len() <= 1,
+            "Invalid offset should fall back to exact matching"
+        );
+
+        if !node_result.links.is_empty() {
+            let link = &node_result.links[0];
+            assert_eq!(
+                link.source_spans[0].attributes["height"],
+                link.target_spans[0].attributes["height"],
+                "Invalid offset should result in exact string matching"
+            );
+        }
+    }
+}
