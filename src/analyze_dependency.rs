@@ -1445,7 +1445,7 @@ impl AnalyzeDependencyModal {
                 ui_main_column.label("Dependency Analysis Results:");
 
                 let mut grid_width = 0.0;
-                let col_percentages = [0.25, 0.14, 0.14, 0.14, 0.14, 0.14];
+                let col_percentages = [0.25, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11];
 
                 if let Some(result) = &self.analysis_result {
                     ui_main_column.horizontal_wrapped(|ui_summary_wrap| {
@@ -1465,7 +1465,7 @@ impl AnalyzeDependencyModal {
                     grid_width = ui_main_column.available_width();
                     let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
                     Grid::new("dependency_analysis_header_grid")
-                        .num_columns(6)
+                        .num_columns(7)
                         .spacing([10.0, 6.0])
                         .striped(true)
                         .min_col_width(0.0)
@@ -1480,6 +1480,7 @@ impl AnalyzeDependencyModal {
                             draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[3], "Max (ms)", true, None, false);
                             draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[4], "Mean (ms)", true, None, false);
                             draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[5], "Median (ms)", true, None, false);
+                            draw_clickable_right_aligned_text_cell(ui_header_grid, col_widths[6], "Std Dev (ms)", true, None, false);
                             ui_header_grid.end_row();
                         });
                     ui_main_column.separator();
@@ -1493,7 +1494,7 @@ impl AnalyzeDependencyModal {
                         if let Some(result) = &self.analysis_result {
                             let col_widths = calculate_table_column_widths(grid_width, &col_percentages);
                             Grid::new("dependency_analysis_grid")
-                                .num_columns(6)
+                                .num_columns(7)
                                 .spacing([10.0, 6.0])
                                 .striped(true)
                                 .min_col_width(0.0)
@@ -1552,6 +1553,7 @@ impl AnalyzeDependencyModal {
                                                 }
                                                 draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[4], &format!("{:.3}", stats.mean() * MILLISECONDS_PER_SECOND), false, None, false);
                                                 draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[5], &format!("{:.3}", stats.median() * MILLISECONDS_PER_SECOND), false, None, false);
+                                                draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[6], &format!("{:.3}", stats.std_dev() * MILLISECONDS_PER_SECOND), false, None, false);
                                             } else {
                                                 for &col_width_val in col_widths.iter().skip(1) {
                                                     draw_clickable_right_aligned_text_cell(ui_data_grid, col_width_val, "-", false, None, false);
@@ -1611,6 +1613,7 @@ impl AnalyzeDependencyModal {
                                         }
                                         draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[4], &format!("{:.3}", result.overall_stats.mean() * MILLISECONDS_PER_SECOND), true, None, false);
                                         draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[5], &format!("{:.3}", result.overall_stats.median() * MILLISECONDS_PER_SECOND), true, None, false);
+                                        draw_clickable_right_aligned_text_cell(ui_data_grid, col_widths[6], &format!("{:.3}", result.overall_stats.std_dev() * MILLISECONDS_PER_SECOND), true, None, false);
                                         ui_data_grid.end_row();
                                     }
                                 });

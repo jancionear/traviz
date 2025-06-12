@@ -156,6 +156,20 @@ impl Statistics {
             sorted_values[mid]
         }
     }
+
+    pub fn std_dev(&self) -> f64 {
+        if self.count == 0 {
+            return 0.0;
+        }
+        let mean = self.mean();
+        let variance: f64 = self
+            .data_points
+            .iter()
+            .map(|&x| (x - mean).powi(2))
+            .sum::<f64>()
+            / self.count as f64;
+        variance.sqrt()
+    }
 }
 
 impl Default for Statistics {
@@ -197,7 +211,7 @@ pub fn process_spans_for_analysis(spans: &[Rc<Span>]) -> (Vec<Rc<Span>>, Vec<Str
 
 /// Calculates column widths for the analysis result table based on a total grid width and percentage array.
 /// Ensures minimum widths for each column.
-pub fn calculate_table_column_widths(grid_width: f32, col_percentages: &[f32; 6]) -> [f32; 6] {
+pub fn calculate_table_column_widths(grid_width: f32, col_percentages: &[f32; 7]) -> [f32; 7] {
     [
         (grid_width * col_percentages[0]).max(140.0), // Node/Source
         (grid_width * col_percentages[1]).max(60.0),  // Count
@@ -205,6 +219,7 @@ pub fn calculate_table_column_widths(grid_width: f32, col_percentages: &[f32; 6]
         (grid_width * col_percentages[3]).max(80.0),  // Max
         (grid_width * col_percentages[4]).max(80.0),  // Mean
         (grid_width * col_percentages[5]).max(80.0),  // Median
+        (grid_width * col_percentages[6]).max(80.0),  // Std Dev
     ]
 }
 
