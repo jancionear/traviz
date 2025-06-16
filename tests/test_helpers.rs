@@ -172,6 +172,16 @@ impl SpanConfig {
     pub fn with_string_attr(self, key: &str, value: &str) -> Self {
         self.with_attr(key, string_attr(value))
     }
+
+    /// Add an integer attribute
+    pub fn with_int_attr(self, key: &str, value: i64) -> Self {
+        self.with_attr(key, int_attr(value))
+    }
+
+    /// Add a double attribute
+    pub fn with_double_attr(self, key: &str, value: f64) -> Self {
+        self.with_attr(key, double_attr(value))
+    }
 }
 
 /// Builder for creating comprehensive test scenarios
