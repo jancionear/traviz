@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -7,7 +9,6 @@ use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use traviz::types::{DisplayLength, Node, Span, SpanDisplayConfig, TimePoint};
 
 /// Helper to create a simple fake node
-#[allow(dead_code)]
 pub fn create_test_node(name: &str) -> Rc<Node> {
     Rc::new(Node {
         name: name.to_string(),
@@ -16,7 +17,6 @@ pub fn create_test_node(name: &str) -> Rc<Node> {
 }
 
 /// Helper to create a fake span with minimal required fields
-#[allow(dead_code)]
 pub fn create_test_span(
     name: &str,
     node: Rc<Node>,
@@ -55,7 +55,6 @@ pub fn create_test_span(
 }
 
 /// Helper to create a span with attributes
-#[allow(dead_code)]
 pub fn create_test_span_with_attributes(
     name: &str,
     node: Rc<Node>,
@@ -100,19 +99,16 @@ pub fn string_attr(value: &str) -> Option<Value> {
 }
 
 /// Helper to create an integer attribute value
-#[allow(dead_code)]
 pub fn int_attr(value: i64) -> Option<Value> {
     Some(Value::IntValue(value))
 }
 
 /// Helper to create a boolean attribute value
-#[allow(dead_code)]
 pub fn bool_attr(value: bool) -> Option<Value> {
     Some(Value::BoolValue(value))
 }
 
 /// Helper to create a double attribute value
-#[allow(dead_code)]
 pub fn double_attr(value: f64) -> Option<Value> {
     Some(Value::DoubleValue(value))
 }
@@ -297,9 +293,7 @@ impl Default for ScenarioBuilder {
 
 /// Represents a complete test scenario with source and target spans
 pub struct TestScenario {
-    #[allow(dead_code)]
     pub source_spans: Vec<Rc<Span>>,
-    #[allow(dead_code)]
     pub target_spans: Vec<Rc<Span>>,
     pub all_spans: Vec<Rc<Span>>,
 }

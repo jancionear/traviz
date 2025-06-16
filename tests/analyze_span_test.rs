@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
-use std::rc::Rc;
 
-use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use traviz::analyze_span::AnalyzeSpanModal;
 
 mod test_helpers;
