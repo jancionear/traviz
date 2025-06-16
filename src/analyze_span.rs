@@ -4,12 +4,11 @@ use crate::analyze_utils::{
     span_selection_list_ui, Statistics,
 };
 use crate::colors;
-use crate::types::{NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
+use crate::types::{value_to_text, NodeIdentifier, Span, MILLISECONDS_PER_SECOND};
 use eframe::egui::{
     Align, Button, Context, Grid, Label, Layout, Modal, RichText, ScrollArea, Sense, TextEdit, Ui,
     Vec2,
 };
-use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -161,9 +160,13 @@ impl AnalyzeSpanModal {
         self.unique_span_names = unique_names;
     }
 
+    pub fn set_attribute_filter(&mut self, filter: String) {
+        self.attribute_filter = filter;
+    }
+
     /// Checks if a span matches the attribute filter criteria.
     /// Format: "attr1,attr2=value" where attr1 must exist and attr2 must equal "value"
-    fn span_matches_attribute_filter(&self, span: &Rc<Span>) -> bool {
+    pub fn span_matches_attribute_filter(&self, span: &Rc<Span>) -> bool {
         if self.attribute_filter.is_empty() {
             return true;
         }
@@ -180,9 +183,9 @@ impl AnalyzeSpanModal {
                 let attr_name = attr_name.trim();
                 let expected_value = expected_value.trim();
 
-                if let Some(Some(Value::StringValue(actual_value))) = span.attributes.get(attr_name)
-                {
-                    if actual_value != expected_value {
+                if let Some(actual_value_opt) = span.attributes.get(attr_name) {
+                    let actual_value_str = value_to_text(actual_value_opt);
+                    if actual_value_str != expected_value {
                         return false;
                     }
                 } else {
