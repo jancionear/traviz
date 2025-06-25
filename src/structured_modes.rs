@@ -332,6 +332,71 @@ fn block_production_without_vce_structured_mode() -> StructuredMode {
     mode
 }
 
+fn witness_distribution_structured_mode() -> StructuredMode {
+    StructuredMode {
+        name: "Witness Distribution".to_string(),
+        span_rules: vec![SpanRule {
+            name: "Show witness distribution spans".to_string(),
+            selector: SpanSelector {
+                span_name_condition: MatchCondition::any(),
+                node_name_condition: MatchCondition::any(),
+                attribute_conditions: vec![(
+                    "tag_witness_distribution".to_string(),
+                    MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "true".to_string(),
+                    },
+                )],
+            },
+            decision: SpanDecision {
+                visible: true,
+                display_length: DisplayLength::Text,
+                replace_name: String::new(),
+                add_height_to_name: true,
+                add_shard_id_to_name: true,
+            },
+        }],
+        is_builtin: true,
+    }
+}
+
+fn witness_distribution_shard_0_structured_mode() -> StructuredMode {
+    StructuredMode {
+        name: "Witness Distribution (shard 0)".to_string(),
+        span_rules: vec![SpanRule {
+            name: "Show witness distribution spans from shard0".to_string(),
+            selector: SpanSelector {
+                span_name_condition: MatchCondition::any(),
+                node_name_condition: MatchCondition::any(),
+                attribute_conditions: vec![
+                    (
+                        "tag_witness_distribution".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "true".to_string(),
+                        },
+                    ),
+                    (
+                        "shard_id".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "0".to_string(),
+                        },
+                    ),
+                ],
+            },
+            decision: SpanDecision {
+                visible: true,
+                display_length: DisplayLength::Text,
+                replace_name: String::new(),
+                add_height_to_name: true,
+                add_shard_id_to_name: true,
+            },
+        }],
+        is_builtin: true,
+    }
+}
+
 fn show_span(name: &str) -> SpanRule {
     SpanRule {
         name: format!("Show {}", name),
@@ -360,5 +425,7 @@ pub fn builtin_structured_modes() -> Vec<StructuredMode> {
         everything_structured_mode(),
         block_production_structured_mode(),
         block_production_without_vce_structured_mode(),
+        witness_distribution_structured_mode(),
+        witness_distribution_shard_0_structured_mode(),
     ]
 }

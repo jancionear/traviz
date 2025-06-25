@@ -105,6 +105,7 @@ fn structured_mode_transformation_rek(
     if decision.add_shard_id_to_name {
         add_shard_id_to_name(&mut modified_span);
     }
+    add_part_ord_to_name(&mut modified_span);
     modified_span.display_options.display_length = decision.display_length;
 
     let mut new_children = Vec::new();
@@ -143,6 +144,13 @@ pub fn add_height_to_name(s: &mut Span) {
 pub fn add_shard_id_to_name(s: &mut Span) {
     if let Some(val) = s.attributes.get("shard_id") {
         s.name = format!("{} s={}", s.name, value_to_text(val));
+    }
+}
+
+// TODO - make this configurable like shard_id and height. Maybe make name modification more generic.
+pub fn add_part_ord_to_name(s: &mut Span) {
+    if let Some(val) = s.attributes.get("part_ord") {
+        s.name = format!("{} p={}", s.name, value_to_text(val));
     }
 }
 
