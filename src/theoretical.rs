@@ -121,7 +121,7 @@ const NODE_CHUNK_VALIDATOR_NAME: &str = "chunk_validator";
 pub fn theory1() -> Vec<Span> {
     let mut spans = Vec::new();
 
-    for height in 0..5 {
+    for height in 0..15 {
         // produce block
         spans.push(
             SpanBuilder::new(
