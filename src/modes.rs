@@ -9,12 +9,14 @@ use std::rc::Rc;
 use anyhow::Result;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
+use opentelemetry_proto::tonic::resource::v1::Resource;
+use opentelemetry_proto::tonic::trace::v1::ResourceSpans;
 
 use crate::structured_modes::{self, StructuredMode};
 use crate::task_timer::TaskTimer;
 use crate::types::{
-    time_point_from_unix_nano, time_point_to_utc_string, value_to_text, DisplayLength, Event, Node,
-    Scope, Span, SpanDisplayConfig, MILLISECONDS_PER_SECOND,
+    time_point_from_unix_nano, time_point_to_unix_nano, time_point_to_utc_string, value_to_text,
+    DisplayLength, Event, Node, Scope, Span, SpanDisplayConfig, MILLISECONDS_PER_SECOND,
 };
 
 #[allow(unused)]
@@ -494,4 +496,64 @@ fn create_grouped_span(base_name: String, spans: Vec<Rc<Span>>) -> Span {
     grouped_span.display_children = RefCell::new(Vec::new());
 
     grouped_span
+}
+
+pub fn spans_to_extract_request(spans: &[Span]) -> Vec<ExportTraceServiceRequest> {
+    let mut res = Vec::new();
+
+    for span in spans {
+        let resource = Resource {
+            attributes: vec![opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: "service.name".to_string(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                    value: Some(Value::StringValue(span.node.name.clone())),
+                }),
+            }],
+            dropped_attributes_count: 0,
+        };
+
+        assert!(span.events.is_empty());
+
+        let span = opentelemetry_proto::tonic::trace::v1::Span {
+            trace_id: span.trace_id.clone(),
+            span_id: span.span_id.clone(),
+            parent_span_id: span.parent_span_id.clone(),
+            name: span.name.clone(),
+            start_time_unix_nano: time_point_to_unix_nano(span.start_time),
+            end_time_unix_nano: time_point_to_unix_nano(span.end_time),
+            attributes: span
+                .attributes
+                .iter()
+                .map(|(k, v)| opentelemetry_proto::tonic::common::v1::KeyValue {
+                    key: k.clone(),
+                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                        value: v.clone(),
+                    }),
+                })
+                .collect(),
+            events: Vec::new(),
+            dropped_attributes_count: 0,
+            dropped_events_count: 0,
+            dropped_links_count: 0,
+            trace_state: "".to_string(),
+            flags: 0,
+            kind: 0,
+            links: Vec::new(),
+            status: None,
+        };
+
+        res.push(ResourceSpans {
+            resource: Some(resource),
+            scope_spans: vec![opentelemetry_proto::tonic::trace::v1::ScopeSpans {
+                scope: None,
+                spans: vec![span],
+                schema_url: "".to_string(),
+            }],
+            schema_url: "".to_string(),
+        });
+    }
+
+    vec![ExportTraceServiceRequest {
+        resource_spans: res,
+    }]
 }

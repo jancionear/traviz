@@ -402,6 +402,100 @@ pub fn process_optimistic_block_to_apply_new_chunk_optimistic_relation() -> Rela
     }
 }
 
+fn apply_chunk_validate_to_send_chunk_endorsement_relation() -> Relation {
+    Relation {
+        id: make_uuid_from_seed("apply_chunk_validate -> send_chunk_endorsement"),
+        name: "apply_chunk_validate -> send_chunk_endorsement".to_string(),
+        description: "".to_string(),
+        from_span_selector: SpanSelector {
+            span_name_condition: MatchCondition::equal_to("apply_new_chunk"),
+            node_name_condition: MatchCondition::any(),
+            attribute_conditions: vec![
+                (
+                    "apply_reason".to_string(),
+                    MatchCondition::equal_to("ValidateChunkStateWitness"),
+                ),
+                ("block_type".to_string(), MatchCondition::equal_to("Normal")),
+            ],
+        },
+        to_span_selector: SpanSelector::new_equal_name("send_chunk_endorsement"),
+        attribute_relations: vec![
+            AttributeRelation {
+                from_attribute: "height".to_string(),
+                to_attribute: "height".to_string(),
+                relation: AttributeRelationOp::OneGreater,
+            },
+            AttributeRelation {
+                from_attribute: "shard_id".to_string(),
+                to_attribute: "shard_id".to_string(),
+                relation: AttributeRelationOp::Equal,
+            },
+        ],
+        max_time_diff: Some(5.0), // 5 seconds
+        nodes_config: RelationNodesConfig::SameNode,
+        match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
+        is_builtin: true,
+    }
+}
+
+fn send_chunk_state_witness_to_apply_chunk_validate_relation() -> Relation {
+    Relation {
+        id: make_uuid_from_seed("send_chunk_state_witness -> apply_chunk_validate"),
+        name: "send_chunk_state_witness -> apply_chunk_validate".to_string(),
+        description: "".to_string(),
+        from_span_selector: SpanSelector::new_equal_name("send_chunk_state_witness"),
+        to_span_selector: SpanSelector {
+            span_name_condition: MatchCondition::equal_to("apply_new_chunk"),
+            node_name_condition: MatchCondition::any(),
+            attribute_conditions: vec![
+                (
+                    "apply_reason".to_string(),
+                    MatchCondition::equal_to("ValidateChunkStateWitness"),
+                ),
+                ("block_type".to_string(), MatchCondition::equal_to("Normal")),
+            ],
+        },
+        attribute_relations: vec![
+            AttributeRelation {
+                from_attribute: "height".to_string(),
+                to_attribute: "height".to_string(),
+                relation: AttributeRelationOp::OneSmaller,
+            },
+            AttributeRelation {
+                from_attribute: "shard_id".to_string(),
+                to_attribute: "shard_id".to_string(),
+                relation: AttributeRelationOp::Equal,
+            },
+        ],
+        max_time_diff: Some(5.0), // 5 seconds
+        nodes_config: RelationNodesConfig::AllNodes,
+        match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
+        is_builtin: true,
+    }
+}
+
+fn send_chunk_endorsement_to_produce_block_relation() -> Relation {
+    Relation {
+        id: make_uuid_from_seed("send_chunk_endorsement -> produce_block_on_head"),
+        name: "send_chunk_endorsement -> produce_block_on_head".to_string(),
+        description: "".to_string(),
+        from_span_selector: SpanSelector::new_equal_name("send_chunk_endorsement"),
+        to_span_selector: SpanSelector::new_equal_name("produce_block_on_head"),
+        attribute_relations: vec![AttributeRelation {
+            from_attribute: "height".to_string(),
+            to_attribute: "height".to_string(),
+            relation: AttributeRelationOp::Equal,
+        }],
+        max_time_diff: Some(5.0), // 5 seconds
+        nodes_config: RelationNodesConfig::AllNodes,
+        match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
+        is_builtin: true,
+    }
+}
+
 pub fn builtin_relations() -> Vec<Relation> {
     vec![
         produce_block_on_head_to_preprocess_block_relation(),
@@ -420,5 +514,8 @@ pub fn builtin_relations() -> Vec<Relation> {
         postprocess_ready_block_to_produce_optimistic_block_on_head_relation(),
         produce_optimistic_block_on_head_to_process_optimistic_block_relation(),
         process_optimistic_block_to_apply_new_chunk_optimistic_relation(),
+        apply_chunk_validate_to_send_chunk_endorsement_relation(),
+        send_chunk_state_witness_to_apply_chunk_validate_relation(),
+        send_chunk_endorsement_to_produce_block_relation(),
     ]
 }

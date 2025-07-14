@@ -18,6 +18,10 @@ pub fn time_point_from_unix_nano(unix_nano: u64) -> TimePoint {
     unix_nano as f64 / 1_000_000_000.0
 }
 
+pub fn time_point_to_unix_nano(time: TimePoint) -> u64 {
+    (time * 1_000_000_000.0) as u64
+}
+
 pub fn time_point_to_utc_string(time: TimePoint) -> String {
     let date_time = chrono::DateTime::from_timestamp_nanos((time * 1e9) as i64);
     date_time.format("%Y-%m-%d %H:%M:%S%.3f").to_string()

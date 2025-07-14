@@ -14,6 +14,7 @@ pub mod profiling;
 pub mod relation;
 pub mod structured_modes;
 pub mod task_timer;
+pub mod theoretical;
 pub mod types;
 
 pub use analyze_dependency::{AnalyzeDependencyModal, DependencyAnalysisResult, DependencyLink};

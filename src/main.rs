@@ -15,11 +15,12 @@ use eframe::epaint::PathShape;
 use flate2::read::GzDecoder;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 
+use traviz::modes::spans_to_extract_request;
 #[cfg(feature = "profiling")]
 use traviz::profiling;
 use traviz::{
     analyze_dependency, analyze_span, builtin_relations, colors, edit_modes, edit_relations, modes,
-    node_filter, persistent, relation, structured_modes, task_timer, types,
+    node_filter, persistent, relation, structured_modes, task_timer, theoretical, types,
 };
 
 use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
@@ -257,11 +258,16 @@ impl Default for App {
 
         // If a file path is provided as the first argument, try to load it.
         if let Some(first_arg) = std::env::args().nth(1) {
-            println!("Trying to open file: {first_arg}");
-            if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
-                println!("Error loading file: {err}");
+            if first_arg == "-t" {
+                res.load_data(spans_to_extract_request(&theoretical::theory1()))
+                    .unwrap();
             } else {
-                println!("File loaded successfully.");
+                println!("Trying to open file: {}", first_arg);
+                if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
+                    println!("Error loading file: {}", err);
+                } else {
+                    println!("File loaded successfully.");
+                }
             }
         }
 
@@ -545,7 +551,11 @@ impl App {
             reader.read_to_end(&mut file_bytes)?;
         }
 
-        self.raw_data = parse_trace_file(&file_bytes)?;
+        self.load_data(parse_trace_file(&file_bytes)?)
+    }
+
+    fn load_data(&mut self, data: Vec<ExportTraceServiceRequest>) -> Result<()> {
+        self.raw_data = data;
 
         // Clear old data before loading new traces
         self.all_spans_for_analysis.clear();

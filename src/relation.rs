@@ -48,6 +48,7 @@ pub struct AttributeRelation {
 pub enum AttributeRelationOp {
     Equal,
     OneGreater,
+    OneSmaller,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -60,7 +61,7 @@ pub enum RelationNodesConfig {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MatchType {
     MatchAll,
-    MatchClosest,
+    MatchClosest, // Don't use this one in theoretical mode
 }
 
 impl Relation {
@@ -115,6 +116,16 @@ impl AttributeRelation {
                     value_to_text(to_value).parse::<i64>(),
                 ) {
                     from_num.checked_add(1) == Some(to_num)
+                } else {
+                    false
+                }
+            }
+            AttributeRelationOp::OneSmaller => {
+                if let (Ok(from_num), Ok(to_num)) = (
+                    value_to_text(from_value).parse::<i64>(),
+                    value_to_text(to_value).parse::<i64>(),
+                ) {
+                    from_num.checked_sub(1) == Some(to_num)
                 } else {
                     false
                 }
