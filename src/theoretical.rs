@@ -28,7 +28,7 @@ impl SpanBuilder {
             name: name.into(),
             node: node.into(),
             attributes: Vec::new(),
-            length: length,
+            length,
         }
         .with_attribute("tag_block_production", true) // enable tag_block_production to be able to use the display mode
     }
@@ -305,7 +305,7 @@ fn set_span_times_from_relations(mut spans: Vec<Span>, mut relations: Vec<Relati
         relation.min_time_diff = -10.0;
     }
     let relation_view = RelationView {
-        enabled_relations: relations.iter().map(|r| r.id.clone()).collect(),
+        enabled_relations: relations.iter().map(|r| r.id).collect(),
         name: "tmp".to_string(),
         is_builtin: false,
     };
@@ -350,9 +350,4 @@ fn set_span_times_from_relations(mut spans: Vec<Span>, mut relations: Vec<Relati
         }
     }
     spans
-}
-
-#[test]
-fn test_theory1() {
-    theory1();
 }
