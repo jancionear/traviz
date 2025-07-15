@@ -497,7 +497,7 @@ pub fn optimistic_witness_theoretical() -> Vec<Span> {
         .filter(|s| {
             if let Some(Some(Value::StringValue(height_str))) = s.attributes.get("height") {
                 if height_str != "0" && s.start_time == SpanBuilder::default_start_time() {
-                    return true;
+                    return false;
                 }
             }
             true
