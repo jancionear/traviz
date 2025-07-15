@@ -259,8 +259,32 @@ impl Default for App {
         // If a file path is provided as the first argument, try to load it.
         if let Some(first_arg) = std::env::args().nth(1) {
             if first_arg == "-t" {
-                res.load_data(spans_to_extract_request(&theoretical::theory1()))
+                let spans = match std::env::args()
+                    .nth(2)
+                    .expect("-t requrires a second argument")
+                    .as_str()
+                {
+                    "optimistic_block" => theoretical::optimistic_block_theoretical(),
+                    "optimistic_witness" => theoretical::optimistic_witness_theoretical(),
+                    other => {
+                        panic!("Unknown theoretical mode: {}", other);
+                    }
+                };
+
+                res.load_data(spans_to_extract_request(&spans)).unwrap();
+
+                res.current_display_mode_index = res
+                    .display_modes
+                    .iter()
+                    .position(|m| m.name == "Block Production")
                     .unwrap();
+                res.current_relation_view_index = res
+                    .relation_views
+                    .iter()
+                    .position(|v| v.name == "Block time")
+                    .unwrap();
+                res.apply_current_mode().unwrap();
+                res.apply_current_relations_view();
             } else {
                 println!("Trying to open file: {}", first_arg);
                 if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {

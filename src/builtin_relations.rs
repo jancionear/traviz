@@ -524,6 +524,26 @@ fn produce_chunk_to_apply_chunk_relation() -> Relation {
     }
 }
 
+pub fn produce_block_to_produce_next_block_relation() -> Relation {
+    Relation {
+        id: make_uuid_from_seed("produce_block_on_head -> next produce_block_on_head"),
+        name: "produce_block_on_head -> next produce_block_on_head".to_string(),
+        description: "".to_string(),
+        from_span_selector: SpanSelector::new_equal_name("produce_block_on_head"),
+        to_span_selector: SpanSelector::new_equal_name("produce_block_on_head"),
+        attribute_relations: vec![AttributeRelation {
+            from_attribute: "height".to_string(),
+            to_attribute: "height".to_string(),
+            relation: AttributeRelationOp::OneGreater,
+        }],
+        max_time_diff: Some(5.0), // 5 seconds
+        nodes_config: RelationNodesConfig::SameNode,
+        match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
+        is_builtin: true,
+    }
+}
+
 pub fn builtin_relations() -> Vec<Relation> {
     vec![
         produce_block_on_head_to_preprocess_block_relation(),
@@ -546,5 +566,6 @@ pub fn builtin_relations() -> Vec<Relation> {
         send_chunk_state_witness_to_apply_chunk_validate_relation(),
         send_chunk_endorsement_to_produce_block_relation(),
         produce_chunk_to_apply_chunk_relation(),
+        produce_block_to_produce_next_block_relation(),
     ]
 }

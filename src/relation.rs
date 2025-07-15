@@ -345,5 +345,10 @@ pub fn builtin_relation_views() -> Vec<RelationView> {
                 .collect(),
             is_builtin: true,
         },
+        RelationView {
+            name: "Block time".to_string(),
+            enabled_relations: vec![builtin_relations::produce_block_to_produce_next_block_relation().id],
+            is_builtin: true,
+        }
     ]
 }
