@@ -397,6 +397,279 @@ fn witness_distribution_shard_0_structured_mode() -> StructuredMode {
     }
 }
 
+fn critical_path_shard_0_structured_mode() -> StructuredMode {
+    StructuredMode {
+        name: "Critical Path (shard 0)".to_string(),
+        span_rules: vec![
+            SpanRule {
+                name: "send_witness_to_client".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "send_witness_to_client".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "shard_id".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "0".to_string(),
+                        },
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "produce_chunk".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "produce_chunk".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "produce_block_on_head".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "produce_block_on_head".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "validate_chunk_state_witness".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "validate_chunk_state_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "shard_id".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "0".to_string(),
+                        },
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "start_process_block_async".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "start_process_block_async".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "do_apply_chunks".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "do_apply_chunks".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "send_chunk_state_witness".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "send_chunk_state_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "decode_state_witness".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "decode_state_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "shard_id".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "0".to_string(),
+                        },
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "validate_chunk_endorsement".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "validate_chunk_endorsement".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "shard_id".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "0".to_string(),
+                        },
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "VCE".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "postprocess_ready_block".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "postprocess_ready_block".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "distribute_chunk_state_witness".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "distribute_chunk_state_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "send partial_encoded_state_witnesses".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "send partial_encoded_state_witnesses".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+            SpanRule {
+                name: "decode_witness_parts".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "decode_witness_parts".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "shard_id".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::EqualTo,
+                            value: "0".to_string(),
+                        },
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                },
+            },
+        ],
+        is_builtin: true,
+    }
+}
+
 fn show_span(name: &str) -> SpanRule {
     SpanRule {
         name: format!("Show {}", name),
@@ -427,5 +700,6 @@ pub fn builtin_structured_modes() -> Vec<StructuredMode> {
         block_production_without_vce_structured_mode(),
         witness_distribution_structured_mode(),
         witness_distribution_shard_0_structured_mode(),
+        critical_path_shard_0_structured_mode(),
     ]
 }
