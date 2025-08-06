@@ -394,7 +394,7 @@ fn create_grouped_span(base_name: String, spans: Vec<Rc<Span>>) -> Span {
     let base_span = &spans[0];
     let mut grouped_span = (**base_span).clone();
 
-    grouped_span.name = format!("{} (group={})", base_name, span_count);
+    grouped_span.name = format!("{base_name} (group={span_count})");
     grouped_span.start_time = min_start;
     grouped_span.end_time = max_end;
     grouped_span.min_start_time.set(min_start);

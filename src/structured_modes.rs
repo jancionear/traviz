@@ -692,7 +692,7 @@ fn critical_path_structured_mode() -> StructuredMode {
 
 fn show_span(name: &str) -> SpanRule {
     SpanRule {
-        name: format!("Show {}", name),
+        name: format!("Show {name}"),
         selector: SpanSelector {
             span_name_condition: MatchCondition {
                 operator: MatchOperator::EqualTo,

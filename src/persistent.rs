@@ -166,5 +166,5 @@ fn persistent_data_file_path() -> PathBuf {
 
 fn temporary_write_file_path() -> PathBuf {
     let random_number: u64 = rand::random();
-    persistent_data_folder().join(format!("temporary_persistent_data{}.json", random_number))
+    persistent_data_folder().join(format!("temporary_persistent_data{random_number}.json"))
 }

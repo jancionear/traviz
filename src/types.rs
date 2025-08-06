@@ -150,7 +150,7 @@ pub fn value_to_text(value_opt: &Option<Value>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Value::BytesValue(b) => format!("{:?}", b), // TODO - hex? base64? maximum length?
+        Value::BytesValue(b) => format!("{b:?}"), // TODO - hex? base64? maximum length?
     }
 }
 
@@ -227,7 +227,7 @@ pub enum NodeIdentifier {
 impl fmt::Display for NodeIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NodeIdentifier::Node(name) => write!(f, "{}", name),
+            NodeIdentifier::Node(name) => write!(f, "{name}"),
             NodeIdentifier::AllNodes => write!(f, "ALL NODES"),
         }
     }

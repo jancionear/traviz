@@ -256,9 +256,9 @@ impl Default for App {
 
         // If a file path is provided as the first argument, try to load it.
         if let Some(first_arg) = std::env::args().nth(1) {
-            println!("Trying to open file: {}", first_arg);
+            println!("Trying to open file: {first_arg}");
             if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
-                println!("Error loading file: {}", err);
+                println!("Error loading file: {err}");
             } else {
                 println!("File loaded successfully.");
             }
@@ -320,7 +320,7 @@ impl eframe::App for App {
                         self.current_display_mode_index = 0;
                     }
                     if let Err(e) = self.apply_current_mode() {
-                        println!("Failed to apply display mode: {}", e);
+                        println!("Failed to apply display mode: {e}");
                     }
                 }
 
@@ -401,10 +401,10 @@ impl App {
                 // TODO - fix file picker
 
                 if let Some(path) = rfd::FileDialog::new().pick_file() {
-                    println!("Loading file: {:?}...", path);
+                    println!("Loading file: {path:?}...");
                     match self.load_file(&path) {
                         Ok(()) => println!("Successfully loaded file."),
-                        Err(e) => println!("Error loading file: {}", e),
+                        Err(e) => println!("Error loading file: {e}"),
                     }
                 }
             }
@@ -415,7 +415,7 @@ impl App {
                 .get(self.current_display_mode_index)
                 .map_or("Deleted".to_string(), |mode| mode.name.clone());
             ComboBox::new("mode chooser", "")
-                .selected_text(format!("Display mode: {}", current_mode_name))
+                .selected_text(format!("Display mode: {current_mode_name}"))
                 .show_ui(ui, |ui| {
                     for (i, mode) in self.display_modes.iter().enumerate() {
                         ui.selectable_value(
@@ -427,7 +427,7 @@ impl App {
                 });
             if previous_display_mode_index != self.current_display_mode_index {
                 if let Err(e) = self.apply_current_mode() {
-                    println!("Failed to apply display mode: {}", e);
+                    println!("Failed to apply display mode: {e}");
                     // Go back to the previous mode
                     self.current_display_mode_index = previous_display_mode_index;
                 }
@@ -438,7 +438,7 @@ impl App {
                 .get(self.current_node_filter_index)
                 .map_or("Deleted".to_string(), |filter| filter.name.clone());
             ComboBox::new("node filter chooser", "")
-                .selected_text(format!("Node filter: {}", current_node_filter_name))
+                .selected_text(format!("Node filter: {current_node_filter_name}"))
                 .show_ui(ui, |ui| {
                     for (i, filter) in self.node_filters.iter().enumerate() {
                         ui.selectable_value(
@@ -455,7 +455,7 @@ impl App {
                 .get(self.current_relation_view_index)
                 .map_or("Deleted".to_string(), |view| view.name.clone());
             ComboBox::new("relation view chooser", "")
-                .selected_text(format!("Relation view: {}", current_relations_view_name))
+                .selected_text(format!("Relation view: {current_relations_view_name}"))
                 .show_ui(ui, |ui| {
                     for (i, view) in self.relation_views.iter().enumerate() {
                         ui.selectable_value(
@@ -1521,7 +1521,7 @@ impl App {
             {
                 ui.label("Individual Spans:");
                 for line in spans_info.lines() {
-                    ui.label(format!("- {}", line));
+                    ui.label(format!("- {line}"));
                 }
             } else {
                 ui.label("(No individual span info found)");
@@ -1711,7 +1711,7 @@ impl App {
                         ui.label("Individual Spans:");
                         ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                             for line in spans_info.lines() {
-                                ui.label(format!("- {}", line));
+                                ui.label(format!("- {line}"));
                             }
                         });
                     }
@@ -2014,7 +2014,7 @@ impl App {
                         from_pos,
                         to_pos,
                         base_arrow_stroke,
-                        format!("{:.2} ms", distance_ms),
+                        format!("{distance_ms:.2} ms"),
                         should_draw_highlighted,
                         &arrow_key,
                     );
@@ -2110,7 +2110,7 @@ impl App {
                 from_pos,
                 to_pos,
                 base_arrow_stroke,
-                format!("{:.2} ms", distance_ms),
+                format!("{distance_ms:.2} ms"),
                 should_draw_highlighted,
                 &arrow_key,
             );
@@ -2223,7 +2223,7 @@ impl App {
             &mut self.defined_relations,
             &mut self.relation_views,
         ) {
-            eprintln!("Failed to load persistent data: {}", err);
+            eprintln!("Failed to load persistent data: {err}");
         }
     }
 
@@ -2234,7 +2234,7 @@ impl App {
             &self.defined_relations,
             &self.relation_views,
         ) {
-            eprintln!("Failed to save persistent data: {}", err);
+            eprintln!("Failed to save persistent data: {err}");
         }
     }
 
@@ -2582,10 +2582,7 @@ fn get_time_dots(start_time: TimePoint, end_time: TimePoint) -> Vec<TimePoint> {
         delta /= 10.0;
         iterations += 1;
         if iterations > 10000 {
-            println!(
-                "WARN: get_time_dots looped!: start_time: {}, end_time: {}",
-                start_time, end_time
-            );
+            println!("WARN: get_time_dots looped!: start_time: {start_time}, end_time: {end_time}");
             return vec![];
         }
     }

@@ -508,7 +508,7 @@ impl EditDisplayModes {
                 Self::draw_edit_match_condition(
                     ui,
                     &mut attr_condition.1,
-                    format!("attribute condition {} {}", ui_seed, i).as_str(),
+                    format!("attribute condition {ui_seed} {i}").as_str(),
                 );
                 if ui.button("Remove").clicked() {
                     attribute_condition_to_remove = Some(i);

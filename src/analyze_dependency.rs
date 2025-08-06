@@ -1246,11 +1246,11 @@ impl AnalyzeDependencyModal {
         );
 
         if source_spans.is_empty() {
-            return Err(format!("No spans found with name \'{}\'", source_name));
+            return Err(format!("No spans found with name \'{source_name}\'"));
         }
 
         if target_spans.is_empty() {
-            return Err(format!("No spans found with name \'{}\'", target_name));
+            return Err(format!("No spans found with name \'{target_name}\'"));
         }
 
         // Determine expected_group_keys_set if grouping is active
@@ -1641,7 +1641,7 @@ impl AnalyzeDependencyModal {
                                                         if let Some(link) = &node_result.min_delay_link {
                                                             self.show_link_details_popup = Some(LinkDetailsPopupInfo {
                                                                 link: link.clone(),
-                                                                title: format!("Minimum Delay Link Details ({})", node_name),
+                                                                title: format!("Minimum Delay Link Details ({node_name})"),
                                                                 node_name: node_name.clone(),
                                                                 group_by_attribute_name: result.group_by_attribute.clone(),
                                                                 linking_attribute_name: result.linking_attribute.clone(),
@@ -1656,7 +1656,7 @@ impl AnalyzeDependencyModal {
                                                         if let Some(link) = &node_result.max_delay_link {
                                                             self.show_link_details_popup = Some(LinkDetailsPopupInfo {
                                                                 link: link.clone(),
-                                                                title: format!("Maximum Delay Link Details ({})", node_name),
+                                                                title: format!("Maximum Delay Link Details ({node_name})"),
                                                                 node_name: node_name.clone(),
                                                                 group_by_attribute_name: result.group_by_attribute.clone(),
                                                                 linking_attribute_name: result.linking_attribute.clone(),
@@ -1905,14 +1905,14 @@ impl AnalyzeDependencyModal {
                         cardinality = Some(match value {
                             "N-to-1" => AnalysisCardinality::NToOne,
                             "1-to-N" => AnalysisCardinality::OneToN,
-                            _ => return Err(format!("Unknown cardinality: {}", value)),
+                            _ => return Err(format!("Unknown cardinality: {value}")),
                         });
                     }
                     "threshold:" => {
                         threshold = Some(
                             value
                                 .parse::<usize>()
-                                .map_err(|_| format!("Invalid threshold: {}", value))?,
+                                .map_err(|_| format!("Invalid threshold: {value}"))?,
                         );
                     }
                     "linking by:" => {
@@ -1933,14 +1933,14 @@ impl AnalyzeDependencyModal {
                         scope = Some(match value {
                             "self" => SourceScope::SameNode,
                             "all nodes" => SourceScope::AllNodes,
-                            _ => return Err(format!("Unknown scope: {}", value)),
+                            _ => return Err(format!("Unknown scope: {value}")),
                         });
                     }
                     "timing:" => {
                         timing = Some(match value {
                             "Earliest First" => SourceTimingStrategy::EarliestFirst,
                             "Latest First" => SourceTimingStrategy::LatestFirst,
-                            _ => return Err(format!("Unknown timing strategy: {}", value)),
+                            _ => return Err(format!("Unknown timing strategy: {value}")),
                         });
                     }
                     "group aggregation:" => {
@@ -1950,10 +1950,7 @@ impl AnalyzeDependencyModal {
                                 GroupAggregationStrategy::FirstCompletedGroup
                             }
                             _ => {
-                                return Err(format!(
-                                    "Unknown group aggregation strategy: {}",
-                                    value
-                                ))
+                                return Err(format!("Unknown group aggregation strategy: {value}"))
                             }
                         });
                     }
@@ -2026,7 +2023,7 @@ impl AnalyzeDependencyModal {
                 ui_input_row.vertical(|ui_button_col| {
                     if ui_button_col.button("Parse, Fill and Analyze").clicked() {
                         if let Err(err) = self.parse_and_fill_from_description(&self.description_input.clone()) {
-                            self.error_message = Some(format!("Parse error: {}", err));
+                            self.error_message = Some(format!("Parse error: {err}"));
                         } else {
                             // Clear parse errors but keep other error messages
                             if let Some(ref msg) = self.error_message {
@@ -2140,7 +2137,7 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
                                 ui.strong("Time to Target: ");
                                 let ttt_label_response = ui.monospace(time_to_target_display);
                                 ttt_label_response
-                                    .on_hover_text(format!("End: {}", end_timestamp_str));
+                                    .on_hover_text(format!("End: {end_timestamp_str}"));
 
                                 ui.strong(" Node: ");
                                 ui.monospace(&s_span.node.name);
@@ -2168,7 +2165,7 @@ fn draw_link_visualization_ui_impl(ui: &mut Ui, details: &LinkDetailsPopupInfo) 
 
                         ui.strong("Time to Target: ");
                         let ttt_label_response = ui.monospace(time_to_target_display);
-                        ttt_label_response.on_hover_text(format!("End: {}", end_timestamp_str));
+                        ttt_label_response.on_hover_text(format!("End: {end_timestamp_str}"));
 
                         ui.strong(" Node: ");
                         ui.monospace(&s_span.node.name);
