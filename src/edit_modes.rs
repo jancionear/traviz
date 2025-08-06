@@ -117,6 +117,7 @@ impl EditDisplayModes {
                 replace_name: String::new(),
                 add_height_to_name: true,
                 add_shard_id_to_name: true,
+                group: false,
             },
         }
     }
@@ -417,6 +418,10 @@ impl EditDisplayModes {
         ui.checkbox(
             &mut self.current_span_rule.decision.add_shard_id_to_name,
             "Add Shard ID to Name",
+        );
+        ui.checkbox(
+            &mut self.current_span_rule.decision.group,
+            "Group spans with same Name and Height",
         );
         self.draw_short_separator(ui);
 

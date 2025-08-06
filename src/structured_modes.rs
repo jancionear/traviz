@@ -52,6 +52,9 @@ pub struct SpanDecision {
     pub add_height_to_name: bool,
     /// Add shard id (e.g s=123) to the span's name, the shard id is read from the attributes.
     pub add_shard_id_to_name: bool,
+    /// Whether to group spans with the same name into a single aggregated span.
+    #[serde(default)]
+    pub group: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -155,6 +158,7 @@ impl StructuredMode {
             replace_name: String::new(),
             add_height_to_name: false,
             add_shard_id_to_name: false,
+            group: false,
         }
     }
 }
@@ -209,6 +213,7 @@ pub fn everything_structured_mode() -> StructuredMode {
                     replace_name: "VCE".to_string(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             // All spans should be visible, their length should be based on time.
@@ -225,6 +230,7 @@ pub fn everything_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
         ],
@@ -254,6 +260,7 @@ pub fn block_production_structured_mode() -> StructuredMode {
                     replace_name: "VCSW".to_string(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             // Show "validate_chunk_endorsement" as "VCE", helps with performance and visual clutter.
@@ -273,6 +280,7 @@ pub fn block_production_structured_mode() -> StructuredMode {
                     replace_name: "VCE".to_string(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             // All spans with 'block_production' tag should be visible.
@@ -295,6 +303,7 @@ pub fn block_production_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
         ],
@@ -322,6 +331,7 @@ fn block_production_without_vce_structured_mode() -> StructuredMode {
             replace_name: String::new(),
             add_height_to_name: false,
             add_shard_id_to_name: false,
+            group: false,
         },
     };
 
@@ -354,6 +364,7 @@ fn witness_distribution_structured_mode() -> StructuredMode {
                 replace_name: String::new(),
                 add_height_to_name: true,
                 add_shard_id_to_name: true,
+                group: false,
             },
         }],
         is_builtin: true,
@@ -391,15 +402,16 @@ fn witness_distribution_shard_0_structured_mode() -> StructuredMode {
                 replace_name: String::new(),
                 add_height_to_name: true,
                 add_shard_id_to_name: true,
+                group: false,
             },
         }],
         is_builtin: true,
     }
 }
 
-fn critical_path_shard_0_structured_mode() -> StructuredMode {
+fn critical_path_structured_mode() -> StructuredMode {
     StructuredMode {
-        name: "Critical Path (shard 0)".to_string(),
+        name: "Critical Path".to_string(),
         span_rules: vec![
             SpanRule {
                 name: "send_witness_to_client".to_string(),
@@ -409,13 +421,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                         value: "send_witness_to_client".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
-                    attribute_conditions: vec![(
-                        "shard_id".to_string(),
-                        MatchCondition {
-                            operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
-                        },
-                    )],
+                    attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
@@ -423,6 +429,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: true,
                 },
             },
             SpanRule {
@@ -441,6 +448,26 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "produce_chunk_internal".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "produce_chunk_internal".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "produce_chunk".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -459,6 +486,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -469,13 +497,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                         value: "validate_chunk_state_witness".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
-                    attribute_conditions: vec![(
-                        "shard_id".to_string(),
-                        MatchCondition {
-                            operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
-                        },
-                    )],
+                    attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
@@ -483,6 +505,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: true,
                 },
             },
             SpanRule {
@@ -501,6 +524,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -511,7 +535,13 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                         value: "do_apply_chunks".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
-                    attribute_conditions: vec![],
+                    attribute_conditions: vec![(
+                        "block".to_string(),
+                        MatchCondition {
+                            operator: MatchOperator::Contains,
+                            value: "Optimistic".to_string(),
+                        },
+                    )],
                 },
                 decision: SpanDecision {
                     visible: true,
@@ -519,6 +549,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -537,6 +568,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -547,13 +579,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                         value: "decode_state_witness".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
-                    attribute_conditions: vec![(
-                        "shard_id".to_string(),
-                        MatchCondition {
-                            operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
-                        },
-                    )],
+                    attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
@@ -561,6 +587,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: true,
                 },
             },
             SpanRule {
@@ -571,13 +598,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                         value: "validate_chunk_endorsement".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
-                    attribute_conditions: vec![(
-                        "shard_id".to_string(),
-                        MatchCondition {
-                            operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
-                        },
-                    )],
+                    attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
@@ -585,6 +606,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: "VCE".to_string(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: true,
                 },
             },
             SpanRule {
@@ -603,6 +625,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -621,6 +644,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -639,6 +663,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: false,
                 },
             },
             SpanRule {
@@ -649,13 +674,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                         value: "decode_witness_parts".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
-                    attribute_conditions: vec![(
-                        "shard_id".to_string(),
-                        MatchCondition {
-                            operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
-                        },
-                    )],
+                    attribute_conditions: vec![],
                 },
                 decision: SpanDecision {
                     visible: true,
@@ -663,6 +682,7 @@ fn critical_path_shard_0_structured_mode() -> StructuredMode {
                     replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
+                    group: true,
                 },
             },
         ],
@@ -687,6 +707,7 @@ fn show_span(name: &str) -> SpanRule {
             replace_name: String::new(),
             add_height_to_name: true,
             add_shard_id_to_name: true,
+            group: false,
         },
     }
 }
@@ -700,6 +721,6 @@ pub fn builtin_structured_modes() -> Vec<StructuredMode> {
         block_production_without_vce_structured_mode(),
         witness_distribution_structured_mode(),
         witness_distribution_shard_0_structured_mode(),
-        critical_path_shard_0_structured_mode(),
+        critical_path_structured_mode(),
     ]
 }

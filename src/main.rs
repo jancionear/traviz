@@ -9,7 +9,7 @@ use anyhow::Result;
 use eframe::egui::scroll_area::ScrollBarVisibility;
 use eframe::egui::{
     self, Align2, Button, Color32, ComboBox, FontId, Key, Label, Modal, PointerButton, Pos2, Rect,
-    ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
+    Response, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
 use eframe::epaint::PathShape;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -27,6 +27,7 @@ use edit_modes::EditDisplayModes;
 use edit_relations::{EditRelationViews, EditRelations};
 use modes::structured_mode_transformation;
 use node_filter::{EditNodeFilters, NodeFilter};
+use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use relation::{builtin_relation_views, find_relations, Relation, RelationInstance, RelationView};
 use structured_modes::StructuredMode;
 use task_timer::TaskTimer;
@@ -1377,6 +1378,18 @@ impl App {
         level: u64,
         highlighted_span_ids: &HashSet<Vec<u8>>,
     ) {
+        if span.active_segments.is_some() {
+            self.draw_grouped_span(
+                span,
+                ui,
+                start_height,
+                span_height,
+                level,
+                highlighted_span_ids,
+            );
+            return;
+        }
+
         let is_highlighted = highlighted_span_ids.contains(&span.span_id);
         let visible_rect = ui.clip_rect();
 
@@ -1487,6 +1500,177 @@ impl App {
         }
     }
 
+    fn add_grouped_span_hover_tooltip(&self, span_button: Response, span: &Span) {
+        span_button.on_hover_ui_at_pointer(|ui| {
+            ui.label(span.name.clone().to_string());
+            ui.separator();
+
+            ui.label(format!(
+                "{:.3} ms",
+                (span.end_time - span.start_time) * MILLISECONDS_PER_SECOND
+            ));
+            ui.label(format!(
+                "{} - {}",
+                time_point_to_utc_string(span.start_time),
+                time_point_to_utc_string(span.end_time)
+            ));
+            ui.separator();
+
+            if let Some(Some(Value::StringValue(spans_info))) =
+                span.attributes.get("grouped_spans_info")
+            {
+                ui.label("Individual Spans:");
+                for line in spans_info.lines() {
+                    ui.label(format!("- {}", line));
+                }
+            } else {
+                ui.label("(No individual span info found)");
+            }
+        });
+    }
+
+    fn grouped_span_segment_to_rect(
+        segment_start: f64,
+        segment_end: f64,
+        span: &Span,
+        start_x: f32,
+        end_x: f32,
+        start_height: f32,
+        span_height: f32,
+    ) -> Rect {
+        let time_range = span.end_time - span.start_time;
+        let screen_width = end_x - start_x;
+        let segment_start_x =
+            start_x + ((segment_start - span.start_time) / time_range * screen_width as f64) as f32;
+        let segment_end_x =
+            start_x + ((segment_end - span.start_time) / time_range * screen_width as f64) as f32;
+
+        // Minimum width for grouped span segments
+        const MIN_SEGMENT_WIDTH: f32 = 4.0;
+
+        let calculated_width = segment_end_x - segment_start_x;
+        let (actual_start_x, actual_end_x) = if calculated_width < MIN_SEGMENT_WIDTH {
+            // Center the minimum width segment on the original segment center
+            let center_x = (segment_start_x + segment_end_x) / 2.0;
+            let half_min_width = MIN_SEGMENT_WIDTH / 2.0;
+            let new_start_x = (center_x - half_min_width).max(start_x); // Don't go before span start
+            let new_end_x = (center_x + half_min_width).min(end_x); // Don't go after span end
+
+            // If centering would exceed bounds, adjust to fit within span
+            if new_end_x - new_start_x < MIN_SEGMENT_WIDTH {
+                if new_start_x == start_x {
+                    (new_start_x, (new_start_x + MIN_SEGMENT_WIDTH).min(end_x))
+                } else {
+                    ((new_end_x - MIN_SEGMENT_WIDTH).max(start_x), new_end_x)
+                }
+            } else {
+                (new_start_x, new_end_x)
+            }
+        } else {
+            (segment_start_x, segment_end_x)
+        };
+
+        Rect::from_min_max(
+            Pos2::new(actual_start_x, start_height),
+            Pos2::new(actual_end_x, start_height + span_height),
+        )
+    }
+
+    fn draw_grouped_span(
+        &mut self,
+        span: &Rc<Span>,
+        ui: &mut Ui,
+        start_height: f32,
+        span_height: f32,
+        level: u64,
+        highlighted_span_ids: &HashSet<Vec<u8>>,
+    ) {
+        let visible_rect = ui.clip_rect();
+
+        // Exit early if not visible
+        if start_height > visible_rect.max.y || (start_height + span_height) < visible_rect.min.y {
+            return;
+        }
+
+        let is_highlighted = highlighted_span_ids.contains(&span.span_id);
+        let start_x = span.display_start.get();
+        let end_x = start_x + span.display_length.get().max(0.0);
+
+        let name = if end_x - start_x > self.layout.span_name_threshold {
+            span.name.as_str()
+        } else {
+            ""
+        };
+
+        let (active_color, gap_color) = if is_highlighted {
+            (colors::INTENSE_BLUE, colors::VERY_LIGHT_BLUE)
+        } else {
+            (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
+        };
+
+        // Draw the full span range with gap color
+        let full_rect = Rect::from_min_max(
+            Pos2::new(start_x, start_height),
+            Pos2::new(end_x, start_height + span_height),
+        );
+        ui.painter().rect_filled(full_rect, 0, gap_color);
+
+        // Draw active segments with active color and collect rects for interaction
+        let mut segment_rects = Vec::new();
+        if let Some(active_segments) = &span.active_segments {
+            // Note: Empty vector means span is marked for grouping but not yet processed
+            // (this shouldn't happen!)
+            for (segment_start, segment_end) in active_segments {
+                let segment_rect = Self::grouped_span_segment_to_rect(
+                    *segment_start,
+                    *segment_end,
+                    span,
+                    start_x,
+                    end_x,
+                    start_height,
+                    span_height,
+                );
+                ui.painter().rect_filled(segment_rect, 0, active_color);
+                segment_rects.push(segment_rect);
+            }
+        }
+
+        // Highlighted spans get a border
+        if is_highlighted {
+            let border_stroke = Stroke::new(2.5, colors::INTENSE_BLUE2);
+            let points = vec![
+                full_rect.min,
+                Pos2::new(full_rect.max.x, full_rect.min.y),
+                full_rect.max,
+                Pos2::new(full_rect.min.x, full_rect.max.y),
+            ];
+            let border_shape = PathShape::closed_line(points, border_stroke);
+            ui.painter().add(border_shape);
+        }
+
+        if level == 0 {
+            // Top level spans get a color line at the top
+            ui.painter().line(
+                vec![
+                    Pos2::new(start_x, start_height),
+                    Pos2::new(end_x, start_height),
+                ],
+                Stroke::new(2.0, colors::INTENSE_RED),
+            );
+        }
+
+        let full_span_button = ui.put(
+            full_rect,
+            Button::new(name).truncate().fill(Color32::TRANSPARENT),
+        );
+
+        if full_span_button.clicked_by(PointerButton::Primary) {
+            self.clicked_span = Some(span.clone());
+        }
+
+        self.add_grouped_span_hover_tooltip(full_span_button, span);
+    }
+
     fn draw_clicked_span(&mut self, ctx: &egui::Context, max_width: f32, max_height: f32) {
         if self.clicked_span.is_none() {
             return;
@@ -1517,46 +1701,63 @@ impl App {
                     time_point_to_utc_string(span.start_time),
                     time_point_to_utc_string(span.end_time)
                 ));
-                ui.label(format!("span_id: {}", hex::encode(&span.span_id)));
-                ui.label(format!(
-                    "parent_span_id: {}",
-                    hex::encode(&span.parent_span_id)
-                ));
-                draw_separator(ui);
-                for (name, value) in &span.attributes {
-                    ui.label(format!("{}: {}", name, value_to_text(value)));
-                }
-                draw_separator(ui);
 
-                let mut events = if self.include_children_events {
-                    collect_events(span)
-                } else {
-                    span.events.clone()
-                };
-                events.sort_by(|e1, e2| {
-                    e1.time
-                        .partial_cmp(&e2.time)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-
-                ui.label("");
-                ui.label(format!("Events ({})", events.len()));
-                ui.checkbox(
-                    &mut self.include_children_events,
-                    "Include events from children spans",
-                );
-                draw_separator(ui);
-                ScrollArea::vertical().show(ui, |ui| {
-                    for event in events {
-                        draw_separator(ui);
-                        ui.label(time_point_to_utc_string(event.time));
-                        ui.label(event.name);
-                        ui.label("");
-                        for (name, value) in event.attributes {
-                            ui.label(format!("{}: {}", name, value_to_text(&value)));
-                        }
+                if span.active_segments.is_some() {
+                    // Grouped span
+                    draw_separator(ui);
+                    if let Some(Some(Value::StringValue(spans_info))) =
+                        span.attributes.get("grouped_spans_info")
+                    {
+                        ui.label("Individual Spans:");
+                        ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                            for line in spans_info.lines() {
+                                ui.label(format!("- {}", line));
+                            }
+                        });
                     }
-                });
+                } else {
+                    // Regular span
+                    ui.label(format!("span_id: {}", hex::encode(&span.span_id)));
+                    ui.label(format!(
+                        "parent_span_id: {}",
+                        hex::encode(&span.parent_span_id)
+                    ));
+                    draw_separator(ui);
+                    for (name, value) in &span.attributes {
+                        ui.label(format!("{}: {}", name, value_to_text(value)));
+                    }
+                    draw_separator(ui);
+
+                    let mut events = if self.include_children_events {
+                        collect_events(span)
+                    } else {
+                        span.events.clone()
+                    };
+                    events.sort_by(|e1, e2| {
+                        e1.time
+                            .partial_cmp(&e2.time)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    ui.label("");
+                    ui.label(format!("Events ({})", events.len()));
+                    ui.checkbox(
+                        &mut self.include_children_events,
+                        "Include events from children spans",
+                    );
+                    draw_separator(ui);
+                    ScrollArea::vertical().show(ui, |ui| {
+                        for event in events {
+                            draw_separator(ui);
+                            ui.label(time_point_to_utc_string(event.time));
+                            ui.label(event.name);
+                            ui.label("");
+                            for (name, value) in event.attributes {
+                                ui.label(format!("{}: {}", name, value_to_text(&value)));
+                            }
+                        }
+                    });
+                }
 
                 if close_button.clicked() {
                     self.clicked_span = None;
