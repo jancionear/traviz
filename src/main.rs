@@ -1649,13 +1649,13 @@ impl App {
         }
 
         if level == 0 {
-            // Top level spans get a color line at the top
+            // Grouped spans get a color line at the top
             ui.painter().line(
                 vec![
                     Pos2::new(start_x, start_height),
                     Pos2::new(end_x, start_height),
                 ],
-                Stroke::new(2.0, colors::INTENSE_RED),
+                Stroke::new(2.0, colors::INTENSE_GREEN),
             );
         }
 

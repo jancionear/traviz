@@ -297,10 +297,14 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
 }
 
 fn apply_grouping(spans: &mut Vec<Rc<Span>>) {
-    let mut groups: HashMap<_, Vec<Rc<Span>>> = HashMap::new();
-    let mut non_grouped = Vec::new();
+    // Collect all spans that should be grouped (including children spans)
+    let mut all_groupable_spans = Vec::new();
+    let mut span_locations = HashMap::new();
+    collect_groupable_spans_recursive(spans, &mut all_groupable_spans, &mut span_locations, None);
 
-    // Separate grouped vs non-grouped spans
+    // Separate top-level spans: preserve non-groupable spans, prepare groupable spans for merging
+    let mut groups: HashMap<_, Vec<Rc<Span>>> = HashMap::new();
+    let mut non_grouped_top_level = Vec::new();
     for span in spans.drain(..) {
         let should_be_grouped = span
             .active_segments
@@ -308,42 +312,47 @@ fn apply_grouping(spans: &mut Vec<Rc<Span>>) {
             .map(|segments| segments.is_empty())
             .unwrap_or(false);
 
-        if should_be_grouped {
-            // Create grouping key: (node_name, height, original_span_name)
-            let original_name = span
-                .attributes
-                .get("original.span.name")
-                .and_then(|v| v.as_ref())
-                .and_then(|v| match v {
-                    Value::StringValue(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| span.name.clone());
-
-            // TODO: make grouping attribute customizable
-            let height = span
-                .attributes
-                .get("height")
-                .and_then(|v| v.as_ref())
-                .and_then(|v| match v {
-                    Value::IntValue(i) => Some(i.to_string()),
-                    Value::DoubleValue(d) => Some(d.to_string()),
-                    Value::StringValue(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| "unknown".to_string());
-
-            let grouping_key = (span.node.name.clone(), height, original_name);
-            groups.entry(grouping_key).or_default().push(span);
-        } else {
-            non_grouped.push(span);
+        if !should_be_grouped {
+            non_grouped_top_level.push(span);
         }
     }
 
-    // Add non-grouped spans back
-    spans.extend(non_grouped);
+    // Group all collected spans by (node, height, name)
+    for span in all_groupable_spans {
+        let original_name = span
+            .attributes
+            .get("original.span.name")
+            .and_then(|v| v.as_ref())
+            .and_then(|v| match v {
+                Value::StringValue(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| span.name.clone());
 
-    // Create grouped spans
+        // TODO: make grouping attribute customizable
+        let height = span
+            .attributes
+            .get("height")
+            .and_then(|v| v.as_ref())
+            .and_then(|v| match v {
+                Value::IntValue(i) => Some(i.to_string()),
+                Value::DoubleValue(d) => Some(d.to_string()),
+                Value::StringValue(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let grouping_key = (span.node.name.clone(), height, original_name);
+        groups.entry(grouping_key).or_default().push(span);
+    }
+
+    // Remove grouped spans from their original locations in hierarchy
+    remove_spans_recursive(&mut non_grouped_top_level, &span_locations);
+
+    // Add non-grouped spans back
+    spans.extend(non_grouped_top_level);
+
+    // Create grouped spans and add to top level
     for ((_node_name, _height, original_name), span_group) in groups {
         if span_group.len() > 1 {
             let grouped_span = create_grouped_span(original_name, span_group);
@@ -355,6 +364,56 @@ fn apply_grouping(spans: &mut Vec<Rc<Span>>) {
             spans.push(Rc::new(single_span));
         }
     }
+}
+
+fn collect_groupable_spans_recursive(
+    spans: &[Rc<Span>],
+    collector: &mut Vec<Rc<Span>>,
+    locations: &mut HashMap<Vec<u8>, Option<Vec<u8>>>, // span_id -> parent_span_id
+    parent_id: Option<Vec<u8>>,
+) {
+    for span in spans {
+        let should_be_grouped = span
+            .active_segments
+            .as_ref()
+            .map(|segments| segments.is_empty())
+            .unwrap_or(false);
+
+        if should_be_grouped {
+            collector.push(span.clone());
+            locations.insert(span.span_id.clone(), parent_id.clone());
+        }
+
+        let children = span.children.borrow();
+        collect_groupable_spans_recursive(
+            &children,
+            collector,
+            locations,
+            Some(span.span_id.clone()),
+        );
+    }
+}
+
+fn remove_spans_recursive(
+    spans: &mut Vec<Rc<Span>>,
+    span_locations: &HashMap<Vec<u8>, Option<Vec<u8>>>,
+) {
+    spans.retain(|span| {
+        if span_locations.contains_key(&span.span_id) && span_locations[&span.span_id].is_none() {
+            return false;
+        }
+        let mut children = span.children.borrow_mut();
+        children.retain(|child| {
+            !span_locations.contains_key(&child.span_id)
+                || span_locations[&child.span_id] != Some(span.span_id.clone())
+        });
+        let mut display_children = span.display_children.borrow_mut();
+        display_children.retain(|child| {
+            !span_locations.contains_key(&child.span_id)
+                || span_locations[&child.span_id] != Some(span.span_id.clone())
+        });
+        true
+    });
 }
 
 fn create_grouped_span(base_name: String, spans: Vec<Rc<Span>>) -> Span {
