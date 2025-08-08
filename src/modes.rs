@@ -404,11 +404,6 @@ fn remove_spans_recursive(
             !span_locations.contains_key(&child.span_id)
                 || span_locations[&child.span_id] != Some(span.span_id.clone())
         });
-        let mut display_children = span.display_children.borrow_mut();
-        display_children.retain(|child| {
-            !span_locations.contains_key(&child.span_id)
-                || span_locations[&child.span_id] != Some(span.span_id.clone())
-        });
         true
     });
 }
