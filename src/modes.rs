@@ -441,8 +441,10 @@ fn create_grouped_span(base_name: String, spans: Vec<Rc<Span>>) -> Span {
         }
     }
 
-    // Use the first span as the base
-    let base_span = &spans[0];
+    // Ensure the earliest span is used as the base
+    let mut spans_sorted_by_start = spans.clone();
+    spans_sorted_by_start.sort_by(|a, b| a.start_time.partial_cmp(&b.start_time).unwrap());
+    let base_span = &spans_sorted_by_start[0];
     let mut grouped_span = (**base_span).clone();
 
     grouped_span.name = format!("{base_name} (total={span_count})");
@@ -452,8 +454,9 @@ fn create_grouped_span(base_name: String, spans: Vec<Rc<Span>>) -> Span {
     grouped_span.max_end_time.set(max_end);
     grouped_span.active_segments = Some(active_segments);
 
-    // Store original spans information for hover tooltip
-    let spans_info = spans
+    // Store original spans information for hover tooltip,
+    // the spans are already sorted by start time
+    let spans_info = spans_sorted_by_start
         .iter()
         .map(|s| {
             format!(
