@@ -396,14 +396,28 @@ fn remove_spans_recursive(
     span_locations: &HashMap<Vec<u8>, Option<Vec<u8>>>,
 ) {
     spans.retain(|span| {
-        if span_locations.contains_key(&span.span_id) && span_locations[&span.span_id].is_none() {
+        // Drop this span if it's a top-level grouped span to remove
+        if span_locations
+            .get(&span.span_id)
+            .is_some_and(|p| p.is_none())
+        {
             return false;
         }
-        let mut children = span.children.borrow_mut();
-        children.retain(|child| {
-            !span_locations.contains_key(&child.span_id)
-                || span_locations[&child.span_id] != Some(span.span_id.clone())
-        });
+
+        // Recurse into children
+        {
+            let mut children = span.children.borrow_mut();
+            remove_spans_recursive(&mut children, span_locations);
+
+            // Then prune any child that is scheduled for removal under this parent
+            let parent_id = span.span_id.clone();
+            children.retain(|child| {
+                span_locations
+                    .get(&child.span_id)
+                    .is_none_or(|p| p.as_ref() != Some(&parent_id))
+            });
+        }
+
         true
     });
 }
