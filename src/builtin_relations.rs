@@ -183,7 +183,7 @@ pub fn postprocess_ready_block_to_produce_chunk_relation() -> Relation {
         name: "postprocess_ready_block -> produce_chunk".to_string(),
         description: "".to_string(),
         from_span_selector: SpanSelector::new_equal_name("postprocess_ready_block"),
-        to_span_selector: SpanSelector::new_equal_name("produce_chunk"),
+        to_span_selector: SpanSelector::new_name_contains("produce_chunk"),
         attribute_relations: vec![AttributeRelation {
             from_attribute: "height".to_string(),
             to_attribute: "height".to_string(),
@@ -202,7 +202,7 @@ pub fn produce_chunk_to_send_chunk_state_witness_relation() -> Relation {
         id: make_uuid_from_seed("produce_chunk -> send_chunk_state_witness"),
         name: "produce_chunk -> send_chunk_state_witness".to_string(),
         description: "".to_string(),
-        from_span_selector: SpanSelector::new_equal_name("produce_chunk"),
+        from_span_selector: SpanSelector::new_name_contains("produce_chunk"),
         to_span_selector: SpanSelector::new_equal_name("send_chunk_state_witness"),
         attribute_relations: vec![
             AttributeRelation {
