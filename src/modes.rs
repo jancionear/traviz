@@ -330,17 +330,14 @@ fn apply_grouping(spans: &mut Vec<Rc<Span>>) {
             .unwrap_or_else(|| span.name.clone());
 
         // TODO: make grouping attribute customizable
-        let height = span
-            .attributes
-            .get("height")
-            .and_then(|v| v.as_ref())
-            .and_then(|v| match v {
-                Value::IntValue(i) => Some(i.to_string()),
-                Value::DoubleValue(d) => Some(d.to_string()),
-                Value::StringValue(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "unknown".to_string());
+        let height_value_opt = span.attributes.get("height").cloned().unwrap_or(None);
+        let height = value_to_text(&height_value_opt);
+        if height == "empty" {
+            println!(
+                "WARN: grouping span '{}' on node '{}' without 'height' attribute",
+                original_name, span.node.name
+            );
+        }
 
         let grouping_key = (span.node.name.clone(), height, original_name);
         groups.entry(grouping_key).or_default().push(span);
