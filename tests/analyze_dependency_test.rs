@@ -1235,7 +1235,7 @@ fn test_complex_all_features_combined() {
 
     if modal.analysis_result.is_none() {
         if let Some(error) = modal.get_error_message() {
-            panic!("Analysis failed with error: {}", error);
+            panic!("Analysis failed with error: {error}");
         } else {
             panic!("Analysis failed with no error message");
         }
@@ -1249,7 +1249,7 @@ fn test_complex_all_features_combined() {
     if result.per_node_results.is_empty() {
         // Check if there's an error or if the combination of features prevents link formation
         if let Some(error) = modal.get_error_message() {
-            panic!("Analysis failed with error: {}", error);
+            panic!("Analysis failed with error: {error}");
         } else {
             panic!("No links formed - complex feature combination may have implementation issues");
         }
@@ -1726,8 +1726,7 @@ fn test_error_missing_target_spans() {
     let error = modal.get_error_message().unwrap();
     assert!(
         error.contains("No spans found with name 'nonexistent_target'"),
-        "Error message should mention the missing target span name, got: {}",
-        error
+        "Error message should mention the missing target span name, got: {error}"
     );
 }
 
@@ -2565,7 +2564,7 @@ fn test_parse_analysis_description() {
     let description = "Analysis of dependency: 'send_chunk_state_witness' -> 'validate_chunk_state_witness' (cardinality: 1-to-N, threshold: 4, linking by: height,shard_id, group by: none, scope: all nodes, timing: Earliest First, group aggregation: First Completed Group)";
 
     let result = modal.parse_and_fill_from_description(description);
-    assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
+    assert!(result.is_ok(), "Parsing should succeed: {result:?}");
 
     // Verify all fields were set correctly
     assert_eq!(
@@ -2608,7 +2607,7 @@ fn test_parse_analysis_description_with_grouping() {
     let description = "Analysis of dependency: 'worker' -> 'processor' (cardinality: N-to-1, threshold: 2, linking by: none, group by: batch_id, scope: self, timing: Latest First, group aggregation: Wait For Last Group)";
 
     let result = modal.parse_and_fill_from_description(description);
-    assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
+    assert!(result.is_ok(), "Parsing should succeed: {result:?}");
 
     // Verify fields
     assert_eq!(modal.get_source_span_name(), Some(&"worker".to_string()));

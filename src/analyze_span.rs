@@ -221,7 +221,7 @@ impl AnalyzeSpanModal {
 
         if matching_spans.is_empty() {
             self.analysis_summary_message =
-                Some(format!("No spans found with name '{}'", target_name));
+                Some(format!("No spans found with name '{target_name}'"));
             // Clear previous results
             self.detailed_span_analysis = None;
             return;

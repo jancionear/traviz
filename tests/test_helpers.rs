@@ -51,6 +51,7 @@ pub fn create_test_span(
         time_display_length: Cell::new(0.0),
         incoming_relations: RefCell::new(vec![]),
         outgoing_relations: RefCell::new(vec![]),
+        active_segments: None,
     })
 }
 
@@ -90,6 +91,7 @@ pub fn create_test_span_with_attributes(
         time_display_length: Cell::new(0.0),
         incoming_relations: RefCell::new(vec![]),
         outgoing_relations: RefCell::new(vec![]),
+        active_segments: None,
     })
 }
 

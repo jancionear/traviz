@@ -3,7 +3,7 @@
 //! They can filter, modify, transform, re-arrange the spans as needed for each mode.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -13,8 +13,8 @@ use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use crate::structured_modes::{self, StructuredMode};
 use crate::task_timer::TaskTimer;
 use crate::types::{
-    time_point_from_unix_nano, value_to_text, DisplayLength, Event, Node, Scope, Span,
-    SpanDisplayConfig,
+    time_point_from_unix_nano, time_point_to_utc_string, value_to_text, DisplayLength, Event, Node,
+    Scope, Span, SpanDisplayConfig, MILLISECONDS_PER_SECOND,
 };
 
 #[allow(unused)]
@@ -58,6 +58,15 @@ pub fn structured_mode_transformation(
 
     for span in all_spans {
         structured_mode_transformation_rek(structured_mode, &span, &mut new_spans, false);
+    }
+
+    // Only apply grouping if any rule uses it
+    if structured_mode
+        .span_rules
+        .iter()
+        .any(|rule| rule.decision.group)
+    {
+        apply_grouping(&mut new_spans);
     }
 
     Ok(new_spans)
@@ -107,6 +116,11 @@ fn structured_mode_transformation_rek(
     }
     add_part_ord_to_name(&mut modified_span);
     modified_span.display_options.display_length = decision.display_length;
+
+    // Optionally mark span for grouping
+    if decision.group {
+        modified_span.active_segments = Some(Vec::new());
+    }
 
     let mut new_children = Vec::new();
     for child in taken_children.iter() {
@@ -259,6 +273,8 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
 
                             incoming_relations: RefCell::new(Vec::new()),
                             outgoing_relations: RefCell::new(Vec::new()),
+
+                            active_segments: None,
                         }),
                     );
                 }
@@ -278,4 +294,204 @@ fn extract_spans(requests: &[ExportTraceServiceRequest]) -> Result<Vec<Rc<Span>>
     t.stop();
 
     Ok(top_level_spans)
+}
+
+fn apply_grouping(spans: &mut Vec<Rc<Span>>) {
+    // Collect all spans that should be grouped (including children spans)
+    let mut all_groupable_spans = Vec::new();
+    let mut span_locations = HashMap::new();
+    collect_groupable_spans_recursive(spans, &mut all_groupable_spans, &mut span_locations, None);
+
+    // Separate top-level spans: preserve non-groupable spans, prepare groupable spans for merging
+    let mut groups: HashMap<_, Vec<Rc<Span>>> = HashMap::new();
+    let mut non_grouped_top_level = Vec::new();
+    for span in spans.drain(..) {
+        let should_be_grouped = span
+            .active_segments
+            .as_ref()
+            .map(|segments| segments.is_empty())
+            .unwrap_or(false);
+
+        if !should_be_grouped {
+            non_grouped_top_level.push(span);
+        }
+    }
+
+    // Group all collected spans by (node, height, name)
+    for span in all_groupable_spans {
+        let original_name = span
+            .attributes
+            .get("original.span.name")
+            .and_then(|v| v.as_ref())
+            .and_then(|v| match v {
+                Value::StringValue(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| span.name.clone());
+
+        // TODO: make grouping attribute customizable
+        let height_value_opt = span.attributes.get("height").cloned().unwrap_or(None);
+        let height = value_to_text(&height_value_opt);
+        if height == "empty" {
+            println!(
+                "WARN: grouping span '{}' on node '{}' without 'height' attribute",
+                original_name, span.node.name
+            );
+        }
+
+        let grouping_key = (span.node.name.clone(), height, original_name);
+        groups.entry(grouping_key).or_default().push(span);
+    }
+
+    // Remove grouped spans from their original locations in hierarchy
+    remove_spans_recursive(&mut non_grouped_top_level, &span_locations);
+
+    // Add non-grouped spans back
+    spans.extend(non_grouped_top_level);
+
+    // Create grouped spans and add to top level
+    for ((_node_name, _height, original_name), span_group) in groups {
+        if span_group.len() > 1 {
+            let grouped_span = create_grouped_span(original_name, span_group);
+            spans.push(Rc::new(grouped_span));
+        } else {
+            let span_rc = span_group.into_iter().next().unwrap();
+            let mut single_span = (*span_rc).clone();
+            single_span.active_segments = None;
+            spans.push(Rc::new(single_span));
+        }
+    }
+}
+
+fn collect_groupable_spans_recursive(
+    spans: &[Rc<Span>],
+    collector: &mut Vec<Rc<Span>>,
+    locations: &mut HashMap<Vec<u8>, Option<Vec<u8>>>, // span_id -> parent_span_id
+    parent_id: Option<Vec<u8>>,
+) {
+    for span in spans {
+        let should_be_grouped = span
+            .active_segments
+            .as_ref()
+            .map(|segments| segments.is_empty())
+            .unwrap_or(false);
+
+        if should_be_grouped {
+            collector.push(span.clone());
+            locations.insert(span.span_id.clone(), parent_id.clone());
+        }
+
+        let children = span.children.borrow();
+        collect_groupable_spans_recursive(
+            &children,
+            collector,
+            locations,
+            Some(span.span_id.clone()),
+        );
+    }
+}
+
+fn remove_spans_recursive(
+    spans: &mut Vec<Rc<Span>>,
+    span_locations: &HashMap<Vec<u8>, Option<Vec<u8>>>,
+) {
+    spans.retain(|span| {
+        // Drop this span if it's a top-level grouped span to remove
+        if span_locations
+            .get(&span.span_id)
+            .is_some_and(|p| p.is_none())
+        {
+            return false;
+        }
+
+        // Recurse into children
+        {
+            let mut children = span.children.borrow_mut();
+            remove_spans_recursive(&mut children, span_locations);
+
+            // Then prune any child that is scheduled for removal under this parent
+            let parent_id = span.span_id.clone();
+            children.retain(|child| {
+                span_locations
+                    .get(&child.span_id)
+                    .is_none_or(|p| p.as_ref() != Some(&parent_id))
+            });
+        }
+
+        true
+    });
+}
+
+fn create_grouped_span(base_name: String, spans: Vec<Rc<Span>>) -> Span {
+    let span_count = spans.len();
+    let min_start = spans
+        .iter()
+        .map(|s| s.start_time)
+        .fold(f64::INFINITY, f64::min);
+    let max_end = spans
+        .iter()
+        .map(|s| s.end_time)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    // Create active segments from individual span time ranges and merge overlapping ones
+    let mut raw_segments = spans
+        .iter()
+        .map(|s| (s.start_time, s.end_time))
+        .collect::<Vec<_>>();
+
+    raw_segments.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+    // Merge overlapping segments
+    let mut active_segments: Vec<(f64, f64)> = Vec::new();
+    for (start, end) in raw_segments {
+        if let Some(last) = active_segments.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+            } else {
+                active_segments.push((start, end));
+            }
+        } else {
+            active_segments.push((start, end));
+        }
+    }
+
+    // Ensure the earliest span is used as the base
+    let mut spans_sorted_by_start = spans.clone();
+    spans_sorted_by_start.sort_by(|a, b| a.start_time.partial_cmp(&b.start_time).unwrap());
+    let base_span = &spans_sorted_by_start[0];
+    let mut grouped_span = (**base_span).clone();
+
+    grouped_span.name = format!("{base_name} (total={span_count})");
+    grouped_span.start_time = min_start;
+    grouped_span.end_time = max_end;
+    grouped_span.min_start_time.set(min_start);
+    grouped_span.max_end_time.set(max_end);
+    grouped_span.active_segments = Some(active_segments);
+
+    // Store original spans information for hover tooltip,
+    // the spans are already sorted by start time
+    let spans_info = spans_sorted_by_start
+        .iter()
+        .map(|s| {
+            format!(
+                "{}: {:.3}ms [{} - {}]",
+                s.name,
+                (s.end_time - s.start_time) * MILLISECONDS_PER_SECOND,
+                time_point_to_utc_string(s.start_time),
+                time_point_to_utc_string(s.end_time)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    grouped_span.attributes.insert(
+        "grouped_spans_info".to_string(),
+        Some(Value::StringValue(spans_info)),
+    );
+
+    // Remove all children for now, to keep things simple
+    grouped_span.children = RefCell::new(Vec::new());
+    grouped_span.display_children = RefCell::new(Vec::new());
+
+    grouped_span
 }

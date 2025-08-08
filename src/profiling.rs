@@ -84,7 +84,7 @@ impl Profiler {
                 } else {
                     0.0
                 };
-                println!("[PROFILE]  - Average FPS: {:.2}", fps);
+                println!("[PROFILE]  - Average FPS: {fps:.2}");
                 println!("[PROFILE] --- End of Report ---");
             }
         });

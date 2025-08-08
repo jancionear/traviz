@@ -56,6 +56,13 @@ pub struct Span {
 
     pub incoming_relations: RefCell<Vec<RelationInstance>>,
     pub outgoing_relations: RefCell<Vec<RelationInstance>>,
+
+    /// Active time segments for grouped spans. Each tuple represents (start_time, end_time)
+    /// of an active period within the overall span range.
+    /// - `None`: Regular span (no grouping)
+    /// - `Some(vec![])`: Span marked for grouping
+    /// - `Some(vec![...])`: Grouped span with actual active segments
+    pub active_segments: Option<Vec<(TimePoint, TimePoint)>>,
 }
 
 impl Span {
@@ -143,7 +150,7 @@ pub fn value_to_text(value_opt: &Option<Value>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Value::BytesValue(b) => format!("{:?}", b), // TODO - hex? base64? maximum length?
+        Value::BytesValue(b) => format!("{b:?}"), // TODO - hex? base64? maximum length?
     }
 }
 
@@ -220,7 +227,7 @@ pub enum NodeIdentifier {
 impl fmt::Display for NodeIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NodeIdentifier::Node(name) => write!(f, "{}", name),
+            NodeIdentifier::Node(name) => write!(f, "{name}"),
             NodeIdentifier::AllNodes => write!(f, "ALL NODES"),
         }
     }
