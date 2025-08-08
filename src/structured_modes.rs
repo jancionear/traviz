@@ -113,6 +113,17 @@ impl SpanSelector {
             attribute_conditions: vec![],
         }
     }
+
+    pub fn new_name_contains(name: &str) -> SpanSelector {
+        SpanSelector {
+            span_name_condition: MatchCondition {
+                operator: MatchOperator::Contains,
+                value: name.to_string(),
+            },
+            node_name_condition: MatchCondition::any(),
+            attribute_conditions: vec![],
+        }
+    }
 }
 
 impl MatchCondition {
