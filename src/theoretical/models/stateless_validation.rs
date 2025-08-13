@@ -136,7 +136,7 @@ pub fn stateless_validation_model() -> TheoreticalModel {
             SpanBuilder::new(
                 "send_chunk_endorsement",
                 chunk_validator,
-                timing::SEND_CHUNK_ENDORSEMENT_TIME,
+                timing::SHORT_OPERATION_TIME,
             )
             .with_attribute("height", height.to_string()),
         );
