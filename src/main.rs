@@ -259,17 +259,33 @@ impl Default for App {
         // If a file path is provided as the first argument, try to load it.
         if let Some(first_arg) = std::env::args().nth(1) {
             if first_arg == "-t" {
-                let spans = match std::env::args()
+                let model_name = std::env::args()
                     .nth(2)
-                    .expect("-t requrires a second argument")
-                    .as_str()
-                {
-                    "optimistic_block" => theoretical::optimistic_block_theoretical(),
-                    "optimistic_witness" => theoretical::optimistic_witness_theoretical(),
-                    other => {
-                        panic!("Unknown theoretical mode: {}", other);
-                    }
+                    .expect("-t requrires a second argument");
+
+                let Some(model) = theoretical::all_models()
+                    .into_iter()
+                    .find(|m| m.name == model_name)
+                else {
+                    let mut available_model_names = theoretical::all_models()
+                        .into_iter()
+                        .map(|m| format!("'{}' - {}", m.name, m.description))
+                        .collect::<Vec<_>>();
+                    available_model_names.sort();
+                    panic!(
+                        "\nUnknown theoretical model: '{}'.\nAvailable models:\n{}\n",
+                        model_name,
+                        available_model_names.join("\n")
+                    );
                 };
+                let (spans, relations) = model.finalize();
+                let theoretical_relations_view = RelationView {
+                    name: "All theoretical relations".to_string(),
+                    is_builtin: true,
+                    enabled_relations: relations.iter().map(|r| r.id.clone()).collect(),
+                };
+                res.defined_relations.extend(relations);
+                res.relation_views.push(theoretical_relations_view);
 
                 res.load_data(spans_to_extract_request(&spans)).unwrap();
 

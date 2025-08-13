@@ -28,7 +28,7 @@ pub struct SpanRule {
 }
 
 /// A selector used to determine whether a span matches a rule.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SpanSelector {
     /// Span's name must match this condition
     pub span_name_condition: MatchCondition,
@@ -57,7 +57,7 @@ pub struct SpanDecision {
     pub group: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MatchCondition {
     pub operator: MatchOperator,
     pub value: String,

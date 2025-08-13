@@ -502,58 +502,67 @@ pub fn spans_to_extract_request(spans: &[Span]) -> Vec<ExportTraceServiceRequest
     let mut res = Vec::new();
 
     for span in spans {
-        let resource = Resource {
-            attributes: vec![opentelemetry_proto::tonic::common::v1::KeyValue {
-                key: "service.name".to_string(),
-                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                    value: Some(Value::StringValue(span.node.name.clone())),
-                }),
-            }],
-            dropped_attributes_count: 0,
-        };
-
-        assert!(span.events.is_empty());
-
-        let span = opentelemetry_proto::tonic::trace::v1::Span {
-            trace_id: span.trace_id.clone(),
-            span_id: span.span_id.clone(),
-            parent_span_id: span.parent_span_id.clone(),
-            name: span.name.clone(),
-            start_time_unix_nano: time_point_to_unix_nano(span.start_time),
-            end_time_unix_nano: time_point_to_unix_nano(span.end_time),
-            attributes: span
-                .attributes
-                .iter()
-                .map(|(k, v)| opentelemetry_proto::tonic::common::v1::KeyValue {
-                    key: k.clone(),
-                    value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
-                        value: v.clone(),
-                    }),
-                })
-                .collect(),
-            events: Vec::new(),
-            dropped_attributes_count: 0,
-            dropped_events_count: 0,
-            dropped_links_count: 0,
-            trace_state: "".to_string(),
-            flags: 0,
-            kind: 0,
-            links: Vec::new(),
-            status: None,
-        };
-
-        res.push(ResourceSpans {
-            resource: Some(resource),
-            scope_spans: vec![opentelemetry_proto::tonic::trace::v1::ScopeSpans {
-                scope: None,
-                spans: vec![span],
-                schema_url: "".to_string(),
-            }],
-            schema_url: "".to_string(),
-        });
+        spans_to_extract_request_rek(span, &mut res);
     }
 
     vec![ExportTraceServiceRequest {
         resource_spans: res,
     }]
+}
+
+fn spans_to_extract_request_rek(span: &Span, res: &mut Vec<ResourceSpans>) {
+    res.push(span_to_resource_spans(span));
+    for child in span.children.borrow().iter() {
+        spans_to_extract_request_rek(child, res);
+    }
+}
+
+fn span_to_resource_spans(span: &Span) -> ResourceSpans {
+    let resource = Resource {
+        attributes: vec![opentelemetry_proto::tonic::common::v1::KeyValue {
+            key: "service.name".to_string(),
+            value: Some(opentelemetry_proto::tonic::common::v1::AnyValue {
+                value: Some(Value::StringValue(span.node.name.clone())),
+            }),
+        }],
+        dropped_attributes_count: 0,
+    };
+
+    assert!(span.events.is_empty());
+
+    let span = opentelemetry_proto::tonic::trace::v1::Span {
+        trace_id: span.trace_id.clone(),
+        span_id: span.span_id.clone(),
+        parent_span_id: span.parent_span_id.clone(),
+        name: span.name.clone(),
+        start_time_unix_nano: time_point_to_unix_nano(span.start_time),
+        end_time_unix_nano: time_point_to_unix_nano(span.end_time),
+        attributes: span
+            .attributes
+            .iter()
+            .map(|(k, v)| opentelemetry_proto::tonic::common::v1::KeyValue {
+                key: k.clone(),
+                value: Some(opentelemetry_proto::tonic::common::v1::AnyValue { value: v.clone() }),
+            })
+            .collect(),
+        events: Vec::new(),
+        dropped_attributes_count: 0,
+        dropped_events_count: 0,
+        dropped_links_count: 0,
+        trace_state: "".to_string(),
+        flags: 0,
+        kind: 0,
+        links: Vec::new(),
+        status: None,
+    };
+
+    ResourceSpans {
+        resource: Some(resource),
+        scope_spans: vec![opentelemetry_proto::tonic::trace::v1::ScopeSpans {
+            scope: None,
+            spans: vec![span],
+            schema_url: "".to_string(),
+        }],
+        schema_url: "".to_string(),
+    }
 }

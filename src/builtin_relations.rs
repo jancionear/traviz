@@ -526,11 +526,11 @@ fn produce_chunk_to_apply_chunk_relation() -> Relation {
 
 pub fn produce_block_to_produce_next_block_relation() -> Relation {
     Relation {
-        id: make_uuid_from_seed("produce_block_on_head -> next produce_block_on_head"),
-        name: "produce_block_on_head -> next produce_block_on_head".to_string(),
+        id: make_uuid_from_seed("produce_block -> next produce_block"),
+        name: "produce_block -> next produce_block".to_string(),
         description: "".to_string(),
-        from_span_selector: SpanSelector::new_equal_name("produce_block_on_head"),
-        to_span_selector: SpanSelector::new_equal_name("produce_block_on_head"),
+        from_span_selector: SpanSelector::new_equal_name("produce_block"),
+        to_span_selector: SpanSelector::new_equal_name("produce_block"),
         attribute_relations: vec![AttributeRelation {
             from_attribute: "height".to_string(),
             to_attribute: "height".to_string(),

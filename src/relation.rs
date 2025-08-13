@@ -15,7 +15,7 @@ pub fn make_uuid_from_seed(seed: &str) -> Uuid {
     Uuid::from_bytes(uuid_bytes)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Relation {
     pub id: Uuid,
 
@@ -37,7 +37,7 @@ pub struct Relation {
     pub is_builtin: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AttributeRelation {
     pub from_attribute: String,
     pub to_attribute: String,
@@ -49,6 +49,7 @@ pub enum AttributeRelationOp {
     Equal,
     OneGreater,
     OneSmaller,
+    TwoGreater,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -126,6 +127,16 @@ impl AttributeRelation {
                     value_to_text(to_value).parse::<i64>(),
                 ) {
                     from_num.checked_sub(1) == Some(to_num)
+                } else {
+                    false
+                }
+            }
+            AttributeRelationOp::TwoGreater => {
+                if let (Ok(from_num), Ok(to_num)) = (
+                    value_to_text(from_value).parse::<i64>(),
+                    value_to_text(to_value).parse::<i64>(),
+                ) {
+                    from_num.checked_add(2) == Some(to_num)
                 } else {
                     false
                 }
