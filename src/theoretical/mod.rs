@@ -44,7 +44,7 @@ impl TheoreticalModel {
 
         for rel in &self.relations {
             let mut rel_clone = rel.clone();
-            rel_clone.id = relation.id.clone();
+            rel_clone.id = relation.id;
             if rel_clone == relation {
                 return;
             }
@@ -200,7 +200,7 @@ impl RelationBuilder {
         self
     }
 
-    #[allow(unused)]
+    #[allow(unused, clippy::wrong_self_convention)]
     pub fn from_attribute_equal(mut self, attr_name: &str, value: impl ToString) -> Self {
         self.relation.from_span_selector.attribute_conditions.push((
             attr_name.to_string(),
@@ -209,7 +209,7 @@ impl RelationBuilder {
         self
     }
 
-    #[allow(unused)]
+    #[allow(unused, clippy::wrong_self_convention)]
     pub fn to_attribute_equal(mut self, attr_name: &str, value: impl ToString) -> Self {
         self.relation.to_span_selector.attribute_conditions.push((
             attr_name.to_string(),

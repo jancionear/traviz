@@ -95,22 +95,20 @@ pub fn very_optimistic_model() -> TheoreticalModel {
                     .attribute_two_greater("height")
                     .same_node(),
             );
+        } else if optimization_produce_optimistic_block_after_preprocess {
+            // Needs previous block to be postprocessed
+            model.add_relation(
+                RelationBuilder::new("preprocess_block", "produce_optimistic_block")
+                    .attribute_one_greater("height")
+                    .same_node(),
+            );
         } else {
-            if optimization_produce_optimistic_block_after_preprocess {
-                // Needs previous block to be postprocessed
-                model.add_relation(
-                    RelationBuilder::new("preprocess_block", "produce_optimistic_block")
-                        .attribute_one_greater("height")
-                        .same_node(),
-                );
-            } else {
-                // Needs previous block to be preprocessed
-                model.add_relation(
-                    RelationBuilder::new("postprocess_block", "produce_optimistic_block")
-                        .attribute_one_greater("height")
-                        .same_node(),
-                );
-            }
+            // Needs previous block to be preprocessed
+            model.add_relation(
+                RelationBuilder::new("postprocess_block", "produce_optimistic_block")
+                    .attribute_one_greater("height")
+                    .same_node(),
+            );
         }
 
         // process_optimistic_block - Receive optimistic block and start applying optimistic chunks

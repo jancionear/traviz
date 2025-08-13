@@ -282,7 +282,7 @@ impl Default for App {
                 let theoretical_relations_view = RelationView {
                     name: "All theoretical relations".to_string(),
                     is_builtin: true,
-                    enabled_relations: relations.iter().map(|r| r.id.clone()).collect(),
+                    enabled_relations: relations.iter().map(|r| r.id).collect(),
                 };
                 res.defined_relations.extend(relations);
                 res.relation_views.push(theoretical_relations_view);
