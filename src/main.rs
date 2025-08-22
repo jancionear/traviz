@@ -526,9 +526,24 @@ impl App {
     }
 
     fn load_file(&mut self, path: &PathBuf) -> Result<()> {
-        // Read json file
+        // Read json file, supporting gzip if needed
         let mut file_bytes = Vec::new();
-        std::fs::File::open(path)?.read_to_end(&mut file_bytes)?;
+        let file = std::fs::File::open(path)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        if ext == "gz" || ext == "gzip" {
+            // Gzip file
+            let mut decoder = {
+                #[allow(unused_imports)]
+                use flate2::read::GzDecoder;
+                GzDecoder::new(file)
+            };
+            decoder.read_to_end(&mut file_bytes)?;
+        } else {
+            // Regular file
+            use std::io::Read;
+            let mut reader = file;
+            reader.read_to_end(&mut file_bytes)?;
+        }
 
         self.raw_data = parse_trace_file(&file_bytes)?;
 
