@@ -12,6 +12,7 @@ use eframe::egui::{
     Response, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, Widget,
 };
 use eframe::epaint::PathShape;
+use flate2::read::GzDecoder;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 
 #[cfg(feature = "profiling")]
@@ -529,18 +530,17 @@ impl App {
         // Read json file, supporting gzip if needed
         let mut file_bytes = Vec::new();
         let file = std::fs::File::open(path)?;
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
         if ext == "gz" || ext == "gzip" {
             // Gzip file
-            let mut decoder = {
-                #[allow(unused_imports)]
-                use flate2::read::GzDecoder;
-                GzDecoder::new(file)
-            };
+            let mut decoder = { GzDecoder::new(file) };
             decoder.read_to_end(&mut file_bytes)?;
         } else {
             // Regular file
-            use std::io::Read;
             let mut reader = file;
             reader.read_to_end(&mut file_bytes)?;
         }
