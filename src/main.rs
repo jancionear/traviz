@@ -537,7 +537,7 @@ impl App {
             .to_ascii_lowercase();
         if ext == "gz" || ext == "gzip" {
             // Gzip file
-            let mut decoder = { GzDecoder::new(file) };
+            let mut decoder = GzDecoder::new(file);
             decoder.read_to_end(&mut file_bytes)?;
         } else {
             // Regular file
