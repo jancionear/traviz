@@ -26,7 +26,7 @@ fn test_attribute_filter_all_types() {
             create_test_span_with_attributes("test_span", node.clone(), 0.0, 1.0, &[1], attrs);
 
         // Set up analyzer
-        analyzer.open(&[span.clone()]);
+        analyzer.open(std::slice::from_ref(&span));
         analyzer.set_attribute_filter(filter_string.to_string());
 
         // Test the filtering
