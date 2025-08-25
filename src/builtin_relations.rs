@@ -114,6 +114,26 @@ pub fn preprocess_block_to_apply_new_chunk_relation() -> Relation {
     }
 }
 
+pub fn preprocess_block_to_next_preprocess_relation() -> Relation {
+    Relation {
+        id: make_uuid_from_seed("preprocess_block -> next preprocess_block"),
+        name: "preprocess_block -> preprocess_block".to_string(),
+        description: "".to_string(),
+        from_span_selector: SpanSelector::new_equal_name("preprocess_block"),
+        to_span_selector: SpanSelector::new_equal_name("preprocess_block"),
+        attribute_relations: vec![AttributeRelation {
+            from_attribute: "height".to_string(),
+            to_attribute: "height".to_string(),
+            relation: AttributeRelationOp::OneGreater,
+        }],
+        max_time_diff: Some(10.0), // 5 seconds
+        nodes_config: RelationNodesConfig::SameNode,
+        match_type: MatchType::MatchAll,
+        min_time_diff: 0.0,
+        is_builtin: true,
+    }
+}
+
 pub fn apply_new_chunk_normal_to_postprocess_ready_block_relation() -> Relation {
     Relation {
         id: make_uuid_from_seed("apply_new_chunk(normal) -> postprocess_ready_block"),
@@ -551,6 +571,7 @@ pub fn builtin_relations() -> Vec<Relation> {
         postprocess_ready_block_to_produce_block_on_head_relation(),
         postprocess_ready_block_to_next_preprocess_block_relation(),
         preprocess_block_to_apply_new_chunk_relation(),
+        preprocess_block_to_next_preprocess_relation(),
         apply_new_chunk_normal_to_postprocess_ready_block_relation(),
         apply_new_chunk_optimistic_to_postprocess_ready_block_relation(),
         postprocess_ready_block_to_produce_chunk_relation(),
