@@ -1545,20 +1545,23 @@ impl App {
     }
 
     fn grouped_span_segment_to_rect(
-        segment_start: f64,
-        segment_end: f64,
+        segment_start: TimePoint,
+        segment_end: TimePoint,
         span: &Span,
         start_x: f32,
-        end_x: f32,
         start_height: f32,
         span_height: f32,
     ) -> Rect {
         let time_range = span.end_time - span.start_time;
-        let screen_width = end_x - start_x;
-        let segment_start_x =
-            start_x + ((segment_start - span.start_time) / time_range * screen_width as f64) as f32;
-        let segment_end_x =
-            start_x + ((segment_end - span.start_time) / time_range * screen_width as f64) as f32;
+        let time_range_width = span.time_display_length.get();
+        // Map using time width, not full display width
+        let segment_start_x = start_x
+            + ((segment_start - span.start_time) / time_range * time_range_width as f64) as f32;
+        let segment_end_x = start_x
+            + ((segment_end - span.start_time) / time_range * time_range_width as f64) as f32;
+
+        // Bounds for time-accurate clamping
+        let time_end_x = start_x + time_range_width;
 
         // Minimum width for grouped span segments
         const MIN_SEGMENT_WIDTH: f32 = 4.0;
@@ -1569,12 +1572,15 @@ impl App {
             let center_x = (segment_start_x + segment_end_x) / 2.0;
             let half_min_width = MIN_SEGMENT_WIDTH / 2.0;
             let new_start_x = (center_x - half_min_width).max(start_x); // Don't go before span start
-            let new_end_x = (center_x + half_min_width).min(end_x); // Don't go after span end
+            let new_end_x = (center_x + half_min_width).min(time_end_x); // Don't go after time end
 
             // If centering would exceed bounds, adjust to fit within span
             if new_end_x - new_start_x < MIN_SEGMENT_WIDTH {
                 if new_start_x == start_x {
-                    (new_start_x, (new_start_x + MIN_SEGMENT_WIDTH).min(end_x))
+                    (
+                        new_start_x,
+                        (new_start_x + MIN_SEGMENT_WIDTH).min(time_end_x),
+                    )
                 } else {
                     ((new_end_x - MIN_SEGMENT_WIDTH).max(start_x), new_end_x)
                 }
@@ -1641,7 +1647,6 @@ impl App {
                     *segment_end,
                     span,
                     start_x,
-                    end_x,
                     start_height,
                     span_height,
                 );
