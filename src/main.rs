@@ -1595,6 +1595,8 @@ impl App {
         let is_highlighted = highlighted_span_ids.contains(&span.span_id);
         let start_x = span.display_start.get();
         let end_x = start_x + span.display_length.get().max(0.0);
+        // Time-accurate end X for mapping active segments (stripes) within true time range
+        let time_end_x = start_x + span.time_display_length.get().max(0.0);
 
         let name = if end_x - start_x > self.layout.span_name_threshold {
             span.name.as_str()
@@ -1626,7 +1628,7 @@ impl App {
                     *segment_end,
                     span,
                     start_x,
-                    end_x,
+                    time_end_x,
                     start_height,
                     span_height,
                 );
