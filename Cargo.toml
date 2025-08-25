@@ -8,6 +8,7 @@ anyhow = "1.0.95"
 chrono = "0.4.39"
 directories = "6.0.0"
 eframe = { version = "0.31.0", features = [ "default" ] }
+flate2 = "1.1.2"
 hex = "0.4.3"
 opentelemetry-proto = { version = "0.5.0", features = ["gen-tonic", "trace", "with-serde"] }
 rand = "0.9.1"
