@@ -28,7 +28,7 @@ pub struct SpanRule {
 }
 
 /// A selector used to determine whether a span matches a rule.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SpanSelector {
     /// Span's name must match this condition
     pub span_name_condition: MatchCondition,
@@ -57,7 +57,7 @@ pub struct SpanDecision {
     pub group: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MatchCondition {
     pub operator: MatchOperator,
     pub value: String,
@@ -702,6 +702,63 @@ fn critical_path_structured_mode() -> StructuredMode {
                     span_name_condition: MatchCondition {
                         operator: MatchOperator::EqualTo,
                         value: "decode_witness_parts".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: true,
+                },
+            },
+            SpanRule {
+                name: "produce_chunks".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "produce_chunks".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "persist_and_distribute_encoded_chunk".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "persist_and_distribute_encoded_chunk".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::from("persist_and_dist"),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "chunk_completed".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "chunk_completed".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
                     attribute_conditions: vec![],
