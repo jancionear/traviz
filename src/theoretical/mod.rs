@@ -257,8 +257,6 @@ fn set_span_times_from_relations(mut spans: Vec<Span>, mut relations: Vec<Relati
     let mut outgoing_relations: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
     for relation in active_relations.iter() {
-        println!("Processing relation: {:?}", relation);
-
         let Some(from_index) = span_id_to_index.get(&relation.from_span.upgrade().unwrap().span_id)
         else {
             continue; // child spans are not in span_id_to_index, ignore them
