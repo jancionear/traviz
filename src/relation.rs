@@ -313,7 +313,7 @@ pub fn builtin_relation_views() -> Vec<RelationView> {
         },
         RelationView {
             name: "Block time".to_string(),
-            enabled_relations: vec![crate::builtin_relations::preprocess_block_to_next_preprocess_relation().id],
+            enabled_relations: vec![crate::builtin_relations::start_process_block_async_to_next_start_process_block_async_relation().id],
             is_builtin: true,
         },
         RelationView {

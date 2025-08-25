@@ -292,7 +292,7 @@ impl Default for App {
                 res.current_display_mode_index = res
                     .display_modes
                     .iter()
-                    .position(|m| m.name == "Block Production")
+                    .position(|m| m.name == "Critical Path")
                     .unwrap();
                 res.current_relation_view_index = res
                     .relation_views

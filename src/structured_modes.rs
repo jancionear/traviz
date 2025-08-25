@@ -564,6 +564,25 @@ fn critical_path_structured_mode() -> StructuredMode {
                 },
             },
             SpanRule {
+                name: "apply_new_chunk".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "apply_new_chunk".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: Vec::new(),
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
                 name: "send_chunk_state_witness".to_string(),
                 selector: SpanSelector {
                     span_name_condition: MatchCondition {
@@ -747,7 +766,7 @@ fn critical_path_structured_mode() -> StructuredMode {
                 decision: SpanDecision {
                     visible: true,
                     display_length: DisplayLength::Text,
-                    replace_name: String::from("persist_and_dist"),
+                    replace_name: String::new(),
                     add_height_to_name: true,
                     add_shard_id_to_name: true,
                     group: false,
@@ -759,6 +778,82 @@ fn critical_path_structured_mode() -> StructuredMode {
                     span_name_condition: MatchCondition {
                         operator: MatchOperator::EqualTo,
                         value: "chunk_completed".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: true,
+                },
+            },
+            SpanRule {
+                name: "process_optimistic_block".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "process_optimistic_block".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "produce_optimistic_block_on_head".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "produce_optimistic_block_on_head".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "receive_witness".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "receive_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: true,
+                },
+            },
+            SpanRule {
+                name: "send_chunk_endorsement".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "send_chunk_endorsement".to_string(),
                     },
                     node_name_condition: MatchCondition::any(),
                     attribute_conditions: vec![],
