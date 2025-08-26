@@ -12,10 +12,7 @@ pub fn realistic_model() -> TheoreticalModel {
         .map(|i| format!("node{}", i))
         .collect::<Vec<_>>();
 
-    let mut model = TheoreticalModel::new(
-        "realistic",
-        "Matches current 20 shard/node forknet benchmark",
-    );
+    let mut model = TheoreticalModel::new("realistic", "Realistic + optimistic witness");
     let mut rng = ChaCha20Rng::from_seed([0; 32]);
     let enable_randomness = true;
 
@@ -134,19 +131,6 @@ pub fn realistic_model() -> TheoreticalModel {
             model.add_relation(
                 RelationBuilder::new("postprocess_ready_block", "produce_chunk_internal")
                     .attribute_one_greater("height")
-                    .same_node(),
-            );
-
-            // send_chunk_state_witness
-            model.add_span(
-                SpanBuilder::new("send_chunk_state_witness", node, Duration::from_millis(30))
-                    .with_attribute("height", height)
-                    .with_attribute("shard_id", shard_id),
-            );
-            model.add_relation(
-                RelationBuilder::new("produce_chunk_internal", "send_chunk_state_witness")
-                    .attribute_equal("height")
-                    .attribute_equal("shard_id")
                     .same_node(),
             );
 
@@ -271,10 +255,23 @@ pub fn realistic_model() -> TheoreticalModel {
                     .same_node(),
             );
 
+            // send_optimistic_witness
+            model.add_span(
+                SpanBuilder::new("send_optimistic_witness", node, Duration::from_millis(30))
+                    .with_attribute("height", height)
+                    .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("apply_new_chunk", "send_optimistic_witness")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+
             // Chunk validation
             for validated_shard_id in (0..num_nodes).cycle().skip(6 * shard_id).take(6) {
                 // receive_witness
-                let receive_witness_time = if is_slow { 350 } else { 220 };
+                let receive_witness_time = if is_slow { 350 } else { 220 } - 50;
                 model.add_span(
                     SpanBuilder::new(
                         "receive_witness",
@@ -285,31 +282,38 @@ pub fn realistic_model() -> TheoreticalModel {
                     .with_attribute("shard_id", validated_shard_id),
                 );
                 model.add_relation(
-                    RelationBuilder::new("send_chunk_state_witness", "receive_witness")
+                    RelationBuilder::new("send_optimistic_witness", "receive_witness")
                         .attribute_equal("height")
                         .attribute_equal("shard_id"),
                 );
 
-                // validate_chunk_state_witness
-                let validate_chunk_state_witness_time = if is_slow { 800 } else { 600 };
+                // apply_optimistic_witness
+                let apply_optimistic_witness_time = if is_slow { 800 } else { 600 };
                 model.add_span(
                     SpanBuilder::new(
-                        "validate_chunk_state_witness",
+                        "apply_optimistic_witness",
                         node,
-                        Duration::from_millis(validate_chunk_state_witness_time),
+                        Duration::from_millis(apply_optimistic_witness_time),
                     )
                     .with_attribute("height", height)
                     .with_attribute("shard_id", validated_shard_id),
                 );
                 model.add_relation(
-                    RelationBuilder::new("receive_witness", "validate_chunk_state_witness")
+                    RelationBuilder::new("receive_witness", "apply_optimistic_witness")
                         .attribute_equal("height")
                         .attribute_equal("shard_id")
                         .same_node(),
                 );
+
+                // validate_new_chunk
+                model.add_span(
+                    SpanBuilder::new("validate_new_chunk", node, Duration::from_millis(50))
+                        .with_attribute("height", height)
+                        .with_attribute("shard_id", validated_shard_id),
+                );
                 model.add_relation(
-                    RelationBuilder::new("postprocess_ready_block", "validate_chunk_state_witness")
-                        .attribute_one_greater("height")
+                    RelationBuilder::new("chunk_completed", "validate_new_chunk")
+                        .attribute_equal("height")
                         .attribute_equal("shard_id")
                         .same_node(),
                 );
@@ -321,7 +325,13 @@ pub fn realistic_model() -> TheoreticalModel {
                         .with_attribute("shard_id", validated_shard_id),
                 );
                 model.add_relation(
-                    RelationBuilder::new("validate_chunk_state_witness", "send_chunk_endorsement")
+                    RelationBuilder::new("apply_optimistic_witness", "send_chunk_endorsement")
+                        .attribute_one_greater("height")
+                        .attribute_equal("shard_id")
+                        .same_node(),
+                );
+                model.add_relation(
+                    RelationBuilder::new("validate_new_chunk", "send_chunk_endorsement")
                         .attribute_equal("height")
                         .attribute_equal("shard_id")
                         .same_node(),
