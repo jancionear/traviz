@@ -122,11 +122,30 @@ pub fn realistic_model() -> TheoreticalModel {
                     .same_node(),
             );
 
-            // produce_chunk
+            // prepare transactions for height H after applying chunk at height H-2
             model.add_span(
-                SpanBuilder::new("produce_chunk_internal", node, Duration::from_millis(170))
+                SpanBuilder::new("prepare_transactions", node, Duration::from_millis(160))
                     .with_attribute("height", height)
                     .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("apply_new_chunk", "prepare_transactions")
+                    .attribute_two_greater("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+
+            // produce_chunk
+            model.add_span(
+                SpanBuilder::new("produce_chunk_internal", node, Duration::from_millis(10))
+                    .with_attribute("height", height)
+                    .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("prepare_transactions", "produce_chunk_internal")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
             );
             model.add_relation(
                 RelationBuilder::new("postprocess_ready_block", "produce_chunk_internal")

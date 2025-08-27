@@ -924,6 +924,25 @@ fn critical_path_structured_mode() -> StructuredMode {
                     group: true,
                 },
             },
+            SpanRule {
+                name: "prepare_transactions".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "prepare_transactions".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: String::new(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
         ],
         is_builtin: true,
     }
