@@ -50,6 +50,13 @@ pub fn realistic_model() -> TheoreticalModel {
                 "start_process_block_async",
                 "produce_optimistic_block_on_head",
             )
+            .attribute_two_greater("height"),
+        );
+        model.add_relation(
+            RelationBuilder::new(
+                "produce_optimistic_block_on_head",
+                "produce_optimistic_block_on_head",
+            )
             .attribute_one_greater("height"),
         );
 
