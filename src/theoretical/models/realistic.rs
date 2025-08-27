@@ -303,7 +303,7 @@ pub fn realistic_model() -> TheoreticalModel {
             );
             model.add_relation(
                 RelationBuilder::new("start_process_block_async", "process_optimistic_block")
-                    .attribute_one_greater("height")
+                    .attribute_two_greater("height")
                     .same_node(),
             );
             model.add_relation(
@@ -331,6 +331,11 @@ pub fn realistic_model() -> TheoreticalModel {
                 .with_attribute("shard_id", shard_id),
             );
             model.add_relation(
+                RelationBuilder::new("apply_new_chunk", "apply_new_chunk")
+                    .attribute_one_greater("height")
+                    .same_node(),
+            );
+            model.add_relation(
                 RelationBuilder::new("process_optimistic_block", "apply_new_chunk")
                     .attribute_equal("height")
                     .same_node(),
@@ -348,7 +353,7 @@ pub fn realistic_model() -> TheoreticalModel {
             );
             model.add_relation(
                 RelationBuilder::new("start_process_block_async", "apply_new_chunk")
-                    .attribute_one_greater("height")
+                    .attribute_two_greater("height")
                     .same_node(),
             );
 
