@@ -47,23 +47,10 @@ pub fn realistic_model() -> TheoreticalModel {
         );
         model.add_relation(
             RelationBuilder::new(
-                "postprocess_ready_block",
+                "start_process_block_async",
                 "produce_optimistic_block_on_head",
             )
             .attribute_one_greater("height"),
-        );
-        model.add_relation(
-            RelationBuilder::new("produce_chunk_internal", "produce_optimistic_block_on_head")
-                .attribute_equal("height")
-                .same_node(),
-        );
-        model.add_relation(
-            RelationBuilder::new(
-                "persist_and_distribute_encoded_chunk",
-                "produce_optimistic_block_on_head",
-            )
-            .attribute_equal("height")
-            .same_node(),
         );
 
         // (tracked_shard, node) node_i tracks shard i
