@@ -302,7 +302,7 @@ pub fn realistic_model() -> TheoreticalModel {
                     .same_node(),
             );
             model.add_relation(
-                RelationBuilder::new("postprocess_ready_block", "process_optimistic_block")
+                RelationBuilder::new("start_process_block_async", "process_optimistic_block")
                     .attribute_one_greater("height")
                     .same_node(),
             );
@@ -347,7 +347,7 @@ pub fn realistic_model() -> TheoreticalModel {
                     .same_node(),
             );
             model.add_relation(
-                RelationBuilder::new("postprocess_ready_block", "apply_new_chunk")
+                RelationBuilder::new("start_process_block_async", "apply_new_chunk")
                     .attribute_one_greater("height")
                     .same_node(),
             );
