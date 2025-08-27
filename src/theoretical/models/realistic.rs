@@ -12,7 +12,7 @@ pub fn realistic_model() -> TheoreticalModel {
         .map(|i| format!("node{}", i))
         .collect::<Vec<_>>();
 
-    let mut model = TheoreticalModel::new("realistic", "Realistic + optimistic witness");
+    let mut model = TheoreticalModel::new("realistic", "Realistic + optimistic witness and chunk");
     let mut rng = ChaCha20Rng::from_seed([0; 32]);
     let enable_randomness = true;
 
@@ -135,6 +135,69 @@ pub fn realistic_model() -> TheoreticalModel {
                     .same_node(),
             );
 
+            // send_optimistic_chunk_txs
+            model.add_span(
+                SpanBuilder::new("send_optimistic_chunk_txs", node, Duration::from_millis(15))
+                    .with_attribute("height", height)
+                    .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("prepare_transactions", "send_optimistic_chunk_txs")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+
+            // receive_optimistic_chunk_txs
+            // there's only one chunk producer per shard, so its sending them to itself x.x
+            model.add_span(
+                SpanBuilder::new(
+                    "receive_optimistic_chunk_txs",
+                    node,
+                    Duration::from_millis(60),
+                )
+                .with_attribute("height", height)
+                .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("send_optimistic_chunk_txs", "receive_optimistic_chunk_txs")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id"),
+            );
+
+            // produce_optimistic_chunk
+            // optimistic chunk contains the chunk header and previous outgoing receipts
+            model.add_span(
+                SpanBuilder::new("produce_optimistic_chunk", node, Duration::from_millis(10))
+                    .with_attribute("height", height)
+                    .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("prepare_transactions", "produce_optimistic_chunk")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+            model.add_relation(
+                RelationBuilder::new("apply_new_chunk", "produce_optimistic_chunk")
+                    .attribute_one_greater("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+
+            // send_optimistic_chunk
+            model.add_span(
+                SpanBuilder::new("send_optimistic_chunk", node, Duration::from_millis(5))
+                    .with_attribute("height", height)
+                    .with_attribute("shard_id", shard_id),
+            );
+            model.add_relation(
+                RelationBuilder::new("produce_optimistic_chunk", "send_optimistic_chunk")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+
             // produce_chunk
             model.add_span(
                 SpanBuilder::new("produce_chunk_internal", node, Duration::from_millis(10))
@@ -183,9 +246,21 @@ pub fn realistic_model() -> TheoreticalModel {
             );
 
             for shard_id in 0..num_nodes {
+                // receive_optimistic_chunk
+                model.add_span(
+                    SpanBuilder::new("receive_optimistic_chunk", node, Duration::from_millis(20))
+                        .with_attribute("height", height)
+                        .with_attribute("shard_id", shard_id),
+                );
+                model.add_relation(
+                    RelationBuilder::new("send_optimistic_chunk", "receive_optimistic_chunk")
+                        .attribute_equal("height")
+                        .attribute_equal("shard_id"),
+                );
+
                 // receive_chunk
                 model.add_span(
-                    SpanBuilder::new("receive_chunk", node, Duration::from_millis(80))
+                    SpanBuilder::new("receive_chunk", node, Duration::from_millis(10))
                         .with_attribute("height", height)
                         .with_attribute("shard_id", shard_id),
                 );
@@ -252,7 +327,7 @@ pub fn realistic_model() -> TheoreticalModel {
                 .attribute_equal("height"),
             );
             model.add_relation(
-                RelationBuilder::new("chunk_completed", "process_optimistic_block")
+                RelationBuilder::new("receive_optimistic_chunk", "process_optimistic_block")
                     .attribute_equal("height")
                     .same_node(),
             );
@@ -271,6 +346,22 @@ pub fn realistic_model() -> TheoreticalModel {
             model.add_relation(
                 RelationBuilder::new("process_optimistic_block", "apply_new_chunk")
                     .attribute_equal("height")
+                    .same_node(),
+            );
+            model.add_relation(
+                RelationBuilder::new("receive_optimistic_chunk_txs", "apply_new_chunk")
+                    .attribute_equal("height")
+                    .attribute_equal("shard_id")
+                    .same_node(),
+            );
+            model.add_relation(
+                RelationBuilder::new("receive_optimistic_chunk", "apply_new_chunk")
+                    .attribute_equal("height")
+                    .same_node(),
+            );
+            model.add_relation(
+                RelationBuilder::new("postprocess_ready_block", "apply_new_chunk")
+                    .attribute_one_greater("height")
                     .same_node(),
             );
 
