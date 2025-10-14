@@ -164,6 +164,10 @@ struct App {
     relation_views: Vec<RelationView>,
     current_relation_view_index: usize,
     active_relations: Vec<RelationInstance>,
+
+    // If `Some`, on the next render the App will set window name to this name and reset this field
+    // back to `None`.
+    set_window_name: Option<String>,
 }
 
 struct Layout {
@@ -248,6 +252,7 @@ impl Default for App {
             relation_views: builtin_relation_views(),
             current_relation_view_index: 0,
             active_relations: vec![],
+            set_window_name: None,
         };
         res.timeline.init(1.0, 3.0);
         res.set_timeline_end_bars_to_selected();
@@ -376,6 +381,10 @@ impl eframe::App for App {
                 #[cfg(feature = "profiling")]
                 profiling::GLOBAL_PROFILER.increment_frame_count();
             });
+
+        if let Some(new_window_name) = self.set_window_name.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(new_window_name));
+        }
     }
 }
 
@@ -582,6 +591,8 @@ impl App {
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
         self.set_timeline_end_bars_to_selected();
+
+        self.set_window_name = Some(format!("traviz - {}", path.to_string_lossy()));
 
         Ok(())
     }
