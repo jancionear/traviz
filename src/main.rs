@@ -600,7 +600,10 @@ impl App {
             reader.read_to_end(&mut file_bytes)?;
         }
 
-        self.load_data(parse_trace_file(&file_bytes)?)
+        self.load_data(parse_trace_file(&file_bytes)?)?;
+
+        self.set_window_name = Some(format!("traviz - {}", path.to_string_lossy()));
+        Ok(())
     }
 
     fn load_data(&mut self, data: Vec<ExportTraceServiceRequest>) -> Result<()> {
@@ -641,8 +644,6 @@ impl App {
         let (min_time, max_time) = get_min_max_time(&self.spans_to_display).unwrap();
         self.timeline.init(min_time, max_time);
         self.set_timeline_end_bars_to_selected();
-
-        self.set_window_name = Some(format!("traviz - {}", path.to_string_lossy()));
 
         Ok(())
     }
