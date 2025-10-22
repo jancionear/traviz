@@ -15,7 +15,7 @@ pub fn make_uuid_from_seed(seed: &str) -> Uuid {
     Uuid::from_bytes(uuid_bytes)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Relation {
     pub id: Uuid,
 
@@ -37,7 +37,7 @@ pub struct Relation {
     pub is_builtin: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AttributeRelation {
     pub from_attribute: String,
     pub to_attribute: String,
@@ -48,6 +48,8 @@ pub struct AttributeRelation {
 pub enum AttributeRelationOp {
     Equal,
     OneGreater,
+    OneSmaller,
+    TwoGreater,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -60,7 +62,7 @@ pub enum RelationNodesConfig {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MatchType {
     MatchAll,
-    MatchClosest,
+    MatchClosest, // Don't use this one in theoretical mode
 }
 
 impl Relation {
@@ -115,6 +117,26 @@ impl AttributeRelation {
                     value_to_text(to_value).parse::<i64>(),
                 ) {
                     from_num.checked_add(1) == Some(to_num)
+                } else {
+                    false
+                }
+            }
+            AttributeRelationOp::OneSmaller => {
+                if let (Ok(from_num), Ok(to_num)) = (
+                    value_to_text(from_value).parse::<i64>(),
+                    value_to_text(to_value).parse::<i64>(),
+                ) {
+                    from_num.checked_sub(1) == Some(to_num)
+                } else {
+                    false
+                }
+            }
+            AttributeRelationOp::TwoGreater => {
+                if let (Ok(from_num), Ok(to_num)) = (
+                    value_to_text(from_value).parse::<i64>(),
+                    value_to_text(to_value).parse::<i64>(),
+                ) {
+                    from_num.checked_add(2) == Some(to_num)
                 } else {
                     false
                 }
@@ -290,6 +312,11 @@ pub fn builtin_relation_views() -> Vec<RelationView> {
             is_builtin: true,
         },
         RelationView {
+            name: "Block time".to_string(),
+            enabled_relations: vec![crate::builtin_relations::start_process_block_async_to_next_start_process_block_async_relation().id],
+            is_builtin: true,
+        },
+        RelationView {
             name: "Pre-Post Process Block".to_string(),
             enabled_relations: vec![
                 crate::builtin_relations::preprocess_block_to_postprocess_ready_block_relation().id,
@@ -334,5 +361,10 @@ pub fn builtin_relation_views() -> Vec<RelationView> {
                 .collect(),
             is_builtin: true,
         },
+        RelationView {
+            name: "Block time".to_string(),
+            enabled_relations: vec![builtin_relations::produce_block_to_produce_next_block_relation().id],
+            is_builtin: true,
+        }
     ]
 }

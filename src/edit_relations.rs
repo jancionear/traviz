@@ -271,6 +271,8 @@ impl EditRelations {
                     .selected_text(match attr_condition.relation {
                         AttributeRelationOp::Equal => "Equal",
                         AttributeRelationOp::OneGreater => "One greater",
+                        AttributeRelationOp::OneSmaller => "One smaller",
+                        AttributeRelationOp::TwoGreater => "Two greater",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
@@ -282,6 +284,16 @@ impl EditRelations {
                             &mut attr_condition.relation,
                             AttributeRelationOp::OneGreater,
                             "One greater",
+                        );
+                        ui.selectable_value(
+                            &mut attr_condition.relation,
+                            AttributeRelationOp::OneSmaller,
+                            "One smaller",
+                        );
+                        ui.selectable_value(
+                            &mut attr_condition.relation,
+                            AttributeRelationOp::TwoGreater,
+                            "Two greater",
                         );
                     });
                 if ui.button("Remove").clicked() {

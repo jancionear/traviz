@@ -15,11 +15,12 @@ use eframe::epaint::PathShape;
 use flate2::read::GzDecoder;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 
+use traviz::modes::spans_to_extract_request;
 #[cfg(feature = "profiling")]
 use traviz::profiling;
 use traviz::{
     analyze_dependency, analyze_span, builtin_relations, colors, edit_modes, edit_relations, modes,
-    node_filter, persistent, relation, structured_modes, task_timer, types,
+    node_filter, persistent, relation, structured_modes, task_timer, theoretical, types,
 };
 
 use analyze_dependency::{AnalyzeDependencyModal, DependencyLink};
@@ -262,11 +263,56 @@ impl Default for App {
 
         // If a file path is provided as the first argument, try to load it.
         if let Some(first_arg) = std::env::args().nth(1) {
-            println!("Trying to open file: {first_arg}");
-            if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
-                println!("Error loading file: {err}");
+            if first_arg == "-t" {
+                let model_name = std::env::args()
+                    .nth(2)
+                    .expect("-t requrires a second argument");
+
+                let Some(model) = theoretical::all_models()
+                    .into_iter()
+                    .find(|m| m.name == model_name)
+                else {
+                    let mut available_model_names = theoretical::all_models()
+                        .into_iter()
+                        .map(|m| format!("'{}' - {}", m.name, m.description))
+                        .collect::<Vec<_>>();
+                    available_model_names.sort();
+                    panic!(
+                        "\nUnknown theoretical model: '{}'.\nAvailable models:\n{}\n",
+                        model_name,
+                        available_model_names.join("\n")
+                    );
+                };
+                let (spans, relations) = model.finalize();
+                let theoretical_relations_view = RelationView {
+                    name: "All theoretical relations".to_string(),
+                    is_builtin: true,
+                    enabled_relations: relations.iter().map(|r| r.id).collect(),
+                };
+                res.defined_relations.extend(relations);
+                res.relation_views.push(theoretical_relations_view);
+
+                res.load_data(spans_to_extract_request(&spans)).unwrap();
+
+                res.current_display_mode_index = res
+                    .display_modes
+                    .iter()
+                    .position(|m| m.name == "Critical Path")
+                    .unwrap();
+                res.current_relation_view_index = res
+                    .relation_views
+                    .iter()
+                    .position(|v| v.name == "Block time")
+                    .unwrap();
+                res.apply_current_mode().unwrap();
+                res.apply_current_relations_view();
             } else {
-                println!("File loaded successfully.");
+                println!("Trying to open file: {}", first_arg);
+                if let Err(err) = res.load_file(&PathBuf::from(first_arg)) {
+                    println!("Error loading file: {}", err);
+                } else {
+                    println!("File loaded successfully.");
+                }
             }
         }
 
@@ -554,7 +600,11 @@ impl App {
             reader.read_to_end(&mut file_bytes)?;
         }
 
-        self.raw_data = parse_trace_file(&file_bytes)?;
+        self.load_data(parse_trace_file(&file_bytes)?)
+    }
+
+    fn load_data(&mut self, data: Vec<ExportTraceServiceRequest>) -> Result<()> {
+        self.raw_data = data;
 
         // Clear old data before loading new traces
         self.all_spans_for_analysis.clear();
