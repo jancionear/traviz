@@ -31,6 +31,8 @@ pub const DARK_YELLOW: Color32 = Color32::from_rgb(242, 176, 34);
 pub const MILD_RED: Color32 = Color32::from_rgb(220, 50, 50);
 pub const INTENSE_RED: Color32 = Color32::from_rgb(255, 51, 0);
 pub const INTENSE_GREEN: Color32 = Color32::from_rgb(50, 200, 50);
+pub const VERY_LIGHT_ORANGE: Color32 = Color32::from_rgb(224, 212, 199);
+pub const DARK_ORANGE: Color32 = Color32::from_rgb(227, 125, 23);
 
 pub fn transparent_yellow() -> Color32 {
     Color32::from_rgba_unmultiplied(242, 176, 34, 1)

@@ -1446,7 +1446,11 @@ impl App {
                 (colors::INTENSE_BLUE, colors::VERY_LIGHT_BLUE)
             } else {
                 // Use yellow/gold colors for normal spans
-                (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
+                if span.is_even_height() {
+                    (colors::DARK_ORANGE, colors::VERY_LIGHT_ORANGE)
+                } else {
+                    (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
+                }
             };
 
             let time_rect = Rect::from_min_max(
@@ -1645,7 +1649,11 @@ impl App {
         let (active_color, gap_color) = if is_highlighted {
             (colors::INTENSE_BLUE, colors::VERY_LIGHT_BLUE)
         } else {
-            (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
+            if span.is_even_height() {
+                (colors::DARK_ORANGE, colors::VERY_LIGHT_ORANGE)
+            } else {
+                (colors::DARK_YELLOW, colors::VERY_LIGHT_YELLOW)
+            }
         };
 
         // Draw the full span range with gap color

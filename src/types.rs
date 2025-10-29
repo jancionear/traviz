@@ -82,6 +82,22 @@ impl Span {
         // TODO - should this be a field or an attribute?
         &self.original_name
     }
+
+    pub fn height(&self) -> Option<u64> {
+        let Some(height_val) = self
+            .attributes
+            .get("height")
+            .or_else(|| self.attributes.get("block_height"))
+        else {
+            return None;
+        };
+
+        value_to_text(height_val).parse::<u64>().ok()
+    }
+
+    pub fn is_even_height(&self) -> bool {
+        self.height().map(|h| h % 2 == 0).unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone)]
