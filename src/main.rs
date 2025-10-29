@@ -210,7 +210,7 @@ impl Default for App {
         // Set "Critical Path" as the default display mode
         let selected_display_mode = display_modes
             .iter()
-            .position(|dm| dm.name == "Critical Path")
+            .position(|dm| dm.name == "New critical path")
             .unwrap_or(0);
 
         let mut res = Self {

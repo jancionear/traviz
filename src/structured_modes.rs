@@ -499,6 +499,142 @@ fn min_critical_path_structured_mode() -> StructuredMode {
     }
 }
 
+fn new_critical_path_structured_mode() -> StructuredMode {
+    StructuredMode {
+        name: "New critical path".to_string(),
+        span_rules: vec![
+            show_span("receive_optimistic_block"),
+            show_span("produce_optimistic_block_on_head"),
+            show_span("preprocess_block"),
+            show_span("postprocess_ready_block"),
+            show_span("produce_chunks"),
+            show_span_grouped("chunk_completed"),
+            SpanRule {
+                name: "produce_block".to_string(),
+                selector: SpanSelector::new_equal_name("produce_block_on_head"),
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "PRODUCE block".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "produce_optimistic_block".to_string(),
+                selector: SpanSelector::new_equal_name("produce_optimistic_block_on_head"),
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "PRODUCE optimistic block".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "apply_new_chunk(normal)".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "apply_new_chunk".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![
+                        ("block_type".to_string(), MatchCondition::equal_to("Normal")),
+                        (
+                            "apply_reason".to_string(),
+                            MatchCondition::equal_to("UpdateTrackedShard"),
+                        ),
+                    ],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "apply_chunk (normal)".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "apply_new_chunk (optimistic)".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "apply_new_chunk".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![
+                        (
+                            "block_type".to_string(),
+                            MatchCondition::equal_to("Optimistic"),
+                        ),
+                        (
+                            "apply_reason".to_string(),
+                            MatchCondition::equal_to("UpdateTrackedShard"),
+                        ),
+                    ],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "apply_chunk (optimistic)".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "apply_new_chunk(witness)".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "apply_new_chunk".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "apply_reason".to_string(),
+                        MatchCondition::equal_to("ValidateChunkStateWitness"),
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "WITNESS apply_chunk".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+            SpanRule {
+                name: "validate_chunk_state_witness (normal)".to_string(),
+                selector: SpanSelector {
+                    span_name_condition: MatchCondition {
+                        operator: MatchOperator::EqualTo,
+                        value: "validate_chunk_state_witness".to_string(),
+                    },
+                    node_name_condition: MatchCondition::any(),
+                    attribute_conditions: vec![(
+                        "witness_type".to_string(),
+                        MatchCondition::equal_to("validate"),
+                    )],
+                },
+                decision: SpanDecision {
+                    visible: true,
+                    display_length: DisplayLength::Text,
+                    replace_name: "WITNESS validate".to_string(),
+                    add_height_to_name: true,
+                    add_shard_id_to_name: true,
+                    group: false,
+                },
+            },
+        ],
+        is_builtin: true,
+    }
+}
+
 fn show_span(name: &str) -> SpanRule {
     SpanRule {
         name: format!("Show {name}"),
@@ -594,6 +730,7 @@ fn hide_span(name: &str) -> SpanRule {
 pub fn builtin_structured_modes() -> Vec<StructuredMode> {
     vec![
         everything_structured_mode(),
+        new_critical_path_structured_mode(),
         critical_path_structured_mode(),
         min_critical_path_structured_mode(),
         block_production_structured_mode(),
