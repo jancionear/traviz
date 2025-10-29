@@ -205,6 +205,14 @@ struct ArrowInfo {
 
 impl Default for App {
     fn default() -> Self {
+        let display_modes = structured_modes::builtin_structured_modes();
+
+        // Set "Critical Path" as the default display mode
+        let selected_display_mode = display_modes
+            .iter()
+            .position(|dm| dm.name == "Critical Path")
+            .unwrap_or(0);
+
         let mut res = Self {
             layout: Layout {
                 top_bar_height: 30.0,
@@ -230,8 +238,8 @@ impl Default for App {
             timeline_bar2_time: 0.0,
             clicked_span: None,
             include_children_events: true,
-            display_modes: structured_modes::builtin_structured_modes(),
-            current_display_mode_index: 0,
+            display_modes,
+            current_display_mode_index: selected_display_mode,
             node_filters: vec![NodeFilter::show_all(), NodeFilter::show_none()],
             current_node_filter_index: 0,
             search: Search::default(),
