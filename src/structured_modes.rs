@@ -319,9 +319,9 @@ fn witness_distribution_structured_mode() -> StructuredMode {
     }
 }
 
-fn witness_distribution_shard_0_structured_mode() -> StructuredMode {
+fn witness_distribution_shard_1_structured_mode() -> StructuredMode {
     StructuredMode {
-        name: "tag_witness_distribution (shard 0)".to_string(),
+        name: "tag_witness_distribution (shard 1)".to_string(),
         span_rules: vec![SpanRule {
             name: "Show tag_witness_distribution spans on shard0".to_string(),
             selector: SpanSelector {
@@ -339,7 +339,7 @@ fn witness_distribution_shard_0_structured_mode() -> StructuredMode {
                         "shard_id".to_string(),
                         MatchCondition {
                             operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
+                            value: "1".to_string(),
                         },
                     ),
                 ],
@@ -365,11 +365,11 @@ fn chunk_distribution_structured_mode() -> StructuredMode {
     }
 }
 
-fn chunk_distribution_shard_0_structured_mode() -> StructuredMode {
+fn chunk_distribution_shard_1_structured_mode() -> StructuredMode {
     StructuredMode {
-        name: "tag_chunk_distribution (shard 0)".to_string(),
+        name: "tag_chunk_distribution (shard 1)".to_string(),
         span_rules: vec![SpanRule {
-            name: "Show chunk distribution spans from shard 0".to_string(),
+            name: "Show chunk distribution spans from shard 1".to_string(),
             selector: SpanSelector {
                 span_name_condition: MatchCondition::any(),
                 node_name_condition: MatchCondition::any(),
@@ -385,7 +385,7 @@ fn chunk_distribution_shard_0_structured_mode() -> StructuredMode {
                         "shard_id".to_string(),
                         MatchCondition {
                             operator: MatchOperator::EqualTo,
-                            value: "0".to_string(),
+                            value: "1".to_string(),
                         },
                     ),
                 ],
@@ -599,8 +599,8 @@ pub fn builtin_structured_modes() -> Vec<StructuredMode> {
         block_production_structured_mode(),
         block_production_reduced_structured_mode(),
         witness_distribution_structured_mode(),
-        witness_distribution_shard_0_structured_mode(),
+        witness_distribution_shard_1_structured_mode(),
         chunk_distribution_structured_mode(),
-        chunk_distribution_shard_0_structured_mode(),
+        chunk_distribution_shard_1_structured_mode(),
     ]
 }
