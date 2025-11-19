@@ -34,6 +34,8 @@ pub struct AnalyzeSpanModal {
     detailed_span_analysis: Option<SpanAnalysisResult>,
     /// Filter string for attributes in format: "attr1,attr2=value"
     attribute_filter: String,
+    /// Group by attributes: comma-separated list of attribute names to group spans by
+    group_by_attributes: String,
 }
 
 /// Struct to hold duration statistics for spans.
@@ -91,6 +93,7 @@ impl SpanStatistics {
 struct SpanAnalysisResult {
     span_name: String,
     attribute_filter: String,
+    group_by_attributes: String,
     per_node_stats: HashMap<String, SpanStatistics>,
     overall_stats: SpanStatistics,
 }
@@ -150,6 +153,7 @@ impl AnalyzeSpanModal {
         self.show = true;
         self.search_text = String::new();
         self.attribute_filter = String::new();
+        self.group_by_attributes = String::new();
         self.update_span_list(spans_for_analysis);
         self.spans_processed = true;
     }
@@ -162,6 +166,77 @@ impl AnalyzeSpanModal {
 
     pub fn set_attribute_filter(&mut self, filter: String) {
         self.attribute_filter = filter;
+    }
+
+    pub fn set_group_by_attributes(&mut self, group_by: String) {
+        self.group_by_attributes = group_by;
+    }
+
+    /// Extracts a grouping key from a span based on the group_by_attributes setting.
+    /// Returns None if grouping is disabled or if any required attribute is missing.
+    pub fn get_grouping_key(&self, span: &Rc<Span>) -> Option<Vec<String>> {
+        if self.group_by_attributes.is_empty() {
+            return None;
+        }
+
+        let attr_names: Vec<&str> = self
+            .group_by_attributes
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if attr_names.is_empty() {
+            return None;
+        }
+
+        let mut key_parts = Vec::new();
+        for attr_name in attr_names {
+            if let Some(value) = span.attributes.get(attr_name) {
+                key_parts.push(value_to_text(value));
+            } else {
+                return None;
+            }
+        }
+
+        Some(key_parts)
+    }
+
+    /// Creates a grouped span from multiple spans that share the same grouping key.
+    /// The resulting span has:
+    /// - Combined duration: sum of all individual span durations
+    /// - Time range: from earliest start to latest end
+    /// - Other properties from the first span in the group
+    pub fn create_grouped_span(spans: &[Rc<Span>]) -> Rc<Span> {
+        if spans.is_empty() {
+            panic!("Cannot create grouped span from empty list");
+        }
+
+        if spans.len() == 1 {
+            return spans[0].clone();
+        }
+
+        // Find earliest start and latest end
+        let mut min_start = spans[0].start_time;
+        let mut max_end = spans[0].end_time;
+
+        for span in spans.iter().skip(1) {
+            if span.start_time < min_start {
+                min_start = span.start_time;
+            }
+            if span.end_time > max_end {
+                max_end = span.end_time;
+            }
+        }
+
+        // Clone the first span as a template and modify only time-related fields
+        let template = &*spans[0];
+        let mut grouped_span = template.clone();
+        grouped_span.start_time = min_start;
+        grouped_span.end_time = max_end;
+        grouped_span.min_start_time.set(min_start);
+        grouped_span.max_end_time.set(max_end);
+        Rc::new(grouped_span)
     }
 
     /// Checks if a span matches the attribute filter criteria.
@@ -227,11 +302,39 @@ impl AnalyzeSpanModal {
             return;
         }
 
+        // Apply grouping if group_by_attributes is set
+        let spans_to_analyze = if !self.group_by_attributes.is_empty() {
+            // Group by (node, attribute_values) to keep grouping within each node
+            let mut groups: HashMap<(String, Vec<String>), Vec<Rc<Span>>> = HashMap::new();
+            for span in matching_spans {
+                if let Some(attr_key) = self.get_grouping_key(&span) {
+                    let node_name = span.node.name.clone();
+                    let full_key = (node_name, attr_key);
+                    groups.entry(full_key).or_default().push(span);
+                }
+            }
+            groups
+                .into_values()
+                .map(|span_group| Self::create_grouped_span(&span_group))
+                .collect()
+        } else {
+            matching_spans
+        };
+
+        if spans_to_analyze.is_empty() {
+            self.analysis_summary_message = Some(format!(
+                "No spans found with name '{}' matching the grouping criteria",
+                target_name
+            ));
+            self.detailed_span_analysis = None;
+            return;
+        }
+
         // Group spans by node
         let mut per_node_stats: HashMap<String, SpanStatistics> = HashMap::new();
         let mut overall_stats = SpanStatistics::new();
 
-        for span in matching_spans {
+        for span in spans_to_analyze {
             overall_stats.add_span(&span);
             let node_name = span.node.name.clone();
             per_node_stats
@@ -244,6 +347,7 @@ impl AnalyzeSpanModal {
         self.detailed_span_analysis = Some(SpanAnalysisResult {
             span_name: target_name,
             attribute_filter: self.attribute_filter.clone(),
+            group_by_attributes: self.group_by_attributes.clone(),
             per_node_stats,
             overall_stats,
         });
@@ -368,6 +472,22 @@ impl AnalyzeSpanModal {
                     }
                 });
 
+                ui.add_space(2.5);
+                // Group by attributes row
+                ui.horizontal(|ui| {
+                    ui.label("Group by attributes:");
+                    let response = ui.add(
+                        TextEdit::singleline(&mut self.group_by_attributes)
+                            .desired_width(max_width * 0.6)
+                            .hint_text("attr1,attr2")
+                    );
+                    if response.hovered() {
+                        response.on_hover_text(
+                            "Group spans by attribute values. Comma-separated list of attribute names. Spans with matching values for all specified attributes will be grouped together. Leave empty for no grouping."
+                        );
+                    }
+                });
+
                 ui.separator();
 
                 // Results area
@@ -375,15 +495,26 @@ impl AnalyzeSpanModal {
 
                 if let Some(result) = &self.detailed_span_analysis {
                     ui.horizontal_wrapped(|ui_summary_wrap| {
+                        let filter_text = if result.attribute_filter.is_empty() {
+                            "none"
+                        } else {
+                            &result.attribute_filter
+                        };
+                        let grouping_text = if result.group_by_attributes.is_empty() {
+                            "none"
+                        } else {
+                            &result.group_by_attributes
+                        };
                         ui_summary_wrap.label(format!(
-                            "Analysis of span: '{}' (attribute filter: {})",
+                            "Analysis of span: '{}' (attribute filter: {}, group by: {})",
                             result.span_name,
-                            if result.attribute_filter.is_empty() { "none" } else { &result.attribute_filter }
+                            filter_text,
+                            grouping_text
                         ));
                     });
                 }
                 if let Some(message) = &self.analysis_summary_message {
-                    ui.colored_label(colors::YELLOW, message);
+                    ui.colored_label(colors::MILD_RED, message);
                 }
 
                 // Analysis results table header
@@ -681,6 +812,7 @@ impl AnalyzeSpanModal {
             self.selected_span_name = None;
             self.search_text = String::new();
             self.attribute_filter = String::new();
+            self.group_by_attributes = String::new();
             self.detailed_span_analysis = None;
             self.analysis_summary_message = None;
         }
