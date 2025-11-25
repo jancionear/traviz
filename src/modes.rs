@@ -115,6 +115,7 @@ fn structured_mode_transformation_rek(
         add_shard_id_to_name(&mut modified_span);
     }
     add_part_ord_to_name(&mut modified_span);
+    add_busy_percent(&mut modified_span);
     modified_span.display_options.display_length = decision.display_length;
 
     // Optionally mark span for grouping
@@ -166,6 +167,30 @@ pub fn add_part_ord_to_name(s: &mut Span) {
     if let Some(val) = s.attributes.get("part_ord") {
         s.name = format!("{} p={}", s.name, value_to_text(val));
     }
+}
+
+pub fn add_busy_percent(s: &mut Span) {
+    let Some(Some(Value::IntValue(busy_ns))) = s.attributes.get("busy_ns") else {
+        return;
+    };
+
+    let Some(Some(Value::IntValue(idle_ns))) = s.attributes.get("idle_ns") else {
+        return;
+    };
+
+    if busy_ns + idle_ns == 0 {
+        return;
+    }
+
+    let busy_percent = format!(
+        "{:.2}%",
+        *busy_ns as f64 / (busy_ns + idle_ns) as f64 * 100.0
+    );
+
+    s.attributes.insert(
+        "busy_percent".to_string(),
+        Some(Value::StringValue(busy_percent)),
+    );
 }
 
 // Parse the raw OTel data into a tree of spans/
